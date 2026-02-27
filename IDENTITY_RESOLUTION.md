@@ -256,6 +256,40 @@ A seed table contains generic tokens (e.g., "admin", "test", "bot", "root") that
 2. Add it to the union in the unified references step.
 3. Run the pipeline.
 
+## Ideas: Finding Missing Links
+
+This section collects approaches for discovering identity connections that the current pipeline misses.
+
+### Fuzzy Last Name Search in Email Local Parts
+
+**Problem:** A person's email local part may contain a misspelled or abbreviated last name that exact matching will never catch. For example, `avavilov@gmail.com` (missing letter) won't match the username "alexei vavilov" — there is no shared token.
+
+**Idea:** Extract last names (or rare name parts) from all sources and use them as search queries against email local parts across all unresolved records. Rank results by character-level similarity:
+
+- The email local part is split into **words** by non-letter characters (dots, digits, underscores, etc.). Each word is compared independently against the search term.
+- Higher score when more characters of the search term appear in the candidate word (in order).
+- Higher score when the lengths of the search term and the candidate word are closer to each other.
+- Common first names (Alexey, Nikolay, Sergey, etc.) should be excluded from search — they appear across many unrelated accounts and produce noise. Only relatively unique tokens (typically last names) are useful as search terms.
+
+**Example:**
+
+Search term: `vavilov` (extracted last name)
+
+Candidates are email local parts split into words by non-letter characters. The best-matching word determines the score:
+
+| candidate (raw) | words | best match | matched letters | length diff | score |
+|---|---|---|---|---|---|
+| a.vavilov | a, vavilov | vavilov | 7/7 | 0 | high |
+| avavilov | avavilov | avavilov | 7/7 | +1 | high |
+| vavilov123 | vavilov | vavilov | 7/7 | 0 | high |
+| vavlov | vavlov | vavlov | 3/7 | -1 | low |
+| vavilova | vavilova | vavilova | 7/7 | +1 | high |
+| ivanov | ivanov | ivanov | 2/7 | -1 | low |
+
+This kind of search cannot be used for automatic merging — the false positive rate is too high. Instead, it should produce a **review list** of candidate pairs for manual verification. Confirmed pairs are then added to the `identity_pairs` seed table.
+
+**Scope:** This search is only useful across records that are NOT already in the same profile group. Records already grouped together don't need further linking.
+
 ## Technical Notes
 
 - All models target **ClickHouse** (uses `arrayJoin`, `cityHash64`, `lowerUTF8`).
