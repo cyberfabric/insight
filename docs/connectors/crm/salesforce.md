@@ -121,12 +121,15 @@ Salesforce stores Tasks and Events as separate objects. This table merges both w
 | `owner_id` | text | Activity owner — joins to `salesforce_users.user_id` |
 | `who_id` | text | Contact or Lead associated (nullable) |
 | `what_id` | text | Related object — Opportunity, Account, etc. (nullable) |
-| `activity_date` | date | Due date (Task) or start date (Event) |
-| `duration_minutes` | numeric | Duration in minutes (Events only; NULL for Tasks) |
-| `status` | text | Task status: `Not Started` / `Completed` / etc. (NULL for Events) |
-| `call_type` | text | `Inbound` / `Outbound` (calls only; NULL otherwise) |
-| `call_duration_seconds` | numeric | Call duration (calls only; NULL otherwise) |
+| `activity_date` | date | Due date for Tasks (`ActivityDate`); NULL for Events |
+| `activity_datetime` | timestamptz | Start datetime for Events (`StartDateTime`); NULL for Tasks |
+| `duration_minutes` | numeric | Duration in minutes (`DurationInMinutes`) — Events only; NULL for Tasks |
+| `status` | text | Task status: `Not Started` / `In Progress` / `Completed` / etc. (`Status`) — NULL for Events |
+| `call_type` | text | `Inbound` / `Outbound` / `Internal` (`CallType`) — call-logged Tasks only; NULL otherwise |
+| `call_duration_seconds` | numeric | Call duration in seconds (`CallDurationInSeconds`) — call-logged Tasks only; NULL otherwise |
 | `created_date` | timestamptz | Record creation |
+
+**Note**: Tasks and Events have different date fields — Tasks use `ActivityDate` (date only), Events use `StartDateTime` (datetime). Both are collected via SOQL: `SELECT ... FROM Task` and `SELECT ... FROM Event` separately, merged here with `activity_type` discriminator.
 
 ---
 
@@ -140,7 +143,7 @@ Salesforce stores Tasks and Events as separate objects. This table merges both w
 | `last_name` | text | Last name |
 | `title` | text | Job title |
 | `department` | text | Department |
-| `profile` | text | Salesforce profile (permission level) |
+| `profile` | text | Salesforce profile name (`Profile.Name`) — requires JOIN in SOQL: `SELECT Profile.Name FROM User` |
 | `is_active` | boolean | Whether the user account is active |
 
 Identity anchor for all salesperson-owned Salesforce objects.
