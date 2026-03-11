@@ -131,6 +131,30 @@ kind = "DESIGN"
 path = "docs/connectors/zulip.md"
 name = "Zulip Connector Specification"
 
+# ── Connectors — Collaboration ────────────────────────────────────────────────
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/connectors/collaboration/slack.md"
+name = "Slack Connector Specification"
+
+# ── Connectors — Wiki ─────────────────────────────────────────────────────────
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/connectors/wiki/README.md"
+name = "Wiki Connector Specification (Multi-Source)"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/connectors/wiki/confluence.md"
+name = "Confluence Connector Specification"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/connectors/wiki/outline.md"
+name = "Outline Connector Specification"
+
 # ── Connectors — AI Dev Tools ─────────────────────────────────────────────────
 
 [[systems.artifacts]]

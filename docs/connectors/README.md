@@ -48,6 +48,7 @@ Per-source deep-dive specifications for Constructor Insight connectors. Each fil
 | Collaboration (unified schema) | [`collaboration/README.md`](collaboration/README.md) | Draft |
 | Microsoft 365 | [`collaboration/m365.md`](collaboration/m365.md) | Proposed |
 | Zulip | [`collaboration/zulip.md`](collaboration/zulip.md) | Proposed |
+| Slack | [`collaboration/slack.md`](collaboration/slack.md) | Draft |
 
 ### AI Dev Tools
 
@@ -81,6 +82,14 @@ Per-source deep-dive specifications for Constructor Insight connectors. Each fil
 | HubSpot | [`crm/hubspot.md`](crm/hubspot.md) | Proposed |
 | Salesforce | [`crm/salesforce.md`](crm/salesforce.md) | Proposed |
 
+### Wiki
+
+| Source | Spec | Status |
+|--------|------|--------|
+| Wiki (unified schema) | [`wiki/README.md`](wiki/README.md) | Draft |
+| Confluence | [`wiki/confluence.md`](wiki/confluence.md) | Draft |
+| Outline | [`wiki/outline.md`](wiki/outline.md) | Draft |
+
 ### Quality / Testing
 
 | Source | Spec | Status |
@@ -93,9 +102,11 @@ Per-source deep-dive specifications for Constructor Insight connectors. Each fil
 
 | Stream | Sources | Spec |
 |--------|---------|------|
-| `class_communication_metrics` | M365 (Email + Teams) + Zulip | [`collaboration/README.md`](collaboration/README.md) |
+| `class_communication_metrics` | M365 (Email + Teams) + Zulip + Slack | [`collaboration/README.md`](collaboration/README.md) |
 | `class_document_metrics` | M365 (OneDrive + SharePoint) | [`collaboration/README.md`](collaboration/README.md) — planned |
 | Task Tracker unified schema | YouTrack + Jira | [`task-tracking/README.md`](task-tracking/README.md) |
+| `class_wiki_pages` | Confluence + Outline | [`wiki/README.md`](wiki/README.md) — draft |
+| `class_wiki_activity` | Confluence + Outline | [`wiki/README.md`](wiki/README.md) — draft |
 
 ---
 

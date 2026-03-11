@@ -3,7 +3,7 @@
 > Version 1.0 — March 2026
 > Based on: Microsoft 365 (Source 6) and Zulip (Source 7)
 
-Data-source agnostic specification for collaboration connectors. Defines unified Bronze schemas that work across M365 and Zulip (with Slack as a planned future source) using a `data_source` discriminator column.
+Data-source agnostic specification for collaboration connectors. Defines unified Bronze schemas that work across M365, Zulip, and Slack using a `data_source` discriminator column.
 
 **Primary analytics focus**: employee collaboration patterns — communication intensity, meeting load, document sharing, and async vs. synchronous work balance.
 
@@ -35,11 +35,12 @@ Data-source agnostic specification for collaboration connectors. Defines unified
 **Supported Sources**:
 - Microsoft 365 (`data_source = "insight_m365"`)
 - Zulip (`data_source = "insight_zulip"`)
-- Slack (`data_source = "insight_slack"`) — planned
+- Slack (`data_source = "insight_slack"`)
 
 **Authentication**:
 - M365: OAuth 2.0 (Azure AD application, `Reports.Read.All` scope)
 - Zulip: HTTP Basic Auth — bot email + API key per realm
+- Slack: OAuth 2.0, Bot Token (`xoxb-*`)
 
 **Data model note**: All data at this layer is **pre-aggregated by day**. M365 Graph API exposes activity reports as daily rollups per user — there are no individual event records. Zulip similarly provides aggregated message counts. This is fundamentally different from event-log connectors (git, task tracking) — Bronze tables here are metric tables, not event tables.
 
@@ -52,12 +53,12 @@ Data-source agnostic specification for collaboration connectors. Defines unified
 
 **Terminology mapping**:
 
-| Concept | M365 | Zulip | Slack (planned) | Unified |
-|---------|------|-------|-----------------|---------|
-| Chat message | Teams chat (`privateChatMessageCount`, `teamChatMessageCount`) | `zulip_messages.count` | message | `collab_chat_activity` |
+| Concept | M365 | Zulip | Slack | Unified |
+|---------|------|-------|-------|---------|
+| Chat message | Teams chat (`privateChatMessageCount`, `teamChatMessageCount`) | `zulip_messages.count` | message (`conversations.history`) | `collab_chat_activity` |
 | Channel post | Teams channel (`postMessages`, `replyMessages`) | stream message | channel message | `collab_chat_activity` |
 | Meeting | Teams meeting (`meetingsAttendedCount`, etc.) | — | huddle | `collab_meeting_activity` |
-| Call | Teams call (`callCount`) | — | call | `collab_meeting_activity` |
+| Call | Teams call (`callCount`) | — | — | `collab_meeting_activity` |
 | Email | Outlook (`sendCount`, `receiveCount`) | — | — | `collab_email_activity` |
 | File edit | OneDrive / SharePoint (`viewedOrEditedFileCount`) | — | — | `collab_document_activity` |
 | File share | OneDrive / SharePoint (`sharedInternallyFileCount`) | — | — | `collab_document_activity` |
@@ -258,6 +259,20 @@ All data collected via Microsoft Graph API v1.0 report endpoints (`/reports/get*
 
 **Zulip chat fields**: only `total_chat_messages` is populated. `direct_messages`, `group_chat_messages`, `channel_posts`, `channel_replies`, `urgent_messages` are all NULL — Zulip's aggregation does not distinguish message types.
 
+### Slack
+
+See full spec: [`slack.md`](slack.md)
+
+| Unified table | Slack source | Key mapping notes |
+|---------------|-------------|-------------------|
+| `collab_chat_activity` | `conversations.history` (standard) or `admin.analytics.getFile` (Enterprise Grid) | Message counts grouped by `(user, date, channel_type)`. Enterprise Grid: only `total_chat_messages` available. `direct_messages` ← `im` channel; `group_chat_messages` ← `mpim` channel; `channel_posts` ← `public_channel` + `private_channel` |
+| `collab_meeting_activity` | `conversations.history` with `subtype = "huddle_thread"` | Huddle events parsed; `meetings_attended` = huddle sessions joined; all huddles treated as ad-hoc |
+| `collab_users` | `users.list` | `profile.email` → `email`; `id` → `user_id`; role derived from boolean flags; `is_bot = true` rows excluded |
+| `collab_email_activity` | — | Not populated — Slack has no email product |
+| `collab_document_activity` | — | Not populated — file sharing not modelled |
+
+**Slack chat fields**: `total_chat_messages` always populated. Per-channel-type breakdown (`direct_messages`, `group_chat_messages`, `channel_posts`, `channel_replies`) populated for standard workspaces; NULL for Enterprise Grid workspaces using `admin.analytics.getFile`.
+
 ---
 
 ## Identity Resolution
@@ -294,6 +309,8 @@ All data collected via Microsoft Graph API v1.0 report endpoints (`/reports/get*
 | `insight_m365` | `email` | `collab_email_activity` | `sent_count` |
 | `insight_m365` | `meetings` | `collab_meeting_activity` | `meetings_attended` |
 | `insight_zulip` | `chat` | `collab_chat_activity` | `total_chat_messages` |
+| `insight_slack` | `chat` | `collab_chat_activity` | `total_chat_messages` |
+| `insight_slack` | `meetings` | `collab_meeting_activity` | `meetings_attended` |
 
 **`class_document_metrics`** — planned Silver stream for file collaboration:
 - Sources: `collab_document_activity` (OneDrive + SharePoint)
@@ -330,10 +347,8 @@ OneDrive and SharePoint file activity is collected but has no Silver target. Bef
 - Should it be unified with other document sources (e.g. Google Drive, Confluence page edits)?
 - Or is it sufficient as a Bronze-only reference until a use case is confirmed?
 
-### OQ-COLLAB-4: Slack as a future source
+### OQ-COLLAB-4: Slack as a future source — RESOLVED
 
-Slack is a natural third source for `collab_chat_activity` and `collab_meeting_activity` (huddles). When added:
-- `data_source = "insight_slack"`
-- Chat: messages per channel type (DM / group DM / channel) → maps to existing fields
-- Meetings: Slack huddles → `meetings_attended`, `audio_duration_seconds`
-- No email or document equivalent
+**Status**: RESOLVED — Slack connector spec added in [`slack.md`](slack.md).
+
+`data_source = "insight_slack"`. Chat messages per channel type (im / mpim / public_channel / private_channel) map to existing `collab_chat_activity` fields. Slack huddles map to `collab_meeting_activity` (`meetings_attended`, `audio_duration_seconds`). No email or document equivalent — `collab_email_activity` and `collab_document_activity` are not populated for `insight_slack`.
