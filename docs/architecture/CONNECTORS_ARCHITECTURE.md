@@ -561,4 +561,4 @@ The connector layer automatically populates the Data Catalog with both technical
 ## References
 
 - [PRODUCT_SPECIFICATION.md](./PRODUCT_SPECIFICATION.md) — Full product specification
-- [Vision.md](./Vision.md) — Product vision document
+- [PRODUCT_SPECIFICATION.md](./PRODUCT_SPECIFICATION.md) — Product vision document
