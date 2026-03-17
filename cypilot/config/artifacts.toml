@@ -73,6 +73,16 @@ path = "docs/components/connectors/git/bitbucket.md"
 name = "Bitbucket Connector Specification"
 
 [[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/git/bitbucket-server/specs/PRD.md"
+name = "Bitbucket Server Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/git/bitbucket-server/specs/DESIGN.md"
+name = "Bitbucket Server Connector Design"
+
+[[systems.artifacts]]
 kind = "DESIGN"
 path = "docs/components/connectors/git/gitlab.md"
 name = "GitLab Connector Specification"
