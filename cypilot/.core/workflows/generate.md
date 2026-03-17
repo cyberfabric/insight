@@ -45,6 +45,7 @@ For context compaction recovery during multi-phase workflows, follow `{cypilot_p
   - [Phase 0: Ensure Dependencies](#phase-0-ensure-dependencies)
     - [Verify Rules Loaded](#verify-rules-loaded)
     - [For Code (additional)](#for-code-additional)
+  - [Phase 0.1: Plan Escalation Gate](#phase-01-plan-escalation-gate)
   - [Phase 0.5: Clarify Output \& Context](#phase-05-clarify-output--context)
     - [System Context (if using rules)](#system-context-if-using-rules)
     - [Output Destination](#output-destination)
@@ -149,6 +150,7 @@ This workflow can require loading multiple long templates/checklists/examples an
 - **Chunk reads**: Use `read_file` in ranges and summarize each chunk; do not keep raw full-text of multiple 500+ line documents in context at once.
 - **Summarize-and-drop**: After extracting the needed criteria, keep a short checklist summary and drop the raw text from working memory.
 - **Fail-safe**: If you cannot complete required steps within context, stop and output a checkpoint (chat-only) describing what is done and what remains. Do not proceed to writing files.
+- **Plan escalation**: See [Phase 0.1: Plan Escalation Gate](#phase-01-plan-escalation-gate) — a **mandatory** size check that runs after dependencies are loaded. If the task exceeds the context budget, the agent MUST offer plan escalation before proceeding.
 
 ---
 
@@ -231,6 +233,56 @@ This workflow can require loading multiple long templates/checklists/examples an
 | **Design artifact** | Requirements to implement | Ask user to specify source |
 
 **MUST NOT proceed** to Phase 1 until all dependencies are available.
+
+---
+
+## Phase 0.1: Plan Escalation Gate
+
+**MUST** estimate the total context this task will consume BEFORE proceeding further.
+
+**Estimation**:
+1. Count (or estimate) lines of loaded dependencies:
+   - `rules.md` for the target artifact kind
+   - `template.md` for the target artifact kind
+   - `checklist.md` for the target artifact kind
+   - `example.md` for the target artifact kind
+2. Add estimated output size (artifact being generated)
+3. Add project context (existing files to read, parent artifacts to reference)
+4. Add ~30% for agent reasoning overhead
+
+**Decision**:
+
+| Estimated total | Action |
+|----------------|--------|
+| ≤ 1500 lines | Proceed normally — optimal zone, >95% rule adherence |
+| 1501-2500 lines | Proceed with warning + aggressive summarize-and-drop: _"This is a medium-sized task. Activating chunked loading — will checkpoint if context runs low."_ |
+| > 2500 lines | **MUST** offer plan escalation before proceeding |
+
+> **Why these thresholds**: Rule-following quality degrades significantly above ~8K tokens (~2000 lines). Active constraints (MUST rules) are the heaviest context type — 50-80 simultaneous rules is the practical ceiling. SDLC kit artifacts (PRD, DESIGN, FEATURE) are 1300-1850 lines of kit files alone, plus workflow + output + reasoning overhead easily pushes past 2500.
+
+**When offering plan escalation** (> 2500 lines):
+
+```
+⚠️ This task is large — estimated ~{N} lines of context needed:
+  - rules.md:     ~{n} lines
+  - template.md:  ~{n} lines
+  - checklist.md: ~{n} lines
+  - example.md:   ~{n} lines
+  - output:       ~{n} lines (estimated)
+  - project ctx:  ~{n} lines
+
+This exceeds the safe single-context budget (~2500 lines).
+The plan workflow can decompose this into focused phases (≤500 lines each)
+that ensure every kit rule is followed and nothing is skipped.
+
+Options:
+1. Switch to /cypilot-plan (recommended for full quality)
+2. Continue here (risk: context overflow, rules may be partially applied)
+```
+
+**If user chooses plan**: Stop generate workflow. Tell user to run `/cypilot-plan generate {KIND}` with the same parameters.
+
+**If user chooses continue**: Proceed with generate workflow but activate aggressive chunking from Context Budget section. Log warning: _"Proceeding in single-context mode — quality may be reduced for large artifacts."_
 
 ---
 

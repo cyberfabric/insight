@@ -112,6 +112,7 @@ This workflow can require loading multiple long checklists/specs. To prevent con
 - **Chunk reads**: Use `read_file` in ranges and summarize each chunk; do not keep raw full-text of multiple 500+ line documents in context at once.
 - **Summarize-and-drop**: After extracting the needed criteria, keep a short checklist summary and drop the raw text from working memory.
 - **Fail-safe**: If you cannot complete the required checks within context, output `PARTIAL` with a checkpoint (what was checked, what remains, where to resume). Do not claim overall PASS.
+- **Plan escalation**: See [Phase 0.1: Plan Escalation Gate](#phase-01-plan-escalation-gate) — a **mandatory** size check that runs after dependencies are loaded. If the task exceeds the context budget, the agent MUST offer plan escalation before proceeding.
 
 ---
 
@@ -171,6 +172,54 @@ This workflow can require loading multiple long checklists/specs. To prevent con
 | **Design artifact** | Requirements that should be implemented | Ask user to specify source |
 
 **MUST NOT proceed** to Phase 1 until all dependencies are available.
+
+---
+
+## Phase 0.1: Plan Escalation Gate
+
+**MUST** estimate the total context this analysis will consume BEFORE proceeding further.
+
+**Estimation**:
+1. Count (or estimate) lines of loaded dependencies:
+   - `rules.md` for the target artifact kind (Validation section)
+   - `checklist.md` for the target artifact kind
+   - Target artifact content to analyze
+   - Related artifacts for cross-referencing
+2. Add estimated output size (analysis report)
+3. Add ~30% for agent reasoning overhead
+
+**Decision**:
+
+| Estimated total | Action |
+|----------------|--------|
+| ≤ 1200 lines | Proceed normally — optimal zone, >95% checklist coverage |
+| 1201-2000 lines | Proceed with warning + aggressive summarize-and-drop: _"This is a medium-sized analysis. Activating chunked loading — will output PARTIAL if context runs low."_ |
+| > 2000 lines | **MUST** offer plan escalation before proceeding |
+
+> **Why stricter than generate**: Analysis loads checklist.md as **active constraints** — every item must be individually verified. SDLC checklists are 567-1019 lines. Combined with the artifact being analyzed + rules + cross-refs, even a single-artifact analysis quickly exceeds 2000 lines.
+
+**When offering plan escalation** (> 2000 lines):
+
+```
+⚠️ This analysis is large — estimated ~{N} lines of context needed:
+  - checklist.md:  ~{n} lines
+  - rules.md:      ~{n} lines
+  - artifact:      ~{n} lines
+  - cross-refs:    ~{n} lines
+  - output:        ~{n} lines (estimated)
+
+This exceeds the safe single-context budget (~2000 lines).
+The plan workflow can decompose this into focused analysis phases (≤500 lines each)
+that ensure every checklist item is checked and nothing is skipped.
+
+Options:
+1. Switch to /cypilot-plan (recommended for thorough analysis)
+2. Continue here (risk: context overflow, checks may be partially applied)
+```
+
+**If user chooses plan**: Stop analyze workflow. Tell user to run `/cypilot-plan analyze {KIND}` with the same parameters.
+
+**If user chooses continue**: Proceed with analyze workflow but activate aggressive chunking from Context Budget section. Log warning: _"Proceeding in single-context mode — some checks may be missed for large artifacts."_
 
 ---
 
