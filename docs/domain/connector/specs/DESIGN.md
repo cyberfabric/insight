@@ -92,6 +92,12 @@ With 2,000+ potential customers each using different tooling stacks, the connect
 | Semantic propagation | New fields reach dashboard metric catalog without manual work | `DataCatalogSync` | Schema sync triggered on connector registration; semantic metadata auto-populates Semantic Dictionary | Register new connector; verify metric appears in catalog |
 | Privacy by default | Content fields (message text, email body) never collected | `ConnectorManifest` + SDK | Fields must be explicitly declared to be collected; no wildcard field capture | Audit connector manifest; confirm no undeclared content fields present in Bronze |
 
+#### Architecture Decision Records
+
+| ADR | Decision | Status |
+|-----|----------|--------|
+| `cpt-insightspec-adr-connector-integration-protocol` | Use stdout JSON-per-line protocol for connector-to-system data delivery — language-agnostic, runner-mediated, backend-enforced integrity | proposed |
+
 ### 1.3 Architecture Layers
 
 ```

@@ -229,7 +229,7 @@ name = "Connector Framework Design"
 
 [[systems.artifacts]]
 kind = "ADR"
-path = "docs/components/backend/specs/ADR/0001-connector-integration-protocol.md"
+path = "docs/domain/connector/specs/ADR/0001-connector-integration-protocol.md"
 name = "ADR-0001: Connector-to-System Integration Protocol"
 
 [[systems]]
