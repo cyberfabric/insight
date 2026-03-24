@@ -108,6 +108,16 @@ path = "docs/components/connectors/hr-directory/bamboohr.md"
 name = "BambooHR Connector Specification"
 
 [[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/hr-directory/bamboohr/specs/PRD.md"
+name = "BambooHR Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/hr-directory/bamboohr/specs/DESIGN.md"
+name = "BambooHR Connector Design"
+
+[[systems.artifacts]]
 kind = "DESIGN"
 path = "docs/components/connectors/hr-directory/workday.md"
 name = "Workday Connector Specification"

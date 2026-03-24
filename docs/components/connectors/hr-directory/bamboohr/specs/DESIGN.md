@@ -24,6 +24,9 @@
   - [3.7 Database schemas & tables](#37-database-schemas--tables)
   - [3.8 Deployment Topology](#38-deployment-topology)
 - [4. Additional context](#4-additional-context)
+  - [Identity Resolution Strategy](#identity-resolution-strategy)
+  - [Silver / Gold Mappings](#silver--gold-mappings)
+  - [Source-Specific Considerations](#source-specific-considerations)
 - [5. Traceability](#5-traceability)
 - [6. Non-Applicability Statements](#6-non-applicability-statements)
 
@@ -40,8 +43,6 @@ The BambooHR connector is an Airbyte declarative manifest connector (YAML, no cu
 1. **`employees`** — employee directory via the custom report endpoint (`POST /reports/custom`), collecting insights-relevant fields only.
 2. **`leave_requests`** — time-off requests via `GET /time_off/requests` with fixed date range.
 3. **`meta_fields`** — field metadata (standard + custom field definitions) via `GET /meta/fields`.
-4. **`meta_tables`** — table metadata via `GET /meta/tables`.
-5. **`meta_lists`** — list field values (departments, statuses, etc.) via `GET /meta/lists`.
 
 **Authentication**: API key injected as `Authorization: Basic {base64(key:x)}` header via `ApiKeyAuthenticator`.
 
@@ -57,14 +58,14 @@ The BambooHR connector is an Airbyte declarative manifest connector (YAML, no cu
 
 | Requirement | Design Response |
 |-------------|-----------------|
-| `cpt-insightspec-fr-bhr-collect-employees` | Stream `employees` → `POST /reports/custom?format=JSON&onlyCurrent=true` |
+| `cpt-insightspec-fr-bhr-collect-employees` | Stream `employees` → `POST /reports/custom` |
 | `cpt-insightspec-fr-bhr-collect-leave-requests` | Stream `leave_requests` → `GET /time_off/requests?start={start}&end={end}` |
 | `cpt-insightspec-fr-bhr-collect-meta-fields` | Stream `meta_fields` → `GET /meta/fields` |
-| `cpt-insightspec-fr-bhr-deduplication` | Primary keys: `id` (employees, leave requests, meta fields) |
+| `cpt-insightspec-fr-bhr-deduplication` | Primary keys: `id` (employees, leave requests), `unique` (meta fields) |
 | `cpt-insightspec-fr-bhr-identity-key` | `workEmail` field included in employee custom report field list |
 | `cpt-insightspec-fr-bhr-incremental-sync` | Full refresh on all streams; `lastChanged` retained for future incremental |
 | `cpt-insightspec-fr-bhr-fault-tolerance` | `CompositeErrorHandler` with 429/503 rate-limit handling + 5XX retry with exponential backoff |
-| `cpt-insightspec-fr-bhr-collection-runs` | Airbyte framework emits collection metadata per sync; routed to `bamboohr_collection_runs` |
+| `cpt-insightspec-fr-bhr-collection-runs` | Airbyte framework emits collection metadata per sync; routed to `collection_runs` |
 
 #### NFR Allocation
 
@@ -80,7 +81,7 @@ The BambooHR connector is an Airbyte declarative manifest connector (YAML, no cu
 | Layer | Responsibility | Technology |
 |-------|---------------|------------|
 | Source API | BambooHR REST API v1 endpoints | REST / JSON |
-| Authentication | HTTP Basic Auth (API key) | `BasicHttpAuthenticator` |
+| Authentication | API key via Authorization header | `ApiKeyAuthenticator` |
 | Connector | Stream definitions, incremental sync, error handling | Airbyte declarative manifest (YAML) |
 | Execution | Container runtime | Airbyte Declarative Connector framework (CDK v6.44+) |
 | Bronze | Raw data storage with source-native schema | Destination connector (ClickHouse) |
@@ -107,7 +108,7 @@ Bronze tables preserve BambooHR's native field names (camelCase) and data types.
 
 - [ ] `p2` - **ID**: `cpt-insightspec-principle-bhr-full-dataset`
 
-BambooHR endpoints return complete datasets (no pagination). The connector fetches the full response and applies client-side cursor filtering for incremental sync. This is a BambooHR API design constraint, not a connector choice.
+BambooHR endpoints return complete datasets (no pagination). The connector fetches the full response on every run. This is a BambooHR API design constraint, not a connector choice.
 
 ### 2.2 Constraints
 
@@ -142,8 +143,6 @@ All streams use full refresh sync. The custom report endpoint does not support s
 | Employee | `POST /reports/custom` | `employees` | Current-state employee record with insights-relevant HR attributes |
 | Leave Request | `GET /time_off/requests` | `leave_requests` | Time-off request with dates, type, status, and amount |
 | Field Metadata | `GET /meta/fields` | `meta_fields` | Field definitions (standard + custom) for schema discovery |
-| Table Metadata | `GET /meta/tables` | `meta_tables` | Tabular data definitions (job info, compensation, etc.) |
-| List Values | `GET /meta/lists` | `meta_lists` | List field values (departments, statuses, locations, etc.) |
 
 **Relationships**:
 - Employee `1:N` Leave Request (via `employeeId`)
@@ -161,11 +160,15 @@ Defines the complete BambooHR connector as a YAML declarative manifest — the s
 
 ##### Responsibility scope
 
-Defines 5 streams with: API key auth via `Authorization` header, POST request for custom reports, GET requests for time-off and metadata, `NoPagination` (full dataset responses), full refresh sync on all streams, `CompositeErrorHandler` for 429/503/5XX, `AddFields` for `tenant_id`, `_source`, and `_extracted_at`, and inline JSON schemas for all streams.
+Defines 3 streams with: API key auth via `Authorization` header, POST request for custom reports, GET requests for time-off and metadata, `NoPagination` (full dataset responses), full refresh sync on all streams, `CompositeErrorHandler` for 429/503/5XX, `AddFields` for `tenant_id`, `_source`, and `_extracted_at`, and inline JSON schemas for all streams.
 
 ##### Responsibility boundaries
 
 Does not handle orchestration, scheduling, or state storage (managed by Airbyte/Orchestrator). Does not perform Silver/Gold transformations. Does not implement identity resolution. Does not write to Bronze tables (handled by the destination connector).
+
+##### Related components (by ID)
+
+None within this artifact. At runtime, the connector is executed by the Airbyte platform and its Bronze output is consumed by dbt for Silver transformations (see Ingestion Layer DESIGN).
 
 ### 3.3 API Contracts
 
@@ -370,12 +373,12 @@ sequenceDiagram
 |--------|------|-------------|
 | `tenant_id` | String | Tenant isolation — injected by connector |
 | `id` | String | PK: BambooHR time-off request ID |
-| `employeeId` | String | BambooHR employee ID — joins to `bamboohr_employees.id` |
+| `employeeId` | String | BambooHR employee ID — joins to `employees.id` |
 | `name` | String | Employee display name |
 | `status` | String (JSON) | Status object: `{"lastChanged": "...", "lastChangedByUserId": "...", "status": "..."}` |
 | `start` | String | Leave start date (YYYY-MM-DD) |
 | `end` | String | Leave end date (YYYY-MM-DD) |
-| `created` | String | Request creation date (YYYY-MM-DD) — cursor for incremental sync |
+| `created` | String | Request creation date (YYYY-MM-DD) |
 | `type` | String (JSON) | Leave type object: `{"id": "...", "name": "...", "icon": "..."}` |
 | `amount` | String (JSON) | Amount object: `{"unit": "days", "amount": "5"}` |
 | `dates` | String (JSON) | Per-day breakdown (source-native nested object) |
@@ -392,17 +395,18 @@ sequenceDiagram
 | Column | Type | Description |
 |--------|------|-------------|
 | `tenant_id` | String | Tenant isolation — injected by connector |
-| `id` | Number | PK: BambooHR field ID |
+| `id` | Number | BambooHR field ID (source identifier) |
 | `name` | String | Field display name |
 | `type` | String | Field data type (e.g., `text`, `list`, `date`, `employee`) |
 | `alias` | String | Field alias/API name (e.g., `firstName`, `department`, `customField1`) |
+| `unique` | String | PK: derived deduplication key (`'d' + id` if deprecated, else `id`) |
 | `deprecated` | Boolean | Whether the field is deprecated |
 | `_source` | String | `bamboohr` — data lineage tag |
 | `_extracted_at` | DateTime | Collection timestamp (UTC) |
 
 ---
 
-#### Table: `bamboohr_collection_runs`
+#### Table: `collection_runs`
 
 - [ ] `p1` - **ID**: `cpt-insightspec-dbtable-bhr-collection-runs`
 
@@ -431,15 +435,13 @@ Connection: bamboohr-{domain}
 ├── Manifest: src/ingestion/connectors/hr-directory/bamboohr/connector.yaml
 ├── Descriptor: src/ingestion/connectors/hr-directory/bamboohr/descriptor.yaml
 ├── Source config: tenant_id, api_key, domain
-├── Configured catalog: 5 streams (all full refresh)
-│   ├── bamboohr_employees
-│   ├── bamboohr_leave_requests
-│   ├── bamboohr_meta_fields
-│   ├── bamboohr_meta_tables
-│   └── bamboohr_meta_lists
+├── Configured catalog: 3 streams (all full refresh)
+│   ├── employees
+│   ├── leave_requests
+│   └── meta_fields
 ├── Destination image: airbyte/destination-clickhouse
 ├── Destination config: host, port, database, schema, credentials
-└── State: per-stream cursor positions
+└── Sync mode: full refresh (no state)
 ```
 
 ---

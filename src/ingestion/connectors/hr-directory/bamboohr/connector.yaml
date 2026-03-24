@@ -1,5 +1,5 @@
 # BambooHR Connector — Airbyte Declarative Manifest
-# Extracts: employees (custom report), leave requests, field/table/list metadata
+# Extracts: employees (custom report), leave requests, field metadata
 # Auth: API Key via Authorization header
 # Sync: full refresh (no incremental — BambooHR is current-state only)
 
@@ -255,9 +255,7 @@ definitions:
           tenant_id:
             type: string
           id:
-            type:
-              - "null"
-              - string
+            type: string
           employeeId:
             type:
               - "null"
@@ -366,7 +364,7 @@ definitions:
       - type: AddFields
         fields:
           - path: ["unique"]
-            value: "{{ 'd' ~ record['id'] if record['deprecated'] is defined else record['id'] }}"
+            value: "{{ 'd' ~ record['id'] if record.get('deprecated', false) else record['id'] }}"
           - path: [tenant_id]
             value: "{{ config['tenant_id'] }}"
           - path: [_source]
@@ -408,108 +406,10 @@ definitions:
             type: string
             format: date-time
 
-  meta_tables_stream:
-    type: DeclarativeStream
-    name: "meta_tables"
-    primary_key: "alias"
-    retriever:
-      type: SimpleRetriever
-      requester:
-        $ref: "#/definitions/base_requester"
-        path: "meta/tables"
-        request_headers:
-          Accept: "application/json"
-      record_selector:
-        type: RecordSelector
-        extractor:
-          type: DpathExtractor
-          field_path: []
-      paginator:
-        type: NoPagination
-    transformations:
-      - type: AddFields
-        fields:
-          - path: [tenant_id]
-            value: "{{ config['tenant_id'] }}"
-          - path: [_source]
-            value: "bamboohr"
-          - path: [_extracted_at]
-            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
-    schema_loader:
-      type: InlineSchemaLoader
-      schema:
-        $schema: "http://json-schema.org/draft-07/schema#"
-        type: object
-        additionalProperties: true
-        properties:
-          tenant_id:
-            type: string
-          alias:
-            type: string
-          fields:
-            type: array
-            items:
-              type: object
-              properties:
-                id:
-                  type: number
-                name:
-                  type: string
-                type:
-                  type: string
-                alias:
-                  type: string
-          _source:
-            type: string
-          _extracted_at:
-            type: string
-            format: date-time
-
-  meta_lists_stream:
-    type: DeclarativeStream
-    name: "meta_lists"
-    retriever:
-      type: SimpleRetriever
-      requester:
-        $ref: "#/definitions/base_requester"
-        path: "meta/lists"
-      record_selector:
-        type: RecordSelector
-        extractor:
-          type: DpathExtractor
-          field_path: []
-      paginator:
-        type: NoPagination
-    transformations:
-      - type: AddFields
-        fields:
-          - path: [tenant_id]
-            value: "{{ config['tenant_id'] }}"
-          - path: [_source]
-            value: "bamboohr"
-          - path: [_extracted_at]
-            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
-    schema_loader:
-      type: InlineSchemaLoader
-      schema:
-        $schema: "http://json-schema.org/draft-07/schema#"
-        type: object
-        additionalProperties: true
-        properties:
-          tenant_id:
-            type: string
-          _source:
-            type: string
-          _extracted_at:
-            type: string
-            format: date-time
-
 streams:
   - $ref: "#/definitions/employees_stream"
   - $ref: "#/definitions/leave_requests_stream"
   - $ref: "#/definitions/meta_fields_stream"
-  - $ref: "#/definitions/meta_tables_stream"
-  - $ref: "#/definitions/meta_lists_stream"
 
 check:
   type: CheckStream

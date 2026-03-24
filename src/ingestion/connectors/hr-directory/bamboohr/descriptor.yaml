@@ -19,8 +19,3 @@ streams:
   - name: meta_fields
     bronze_table: meta_fields
     primary_key: [unique]
-  - name: meta_tables
-    bronze_table: meta_tables
-    primary_key: [alias]
-  - name: meta_lists
-    bronze_table: meta_lists
