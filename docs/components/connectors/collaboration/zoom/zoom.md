@@ -44,6 +44,8 @@ Standalone specification for the Zoom (Collaboration) connector. This document a
 
 **Why multiple tables**: Zoom exposes distinct synchronous and asynchronous activity shapes. `zoom_meetings` stores authoritative meeting instances, `zoom_meeting_participants` stores participant-level attendance evidence needed for duration metrics, `zoom_message_activity` stores mandatory async activity using the implemented separate user-scoped path, `zoom_users` provides lightweight attribution support, and `zoom_collection_runs` records observability state.
 
+**Manifest stream names**: The declarative source manifest uses concise stream names `users`, `meetings`, `participants`, and `message_activities`. These are source-stream identifiers only; Bronze tables remain `zoom_*`.
+
 > **Collection policy**
 > Ongoing incremental collection is mandatory. Every newly discovered meeting must trigger meeting-scoped enrichment for detail and participants. Historical backfill is best-effort. Message activity is mandatory and is collected through a separate user-scoped message flow, not through meeting enrichment.
 

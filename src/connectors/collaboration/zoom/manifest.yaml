@@ -5,7 +5,7 @@ type: DeclarativeSource
 check:
   type: CheckStream
   stream_names:
-    - zoom_users
+    - users
 
 definitions:
   base_error_handler:
@@ -68,9 +68,9 @@ definitions:
     request_headers:
       Accept: application/json
   streams:
-    zoom_users:
+    users:
       type: DeclarativeStream
-      name: zoom_users
+      name: users
       retriever:
         type: SimpleRetriever
         decoder:
@@ -107,7 +107,7 @@ definitions:
       schema_loader:
         type: InlineSchemaLoader
         schema:
-          $ref: "#/schemas/zoom_users"
+          $ref: "#/schemas/users"
       transformations:
         - type: AddFields
           fields:
@@ -127,9 +127,9 @@ definitions:
               path:
                 - _airbyte_collected_at
               value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
-    zoom_meetings:
+    meetings:
       type: DeclarativeStream
-      name: zoom_meetings
+      name: meetings
       retriever:
         type: SimpleRetriever
         decoder:
@@ -154,7 +154,7 @@ definitions:
       schema_loader:
         type: InlineSchemaLoader
         schema:
-          $ref: "#/schemas/zoom_meetings"
+          $ref: "#/schemas/meetings"
       transformations:
         - type: AddFields
           fields:
@@ -202,9 +202,9 @@ definitions:
               path:
                 - _airbyte_collected_at
               value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
-    zoom_meeting_participants:
+    participants:
       type: DeclarativeStream
-      name: zoom_meeting_participants
+      name: participants
       retriever:
         type: SimpleRetriever
         partition_router:
@@ -214,7 +214,7 @@ definitions:
               parent_key: meeting_uuid
               partition_field: meeting_uuid
               stream:
-                $ref: "#/definitions/streams/zoom_meetings"
+                $ref: "#/definitions/streams/meetings"
         decoder:
           type: JsonDecoder
         requester:
@@ -248,7 +248,7 @@ definitions:
       schema_loader:
         type: InlineSchemaLoader
         schema:
-          $ref: "#/schemas/zoom_meeting_participants"
+          $ref: "#/schemas/participants"
       transformations:
         - type: AddFields
           fields:
@@ -302,9 +302,9 @@ definitions:
               path:
                 - _airbyte_collected_at
               value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
-    zoom_message_activity:
+    message_activities:
       type: DeclarativeStream
-      name: zoom_message_activity
+      name: message_activities
       retriever:
         type: SimpleRetriever
         partition_router:
@@ -314,7 +314,7 @@ definitions:
               parent_key: zoom_user_id
               partition_field: zoom_user_id
               stream:
-                $ref: "#/definitions/streams/zoom_users"
+                $ref: "#/definitions/streams/users"
         decoder:
           type: JsonDecoder
         requester:
@@ -349,7 +349,7 @@ definitions:
       schema_loader:
         type: InlineSchemaLoader
         schema:
-          $ref: "#/schemas/zoom_message_activity"
+          $ref: "#/schemas/message_activities"
       transformations:
         - type: AddFields
           fields:
@@ -401,10 +401,10 @@ definitions:
               value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
 
 streams:
-  - $ref: "#/definitions/streams/zoom_users"
-  - $ref: "#/definitions/streams/zoom_meetings"
-  - $ref: "#/definitions/streams/zoom_meeting_participants"
-  - $ref: "#/definitions/streams/zoom_message_activity"
+  - $ref: "#/definitions/streams/users"
+  - $ref: "#/definitions/streams/meetings"
+  - $ref: "#/definitions/streams/participants"
+  - $ref: "#/definitions/streams/message_activities"
 
 spec:
   type: Spec
@@ -452,13 +452,13 @@ spec:
 metadata:
   assist: {}
   autoImportSchema:
-    zoom_users: false
-    zoom_meetings: false
-    zoom_meeting_participants: false
-    zoom_message_activity: false
+    users: false
+    meetings: false
+    participants: false
+    message_activities: false
 
 schemas:
-  zoom_users:
+  users:
     type: object
     $schema: http://json-schema.org/draft-07/schema#
     properties:
@@ -504,7 +504,7 @@ schemas:
           - "null"
         format: date-time
     additionalProperties: true
-  zoom_meetings:
+  meetings:
     type: object
     $schema: http://json-schema.org/draft-07/schema#
     properties:
@@ -585,7 +585,7 @@ schemas:
           - "null"
         format: date-time
     additionalProperties: true
-  zoom_meeting_participants:
+  participants:
     type: object
     $schema: http://json-schema.org/draft-07/schema#
     properties:
@@ -647,7 +647,7 @@ schemas:
           - "null"
         format: date-time
     additionalProperties: true
-  zoom_message_activity:
+  message_activities:
     type: object
     $schema: http://json-schema.org/draft-07/schema#
     properties:

@@ -729,6 +729,8 @@ The current implementation uses the following Zoom API contract:
 - `GET /metrics/meetings/{meeting_uuid}/participants` for meeting-scoped participant attendance evidence, with encoded meeting UUID and tolerant handling for source-side `404` gaps
 - `GET /chat/users/{zoom_user_id}/messages` for separate user-scoped message activity collection
 
+The declarative source manifest names the corresponding source streams `users`, `meetings`, `participants`, and `message_activities`. These stream names are implementation identifiers only; Bronze persistence remains `zoom_users`, `zoom_meetings`, `zoom_meeting_participants`, and `zoom_message_activity`.
+
 Server-to-Server OAuth token acquisition uses `account_id`, `client_id`, and `client_secret`. The design still records source limitations when any endpoint does not expose complete data, but it does not model multiple interchangeable message collection strategies in the current implementation. It never creates synthetic meeting-message joins to compensate.
 
 ### Identity Model
