@@ -97,10 +97,15 @@ if [[ ! -f "${env_file}" ]]; then
 fi
 
 # --- Load credentials ---
-set -a; source "${env_file}"; set +a
+AIRBYTE_CONFIG=$(grep '^AIRBYTE_CONFIG=' "${env_file}" | head -1 | sed "s/^AIRBYTE_CONFIG=//; s/^'//; s/'$//")
 
 if [[ -z "${AIRBYTE_CONFIG:-}" ]]; then
   echo "ERROR: AIRBYTE_CONFIG is not set in ${env_file}" >&2
+  exit 1
+fi
+
+if ! echo "${AIRBYTE_CONFIG}" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
+  echo "ERROR: AIRBYTE_CONFIG is not valid JSON" >&2
   exit 1
 fi
 
