@@ -1,25 +1,27 @@
 # Zoom Connector Specification
 
-> Version 1.0 — March 2026
-> Based on: Collaboration domain unified schema (`docs/connectors/collaboration/README.md`)
+> Version 2.0 — March 2026
+> Based on: [`docs/components/connectors/collaboration/zoom/specs/PRD.md`](./specs/PRD.md), [`docs/components/connectors/collaboration/zoom/specs/DESIGN.md`](./specs/DESIGN.md), Collaboration domain unified schema (`docs/connectors/collaboration/README.md`)
 
-Standalone specification for the Zoom (Collaboration) connector. Collects meeting activity data via the Zoom Reports API and maps it to the unified collaboration Bronze schema. Zoom is often deployed alongside Microsoft Teams and Slack — the same person may accumulate meeting minutes across all three platforms, so cross-source deduplication in Silver is essential.
+Standalone specification for the Zoom (Collaboration) connector. This document aligns to the current Zoom connector PRD and DESIGN: the connector is meeting-first, preserves per-meeting and per-participant evidence as the authoritative synchronous activity model, treats message activity as mandatory through a source-capability-aware async flow, and uses Zoom users only for identity and attribution support.
 
 <!-- toc -->
 
 - [Overview](#overview)
 - [Bronze Tables](#bronze-tables)
-  - [`zoom_users` — User directory](#zoomusers-user-directory)
-  - [`zoom_meeting_activity` — Meeting activity per user per date range](#zoommeetingactivity-meeting-activity-per-user-per-date-range)
-  - [`zoom_collection_runs` — Connector execution log](#zoomcollectionruns-connector-execution-log)
+  - [`zoom_meetings` — Meeting instances](#zoommeetings--meeting-instances)
+  - [`zoom_meeting_participants` — Participant attendance evidence](#zoommeetingparticipants--participant-attendance-evidence)
+  - [`zoom_message_activity` — Message activity](#zoommessageactivity--message-activity)
+  - [`zoom_users` — User directory support](#zoomusers--user-directory-support)
+  - [`zoom_collection_runs` — Connector execution log](#zoomcollectionruns--connector-execution-log)
 - [Source Mapping to Unified Bronze](#source-mapping-to-unified-bronze)
 - [Non-Mapped Unified Tables](#non-mapped-unified-tables)
 - [Identity Resolution](#identity-resolution)
-- [Silver / Gold Mappings](#silver-gold-mappings)
+- [Silver / Gold Mappings](#silver--gold-mappings)
 - [Open Questions](#open-questions)
-  - [OQ-ZOOM-1: Per-meeting participant detail vs. daily summary](#oq-zoom-1-per-meeting-participant-detail-vs-daily-summary)
-  - [OQ-ZOOM-2: `meetings_organized` gap](#oq-zoom-2-meetingsorganized-gap)
-  - [OQ-ZOOM-3: Zoom Chat activity scope](#oq-zoom-3-zoom-chat-activity-scope)
+  - [OQ-ZOOM-1: Message activity source capability variability](#oq-zoom-1-message-activity-source-capability-variability)
+  - [OQ-ZOOM-2: Meeting identity consistency across endpoints](#oq-zoom-2-meeting-identity-consistency-across-endpoints)
+  - [OQ-ZOOM-3: `meetings_organized` gap](#oq-zoom-3-meetingsorganized-gap)
   - [OQ-ZOOM-4: Webinar vs. meeting distinction](#oq-zoom-4-webinar-vs-meeting-distinction)
 
 <!-- /toc -->
@@ -28,76 +30,151 @@ Standalone specification for the Zoom (Collaboration) connector. Collects meetin
 
 ## Overview
 
-**API**: Zoom Reports API v2 — `https://api.zoom.us/v2/`
+**API**: Zoom REST APIs for meeting discovery, meeting detail, participant attendance, user directory support, and message activity where available.
 
 **Category**: Collaboration
 
-**Identity**: `email` from `GET /users` — resolved to canonical `person_id` via Identity Manager.
+**Identity**: `zoom_user_id` and `email` from `GET /users` and embedded meeting or message payloads — resolved to canonical `person_id` via Identity Manager.
 
 **Authentication**: OAuth 2.0 — Server-to-Server OAuth app (recommended). JWT is deprecated as of 2023 and must not be used for new integrations.
 
-**Required OAuth scopes**: `report:read:admin`, `user:read:admin`, `meeting:read:admin`
+**Required OAuth scopes**: depend on the enabled Zoom source capabilities for meetings, participants, users, and message activity. The connector must request the minimum scope set needed for the configured collection paths.
 
-**Field naming**: snake_case — Zoom API returns camelCase; fields are normalised to snake_case at Bronze level.
+**Field naming**: snake_case — Zoom API returns mixed naming styles; fields are normalised to snake_case at Bronze level.
 
-**Why three tables**: The Zoom Reports API separates user-level activity summaries (`/report/users`) from per-meeting participant data (`/report/meetings/{meetingId}/participants`). The user directory (`/users`) is a separate endpoint. Each data shape is stored in its own Bronze table. The collection run log is a fourth monitoring-only table.
+**Why multiple tables**: Zoom exposes distinct synchronous and asynchronous activity shapes. `zoom_meetings` stores authoritative meeting instances, `zoom_meeting_participants` stores participant-level attendance evidence needed for duration metrics, `zoom_message_activity` stores mandatory async activity using the best source-supported path, `zoom_users` provides lightweight attribution support, and `zoom_collection_runs` records observability state.
 
-> **Data Retention Window**
-> Zoom Reports API returns data within a configurable `from`/`to` date range. Historical data is available for at least 12 months. Unlike M365, there is no hard 7-day expiry — however the collector should still run regularly (daily recommended) to maintain day-level granularity.
+> **Collection policy**
+> Ongoing incremental collection is mandatory. Every newly discovered meeting must trigger meeting-scoped enrichment for detail and participants. Historical backfill is best-effort. Message activity is mandatory but collected through direct or aggregated activity endpoints when available, or through separate message or chat flows when those are the only supported source path.
 
 ---
 
 ## Bronze Tables
 
-### `zoom_users` — User directory
+### `zoom_meetings` — Meeting instances
 
-User accounts in the Zoom account. Collected from `GET /users`.
+Authoritative meeting-scoped Bronze table. Collected from the configured Zoom meeting discovery and detail flows. This table is the source of truth for which meetings happened.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `meeting_instance_key` | String | Canonical non-null Bronze identity for the concrete meeting instance |
+| `meeting_series_id` | String | Source-native logical meeting or series identifier |
+| `meeting_occurrence_id` | String | Source occurrence identifier for a concrete recurring instance when available |
+| `meeting_uuid` | String | Source UUID for a concrete realized meeting instance when available |
+| `identity_strength` | String | `uuid`, `occurrence`, or `fallback` depending on normalization quality |
+| `host_user_id` | String | Zoom host user identifier when provided |
+| `topic` | String | Meeting title or topic |
+| `meeting_type` | String | Source-provided meeting classification |
+| `scheduled_start_at` | DateTime | Scheduled start time when provided |
+| `actual_start_at` | DateTime | Actual start time when provided |
+| `actual_end_at` | DateTime | Actual end time when provided |
+| `duration_seconds` | Int | Meeting duration in seconds when derivable from source evidence |
+| `discovered_at` | DateTime | Timestamp when the connector first discovered the meeting |
+| `enrichment_status` | String | `pending`, `in_progress`, `complete`, `limited` |
+| `limitation_code` | String | Explicit source-side limitation when not fully enriched |
+| `source_endpoint` | String | Endpoint or source flow that produced the record |
+| `run_id` | String | Collection run identifier |
+| `data_source` | String | Always `insight_zoom` |
+| `_version` | Int | Deduplication version (monotonic replay marker) |
+| `metadata` | String (JSON) | Full API response |
+
+**Indexes**:
+- `idx_zoom_meetings_instance`: `(meeting_instance_key)`
+- `idx_zoom_meetings_series`: `(meeting_series_id)`
+- `idx_zoom_meetings_start`: `(actual_start_at)`
+
+**Identity note**: `meeting_instance_key` is normalized from the strongest available source identifier:
+1. `meeting_uuid` when available
+2. `meeting_series_id + meeting_occurrence_id` when occurrence identity is available
+3. deterministic fallback from `meeting_series_id` plus strongest available source timestamp when stronger identifiers are unavailable
+
+The fallback path is explicitly weaker and is surfaced through `identity_strength = "fallback"`.
+
+---
+
+### `zoom_meeting_participants` — Participant attendance evidence
+
+Participant-level attendance table collected from the per-meeting participant flow. This table is required because participant duration is a hard `p1` requirement in the current PRD.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `meeting_instance_key` | String | Canonical parent meeting instance identity |
+| `participant_key` | String | Stable participant key from user ID, email, or source participant ID |
+| `zoom_user_id` | String | Zoom internal user ID when known |
+| `email` | String | Participant email when known |
+| `display_name` | String | Participant display name |
+| `join_at` | DateTime | Join timestamp |
+| `leave_at` | DateTime | Leave timestamp |
+| `attendance_duration_seconds` | Int | Participant duration derived from source attendance evidence |
+| `attendance_status` | String | `present`, `partial`, `unknown` |
+| `run_id` | String | Collection run identifier |
+| `data_source` | String | Always `insight_zoom` |
+| `_version` | Int | Deduplication version (monotonic replay marker) |
+| `metadata` | String (JSON) | Full API response |
+
+**Indexes**:
+- `idx_zoom_meeting_participants_meeting`: `(meeting_instance_key)`
+- `idx_zoom_meeting_participants_user`: `(zoom_user_id, email)`
+
+**Note**: participant rows always link to `zoom_meetings` through `meeting_instance_key`. Duration is derived only from explicit source attendance evidence and is never inferred from user-day summary rows.
+
+---
+
+### `zoom_message_activity` — Message activity
+
+Async activity table collected from the best source-supported Zoom message path. The connector must use a suitable direct or aggregated activity endpoint when Zoom provides one; otherwise it must collect message activity through separate message or chat flows. Message content is never stored.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message_activity_id` | String | Stable unique identifier from direct event ID, aggregate key, or derived source key |
+| `zoom_user_id` | String | Zoom internal user ID when known |
+| `email` | String | User email when known |
+| `activity_date` | DateTime | Activity timestamp or aggregation date |
+| `channel_type` | String | Source-supported message surface classification |
+| `message_count` | Int | Count represented by this row |
+| `aggregation_level` | String | `event`, `conversation_day`, `user_day`, or other source-supported grain |
+| `collection_mode` | String | `direct_activity`, `aggregated_activity`, or `separate_chat_flow` |
+| `linked_meeting_instance_key` | String | Nullable canonical meeting link only when provided reliably by source |
+| `linked_meeting_series_id` | String | Nullable source meeting series identifier preserved for traceability |
+| `linked_meeting_occurrence_id` | String | Nullable source meeting occurrence identifier preserved for traceability |
+| `linked_meeting_uuid` | String | Nullable source meeting UUID preserved for traceability |
+| `source_endpoint` | String | Endpoint or source flow used to collect this row |
+| `run_id` | String | Collection run identifier |
+| `data_source` | String | Always `insight_zoom` |
+| `_version` | Int | Deduplication version (monotonic replay marker) |
+| `metadata` | String (JSON) | Full API response without message content |
+
+**Indexes**:
+- `idx_zoom_message_activity_user`: `(zoom_user_id, email, activity_date)`
+- `idx_zoom_message_activity_meeting`: `(linked_meeting_instance_key)`
+
+**Linkage note**: message activity is mandatory, but it is not forced into per-meeting enrichment. `linked_meeting_instance_key` is nullable and is populated only when Zoom exposes reliable meeting-level linkage.
+
+---
+
+### `zoom_users` — User directory support
+
+User support table collected from `GET /users`. This table is used for attribution and identity resolution only; it is not a source-of-truth workforce directory.
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `zoom_user_id` | String | Zoom internal user ID — source-native identifier |
-| `email` | String | User email — primary identity key → `person_id` |
+| `email` | String | User email — primary identity key → `person_id` when available |
 | `first_name` | String | First name |
 | `last_name` | String | Last name |
-| `display_name` | String | Display name (concatenated or provided by API) |
+| `display_name` | String | Display name |
 | `type` | Int | Account type: `1` = Basic, `2` = Licensed, `3` = On-prem |
 | `status` | String | Account status: `active` / `inactive` / `pending` |
-| `dept` | String | Department (if configured) |
-| `timezone` | String | User's timezone setting |
-| `last_login_time` | DateTime | Last login timestamp |
+| `timezone` | String | User timezone setting |
 | `collected_at` | DateTime | Collection timestamp |
+| `run_id` | String | Collection run identifier |
 | `data_source` | String | Always `insight_zoom` |
-| `_version` | Int | Deduplication version (millisecond timestamp) |
+| `_version` | Int | Deduplication version (monotonic replay marker) |
 | `metadata` | String (JSON) | Full API response |
 
 **Indexes**:
 - `idx_zoom_users_email`: `(email)`
 - `idx_zoom_users_id`: `(zoom_user_id)`
-
----
-
-### `zoom_meeting_activity` — Meeting activity per user per date range
-
-Daily aggregated meeting activity per user. Collected from `GET /report/users?from=&to=`. Each row covers one user for one reporting date as returned by the Zoom Reports API.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `zoom_user_id` | String | Zoom internal user ID |
-| `email` | String | User email — identity key |
-| `date` | DateTime | Report date (from `date` field in Zoom Reports API response) |
-| `meetings_count` | Int | Total meetings the user attended |
-| `participants_count` | Int | Total participants across all meetings hosted by this user |
-| `meeting_minutes` | Int | Total meeting minutes (sum across all attended meetings) |
-| `collected_at` | DateTime | Collection timestamp |
-| `data_source` | String | Always `insight_zoom` |
-| `_version` | Int | Deduplication version (millisecond timestamp) |
-| `metadata` | String (JSON) | Full API response row |
-
-**Indexes**:
-- `idx_zoom_meeting_user`: `(email, date)`
-- `idx_zoom_meeting_date`: `(date)`
-
-**Note**: `GET /report/users` returns a summary per user per day within the requested `from`/`to` window. One collection run covers a date range (typically 1–7 days back); rows are deduplicated by `(email, date)` using `_version`.
 
 ---
 
@@ -108,16 +185,25 @@ Daily aggregated meeting activity per user. Collected from `GET /report/users?fr
 | `run_id` | String | Unique run identifier (UUID) |
 | `started_at` | DateTime | Run start timestamp |
 | `completed_at` | DateTime | Run end timestamp |
-| `status` | String | `running` / `completed` / `failed` |
-| `from_date` | DateTime | Start of the reporting window collected |
-| `to_date` | DateTime | End of the reporting window collected |
-| `users_collected` | Int | Rows collected for `zoom_users` |
-| `meeting_activity_collected` | Int | Rows collected for `zoom_meeting_activity` |
+| `status` | String | `running`, `completed`, `completed_with_limitations`, `failed` |
+| `run_type` | String | `scheduled_incremental`, `replay`, `backfill`, `manual_repair` |
+| `discovery_window_start` | DateTime | Meeting discovery window start |
+| `discovery_window_end` | DateTime | Meeting discovery window end |
+| `message_window_start` | DateTime | Message collection window start |
+| `message_window_end` | DateTime | Message collection window end |
+| `meetings_discovered` | Int | Newly discovered meetings |
+| `meetings_enriched` | Int | Meetings completed in this run |
+| `meetings_limited` | Int | Meetings limited by source capability |
+| `participants_collected` | Int | Rows written to `zoom_meeting_participants` |
+| `messages_collected` | Int | Rows written to `zoom_message_activity` |
+| `users_collected` | Int | Rows written to `zoom_users` |
+| `retries_triggered` | Int | Retried enrichment or message work |
 | `api_calls` | Int | Total API calls made |
 | `errors` | Int | Errors encountered |
-| `settings` | String (JSON) | Collection configuration (date range, scopes, account ID) |
+| `limitation_summary` | String (JSON) | Aggregated source-capability limitations |
+| `settings` | String (JSON) | Effective collection configuration |
 | `data_source` | String | Always `insight_zoom` |
-| `_version` | Int | Deduplication version (millisecond timestamp) |
+| `_version` | Int | Deduplication version (monotonic replay marker) |
 
 Monitoring table — not an analytics source.
 
@@ -130,27 +216,40 @@ Zoom data maps into the shared collaboration Bronze schema defined in `docs/conn
 | Unified table | Zoom source table | Key mapping notes |
 |---------------|------------------|-------------------|
 | `collab_users` | `zoom_users` | `zoom_user_id` → `user_id`; `email` → `email`; `display_name` → `display_name`; `status` → `is_active` (1 if `active`, 0 otherwise) |
-| `collab_meeting_activity` | `zoom_meeting_activity` | `zoom_user_id` → `user_id`; `email` → `email`; `meetings_count` → `meetings_attended`; `meeting_minutes * 60` → `audio_duration_seconds`; `date` → `date` |
+| `collab_meeting_activity` | Derived from `zoom_meetings` + `zoom_meeting_participants` | Meeting counts and participation duration are derived from meeting-first evidence instead of `/report/users` daily summaries |
+| `collab_chat_activity` | `zoom_message_activity` | User-attributed Zoom async message activity; linkage to meetings remains optional and nullable |
 
 **`collab_meeting_activity` field mapping**:
 
 | Unified field | Zoom source | Notes |
 |---------------|-------------|-------|
 | `source_instance_id` | configured at collection | Connector instance, e.g. `zoom-acme` |
-| `user_id` | `zoom_user_id` | Source-native ID |
-| `email` | `email` | Identity key |
-| `date` | `date` | Report date |
-| `meetings_attended` | `meetings_count` | Total meetings attended |
-| `audio_duration_seconds` | `meeting_minutes × 60` | Converted from minutes to seconds |
-| `meetings_organized` | NULL | Not available in `/report/users` endpoint |
-| `calls_count` | NULL | Zoom does not distinguish calls from meetings in report summary |
-| `adhoc_meetings_organized` | NULL | Not available |
-| `adhoc_meetings_attended` | NULL | Not available |
-| `scheduled_meetings_organized` | NULL | Not available |
-| `scheduled_meetings_attended` | NULL | Not available |
-| `video_duration_seconds` | NULL | Not available in `/report/users` |
-| `screen_share_duration_seconds` | NULL | Not available in `/report/users` |
-| `report_period` | NULL | Zoom uses explicit `from`/`to`; no period label |
+| `user_id` | `zoom_user_id` from `zoom_meeting_participants` | Source-native participant identity |
+| `email` | `email` from `zoom_meeting_participants` or `zoom_users` | Identity key |
+| `date` | `actual_start_at` from `zoom_meetings` | Normalized to reporting date downstream |
+| `meetings_attended` | count distinct `meeting_instance_key` per user-date | Derived from participant evidence |
+| `audio_duration_seconds` | `attendance_duration_seconds` | Participant-level synchronous duration |
+| `meetings_organized` | derived only when organizer semantics are explicitly supported | Otherwise NULL |
+| `calls_count` | NULL | Zoom scope treats calls as meetings and does not force a separate call semantic |
+| `adhoc_meetings_organized` | NULL unless source semantics support derivation | Source-faithful null by default |
+| `adhoc_meetings_attended` | NULL unless source semantics support derivation | Source-faithful null by default |
+| `scheduled_meetings_organized` | NULL unless source semantics support derivation | Source-faithful null by default |
+| `scheduled_meetings_attended` | NULL unless source semantics support derivation | Source-faithful null by default |
+| `video_duration_seconds` | NULL unless source semantics support derivation | Not assumed by default |
+| `screen_share_duration_seconds` | NULL unless source semantics support derivation | Not assumed by default |
+| `report_period` | NULL | The connector uses explicit windows and meeting evidence, not pre-labelled report periods |
+
+**`collab_chat_activity` field mapping**:
+
+| Unified field | Zoom source | Notes |
+|---------------|-------------|-------|
+| `source_instance_id` | configured at collection | Connector instance |
+| `user_id` | `zoom_user_id` from `zoom_message_activity` | Source-native user identity |
+| `email` | `email` from `zoom_message_activity` or `zoom_users` | Identity key |
+| `date` | `activity_date` | Message event or aggregation date |
+| `total_chat_messages` | `message_count` | Derived directly from message activity row |
+| `channel_type` | `channel_type` | Source-supported message surface classification |
+| `linked_meeting_id` | `linked_meeting_instance_key` | Nullable and present only when source-supported |
 
 ---
 
@@ -160,25 +259,27 @@ The following unified Bronze tables are **not populated** by the Zoom connector:
 
 | Unified table | Reason |
 |---------------|--------|
-| `collab_chat_activity` | Zoom Chat is a separate product; the Zoom Reports API (`/report/users`) does not include chat message counts. If Zoom Chat collection is added in future, it would require a dedicated endpoint. |
 | `collab_email_activity` | Zoom has no email product. |
-| `collab_document_activity` | Zoom has no document storage equivalent. |
+| `collab_document_activity` | Zoom has no document storage equivalent in the current connector scope. |
 
 ---
 
 ## Identity Resolution
 
-**Identity anchor**: `email` from `zoom_users` and embedded in `zoom_meeting_activity`.
+**Identity anchors**:
+- `zoom_user_id` for Zoom-local attribution
+- `email` for downstream cross-source identity resolution when present
 
 **Resolution process**:
-1. Extract `email` from `zoom_users` (confirmed via `GET /users`)
-2. Normalise (lowercase, trim)
-3. Map to canonical `person_id` via Identity Manager in Silver step 2
-4. Propagate `person_id` to all Silver activity rows
+1. Collect `zoom_users` to preserve stable source-native user identifiers and normalized emails.
+2. Join `zoom_meeting_participants` and `zoom_message_activity` to `zoom_users` when source payloads omit one of the identity fields.
+3. Normalize `email` (lowercase, trim).
+4. Map to canonical `person_id` via Identity Manager in Silver step 2.
+5. Propagate `person_id` to downstream meeting and message metrics.
 
-**Cross-platform note**: Employees commonly have meeting activity in Zoom, Microsoft Teams, and Slack simultaneously. Because all three sources use `email` as the identity key and map to the same `collab_meeting_activity` table with `data_source` discriminators, Silver step 2 can aggregate total meeting load across all platforms per `person_id` without joins.
+**Cross-platform note**: Employees commonly have meeting and chat activity in Zoom, Microsoft Teams, Slack, and other collaboration sources simultaneously. Because all these sources ultimately resolve to `person_id`, downstream Silver and Gold layers can compare synchronous and asynchronous collaboration across systems.
 
-**`zoom_user_id`** is the source-native key for Zoom-internal lookups only; it is not used for cross-system identity resolution.
+**Meeting identity note**: `meeting_instance_key` is a Zoom-specific Bronze identity used for meeting persistence and linkage. It is not a cross-system identity key.
 
 ---
 
@@ -187,43 +288,46 @@ The following unified Bronze tables are **not populated** by the Zoom connector:
 | Bronze table | Unified Bronze table | Silver target | Status |
 |-------------|---------------------|--------------|--------|
 | `zoom_users` | `collab_users` | Identity Manager (`email` → `person_id`) | Used for identity resolution |
-| `zoom_meeting_activity` | `collab_meeting_activity` | `class_communication_metrics` | ✓ Mapped — meetings channel |
+| `zoom_meetings` + `zoom_meeting_participants` | `collab_meeting_activity` | `class_communication_metrics` | ✓ Mapped — meetings channel via meeting-first derivation |
+| `zoom_message_activity` | `collab_chat_activity` | `class_communication_metrics` | ✓ Mapped — chat channel |
 
 **`class_communication_metrics`** — existing Silver stream. Zoom adds the `insight_zoom` source:
 
 | `data_source` | `channel` | Bronze table | Bronze field |
 |---------------|-----------|--------------|--------------|
 | `insight_zoom` | `meetings` | `collab_meeting_activity` | `meetings_attended` |
+| `insight_zoom` | `chat` | `collab_chat_activity` | `total_chat_messages` |
 
 **Gold metrics** produced by including Zoom in `class_communication_metrics`:
-- **Meeting load per person**: total meetings attended per week, combining Zoom + Teams (+ Slack huddles when added)
-- **Meeting time burden**: `audio_duration_seconds` aggregated per person per week — cross-source time-in-meetings
-- **Async vs. sync ratio**: meeting hours (Zoom + Teams) vs. chat messages (Teams/Slack/Zulip) per person
+- **Meeting load per person**: total meetings attended per week from participant-backed meeting evidence
+- **Meeting time burden**: `audio_duration_seconds` aggregated per person per week from participant duration
+- **Async vs. sync ratio**: meeting hours vs. Zoom message counts per person
+- **Participation quality**: late-join or short-attendance patterns when downstream analytics choose to use participant-level evidence
 
 ---
 
 ## Open Questions
 
-### OQ-ZOOM-1: Per-meeting participant detail vs. daily summary
+### OQ-ZOOM-1: Message activity source capability variability
 
-`GET /report/users` provides a daily summary per user. `GET /report/meetings/{meetingId}/participants` provides per-meeting participant records including join/leave timestamps, enabling exact duration per participant per meeting.
+The PRD and DESIGN require message activity, but the exact collection path depends on Zoom source capability. Some tenants may expose suitable direct or aggregated message activity endpoints, while others may require separate chat or message collection flows.
 
-**Question**: Should the connector collect per-meeting participant detail in addition to the daily summary? The daily summary is sufficient for `collab_meeting_activity`. Per-meeting detail would enable richer analytics (e.g. actual participation duration, late joins, early leaves) but increases volume significantly in large organisations.
+**Question**: Which message-capability profiles are common enough across target tenants to standardize in the initial implementation, and which should remain optional capability branches?
 
-**Current approach**: collect daily summary only (`zoom_meeting_activity`). Define a separate Bronze table `zoom_meeting_participants` if per-meeting detail is needed.
+### OQ-ZOOM-2: Meeting identity consistency across endpoints
 
-### OQ-ZOOM-2: `meetings_organized` gap
+The DESIGN normalizes `meeting_series_id`, `meeting_occurrence_id`, and `meeting_uuid` into canonical `meeting_instance_key`. Different Zoom endpoints may expose different combinations of these identifiers for the same real-world meeting.
 
-The `/report/users` endpoint does not distinguish meetings the user organised from meetings they only attended — both are counted in `meetings_count`. `collab_meeting_activity.meetings_organized` will be NULL for all Zoom rows.
+**Question**: Are there endpoint-specific edge cases where additional normalization rules are required to prevent split identity for recurring or restarted meetings?
 
-**Impact**: cross-source comparison of meetings organised vs. attended is incomplete — Teams data has both fields, Zoom only has attended count. Gold queries that rely on `meetings_organized` must handle NULL for `insight_zoom`.
+### OQ-ZOOM-3: `meetings_organized` gap
 
-### OQ-ZOOM-3: Zoom Chat activity scope
+The meeting-first design preserves host and organizer context when Zoom exposes it, but some collection paths may still be insufficient to derive trustworthy `meetings_organized` metrics.
 
-Zoom Chat (team messaging) is not included in this spec. If the product team decides to track Zoom Chat alongside Teams and Slack messages, a new endpoint (`/report/chat`) and a separate Bronze table `zoom_chat_activity` would be required, feeding `collab_chat_activity` with `data_source = "insight_zoom"`.
+**Impact**: cross-source comparison of meetings organized vs. attended may remain incomplete for `insight_zoom` until organizer semantics are validated across the chosen endpoints.
 
 ### OQ-ZOOM-4: Webinar vs. meeting distinction
 
-Zoom separates meetings (`/report/meetings`) from webinars (`/report/webinars`). The current spec maps only meetings to `collab_meeting_activity`. Webinars have a different participation model (host + panellists + attendees) and are typically not internal collaboration signals.
+Zoom separates meetings from webinars. The current PRD keeps webinars out of scope.
 
-**Question**: Should webinar attendance be included in `meetings_attended` or excluded from collaboration analytics? Recommend excluding by default unless a specific use case is confirmed.
+**Question**: When webinar support is added later, should it reuse parts of the `zoom_meetings` identity model or land as a separate Bronze entity family?
