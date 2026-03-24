@@ -1,0 +1,16 @@
+name: ingestion
+version: "1.0.0"
+config-version: 2
+
+profile: ingestion
+
+model-paths:
+  - silver
+  - ../connectors
+
+macro-paths:
+  - macros
+
+clean-targets:
+  - target
+  - dbt_packages

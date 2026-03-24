@@ -1,0 +1,18 @@
+<clickhouse>
+    <remote_servers>
+        <default>
+            <shard>
+                <replica>
+                    <host>clickhouse</host>
+                    <port>9000</port>
+                </replica>
+            </shard>
+        </default>
+    </remote_servers>
+
+    <macros>
+        <shard>1</shard>
+        <replica>1</replica>
+        <cluster>default</cluster>
+    </macros>
+</clickhouse>

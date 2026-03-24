@@ -1,0 +1,21 @@
+version: 2
+
+sources:
+  - name: bronze_m365
+    schema: bronze_m365
+    tables:
+      - name: email_activity
+      - name: teams_activity
+
+models:
+  - name: to_comms_events
+    description: "M365 communication events → class_comms_events"
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: user_email
+        description: "User principal name from M365"
+      - name: activity_date
+        tests:
+          - not_null

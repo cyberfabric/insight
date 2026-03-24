@@ -1,0 +1,132 @@
+version: "6.44.0"
+type: DeclarativeSource
+check:
+  type: CheckStream
+  stream_names:
+    - email_activity
+definitions:
+  streams:
+    email_activity:
+      type: DeclarativeStream
+      name: email_activity
+      primary_key:
+        - unique
+      schema_loader:
+        type: InlineSchemaLoader
+        schema:
+          type: object
+          $schema: http://json-schema.org/schema#
+          properties:
+            tenant_id:
+              type: string
+            unique:
+              type: string
+            userPrincipalName:
+              type: string
+            reportRefreshDate:
+              type: string
+            sendCount:
+              type: integer
+      retriever:
+        type: SimpleRetriever
+        requester:
+          type: HttpRequester
+          url_base: https://graph.microsoft.com
+          path: /beta/reports/getEmailActivityUserDetail(date={{stream_slice.start_time}})
+          http_method: GET
+          authenticator:
+            type: SessionTokenAuthenticator
+            login_requester:
+              type: HttpRequester
+              url_base: https://login.microsoftonline.com
+              path: /{{ config['azure_tenant_id'] }}/oauth2/v2.0/token
+              http_method: POST
+              request_body_data:
+                grant_type: client_credentials
+                client_id: "{{ config['client_id'] }}"
+                client_secret: "{{ config['client_secret'] }}"
+                scope: https://graph.microsoft.com/.default
+            session_token_path:
+              - access_token
+            request_authentication:
+              type: Bearer
+        record_selector:
+          type: RecordSelector
+          extractor:
+            type: DpathExtractor
+            field_path: []
+        paginator:
+          type: DefaultPaginator
+          page_token_option:
+            type: RequestOption
+            inject_into: request_parameter
+            field_name: $skiptoken
+          pagination_strategy:
+            type: CursorPagination
+            cursor_value: "{{ headers.get('link', {}).get('next', {}).get('url', '') }}"
+            stop_condition: "{{ headers.get('link', {}).get('next') is none }}"
+      incremental_sync:
+        type: DatetimeBasedCursor
+        cursor_field: reportRefreshDate
+        datetime_format: "%Y-%m-%d"
+        cursor_granularity: P1D
+        start_datetime:
+          type: MinMaxDatetime
+          datetime: "{{ config['start_date'] }}"
+          datetime_format: "%Y-%m-%d"
+        end_datetime:
+          type: MinMaxDatetime
+          datetime: "{{ today_utc() - duration('P3D') }}"
+          datetime_format: "%Y-%m-%d"
+        step: P1D
+        lookback_window: P0D
+      transformations:
+        - type: AddFields
+          fields:
+            - path:
+                - tenant_id
+              value: "{{ config['tenant_id'] }}"
+            - path:
+                - unique
+              value: "{{ record.get('userPrincipalName', '') }}-{{ record.get('reportRefreshDate', '') }}"
+streams:
+  - $ref: "#/definitions/streams/email_activity"
+spec:
+  type: Spec
+  connection_specification:
+    type: object
+    $schema: http://json-schema.org/draft-07/schema#
+    required:
+      - tenant_id
+      - azure_tenant_id
+      - client_id
+      - client_secret
+      - start_date
+    properties:
+      tenant_id:
+        type: string
+        title: Tenant ID
+        description: Insight platform tenant identifier
+        order: 0
+      azure_tenant_id:
+        type: string
+        title: Azure AD Tenant ID
+        description: Microsoft Entra ID (Azure AD) tenant identifier
+        order: 1
+      client_id:
+        type: string
+        title: Client ID
+        description: OAuth2 application (client) ID
+        order: 2
+      client_secret:
+        type: string
+        title: Client Secret
+        description: OAuth2 client secret
+        airbyte_secret: true
+        order: 3
+      start_date:
+        type: string
+        title: Start Date
+        description: "Start date for data extraction (YYYY-MM-DD)"
+        pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        order: 4

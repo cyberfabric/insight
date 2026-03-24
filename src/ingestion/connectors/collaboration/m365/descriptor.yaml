@@ -1,0 +1,12 @@
+name: m365
+version: "1.0"
+type: nocode
+
+silver_targets:
+  - class_comms_events
+
+streams:
+  - name: email_activity
+    bronze_table: email_activity
+    primary_key: [unique]
+    cursor_field: reportRefreshDate

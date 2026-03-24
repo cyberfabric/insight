@@ -1,0 +1,33 @@
+id: m365-sync
+namespace: ingestion.example-tenant
+
+triggers:
+  - id: daily
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 2 * * *"
+
+tasks:
+  - id: airbyte-sync
+    type: io.kestra.plugin.core.http.Request
+    uri: "http://host.docker.internal:8000/api/v1/connections/sync"
+    method: POST
+    contentType: application/json
+    body: |
+      {"connectionId": "{{ vars.m365_connection_id }}"}
+
+  - id: dbt-bronze-to-silver
+    type: io.kestra.plugin.dbt.cli.DbtCLI
+    commands:
+      - dbt run --profiles-dir . --select tag:silver
+    beforeCommands:
+      - pip install dbt-clickhouse
+
+  - id: log-complete
+    type: io.kestra.plugin.core.log.Log
+    message: "M365 sync and transform complete for example-tenant"
+
+errors:
+  - id: notify-failure
+    type: io.kestra.plugin.core.log.Log
+    message: "FAILED: M365 sync for example-tenant"
+    level: ERROR
