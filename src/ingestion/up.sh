@@ -2,7 +2,6 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-echo "=== Checking prerequisites ==="
 if ! command -v docker &>/dev/null; then
   echo "Docker is required. Install: https://docs.docker.com/get-docker/"
   exit 1
@@ -13,8 +12,8 @@ if ! command -v abctl &>/dev/null; then
   curl -LsfS https://get.airbyte.com | bash
 fi
 
-echo "=== Starting Airbyte (abctl) ==="
-abctl local install --low-resource-mode 2>&1 | tail -5
+echo "=== Starting Airbyte ==="
+abctl local install --low-resource-mode --values config/airbyte/values.yaml 2>&1 | tail -3
 
 echo "=== Starting Kestra + ClickHouse ==="
 docker compose up -d

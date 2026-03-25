@@ -35,12 +35,14 @@ SECRETS_TMPFS_OPTS="${AIRBYTE_SECRETS_TMPFS_OPTS:-/secrets:rw,mode=1777}"
 usage() {
   cat >&2 <<EOF
 Usage:
-  $0 check   <class>/<connector>
+  $0 validate <class>/<connector>
+  $0 check    <class>/<connector>
   $0 discover <class>/<connector>
   $0 read     <class>/<connector> <connection>
 
 Commands:
-  check     Validate connector manifest and credentials
+  validate  Validate manifest structure (no credentials needed)
+  check     Validate manifest + credentials against source API
   discover  List available streams and their schemas
   read      Extract data (outputs Airbyte Protocol JSON to stdout)
 
@@ -86,27 +88,26 @@ if [[ ! -f "${manifest_path}" ]]; then
   exit 1
 fi
 
-if [[ ! -f "${env_file}" ]]; then
-  echo "ERROR: Credentials file not found: ${env_file}" >&2
-  if [[ -f "${connector_dir}/example.env.local" ]]; then
-    echo "  Copy the template: cp ${connector_dir}/example.env.local ${env_file}" >&2
-  else
-    echo "  Create ${env_file} with: AIRBYTE_CONFIG='{\"tenant_id\":\"...\"}'" >&2
+# --- Load credentials (skip for validate) ---
+if [[ "${command}" != "validate" ]]; then
+  if [[ ! -f "${env_file}" ]]; then
+    echo "ERROR: Credentials file not found: ${env_file}" >&2
+    if [[ -f "${connector_dir}/example.env.local" ]]; then
+      echo "  Copy the template: cp ${connector_dir}/example.env.local ${env_file}" >&2
+    else
+      echo "  Create ${env_file} with: AIRBYTE_CONFIG='{\"tenant_id\":\"...\"}'" >&2
+    fi
+    exit 1
   fi
-  exit 1
-fi
-
-# --- Load credentials ---
-AIRBYTE_CONFIG=$(grep '^AIRBYTE_CONFIG=' "${env_file}" | head -1 | sed "s/^AIRBYTE_CONFIG=//; s/^'//; s/'$//")
-
-if [[ -z "${AIRBYTE_CONFIG:-}" ]]; then
-  echo "ERROR: AIRBYTE_CONFIG is not set in ${env_file}" >&2
-  exit 1
-fi
-
-if ! echo "${AIRBYTE_CONFIG}" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
-  echo "ERROR: AIRBYTE_CONFIG is not valid JSON" >&2
-  exit 1
+  AIRBYTE_CONFIG=$(grep '^AIRBYTE_CONFIG=' "${env_file}" | head -1 | sed "s/^AIRBYTE_CONFIG=//; s/^'//; s/'$//")
+  if [[ -z "${AIRBYTE_CONFIG:-}" ]]; then
+    echo "ERROR: AIRBYTE_CONFIG is not set in ${env_file}" >&2
+    exit 1
+  fi
+  if ! echo "${AIRBYTE_CONFIG}" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
+    echo "ERROR: AIRBYTE_CONFIG is not valid JSON" >&2
+    exit 1
+  fi
 fi
 
 # --- Build wrapper image if missing ---
@@ -122,6 +123,34 @@ fi
 
 # --- Execute command ---
 case "${command}" in
+  validate)
+    shift 2
+    docker run --rm \
+      -e 'AIRBYTE_CONFIG={}' \
+      -e "AIRBYTE_COMMAND=${COMMAND_NAME}" \
+      --tmpfs "${SECRETS_TMPFS_OPTS}" \
+      -v "${connector_dir}:/input:ro" \
+      "${IMAGE}" check \
+        --config /secrets/config.json \
+        --manifest-path /input/connector.yaml \
+        "$@" 2>&1 | {
+      valid=true
+      while IFS= read -r line; do
+        if echo "$line" | grep -q "declarative_component_schema.yaml schema failed"; then
+          valid=false
+          echo "$line"
+        elif echo "$line" | grep -q "ValidationError\|is not valid under"; then
+          echo "$line" >&2
+        fi
+      done
+      if $valid; then
+        echo '{"type":"LOG","log":{"level":"INFO","message":"Manifest is valid"}}'
+      else
+        exit 1
+      fi
+    }
+    ;;
+
   check|discover)
     shift 2
     docker run --rm \

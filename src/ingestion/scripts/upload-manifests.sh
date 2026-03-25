@@ -77,6 +77,23 @@ for p in json.load(sys.stdin).get('projects',[]):
     get_token
     api POST "/api/v1/connector_builder_projects/update" \
       "{\"workspaceId\":\"${workspace_id}\",\"builderProjectId\":\"${project_id}\",\"builderProject\":{\"name\":\"${name}\",\"draftManifest\":${manifest_json}}}" >/dev/null
+
+    echo "  Publishing active manifest..."
+    get_token
+
+    local source_def_id
+    source_def_id=$(api POST "/api/v1/connector_builder_projects/get" \
+      "{\"workspaceId\":\"${workspace_id}\",\"builderProjectId\":\"${project_id}\"}" \
+      | python3 -c "import sys,json; print(json.load(sys.stdin).get('declarativeManifest',{}).get('sourceDefinitionId',''))" 2>/dev/null || true)
+
+    if [[ -n "$source_def_id" ]]; then
+      get_token
+      api POST "/api/v1/declarative_source_definitions/update_active_manifest" \
+        "{\"sourceDefinitionId\":\"${source_def_id}\",\"manifest\":${manifest_json},\"spec\":{\"connectionSpecification\":${conn_spec}},\"version\":$(date +%s)}" >/dev/null
+    fi
+
+    # Note: testing values in Airbyte UI must be set manually.
+    # The update_testing_values API requires session auth not available via CLI.
   else
     echo "  Creating '${name}'..."
     get_token
