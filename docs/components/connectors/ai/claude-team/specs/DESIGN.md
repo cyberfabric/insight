@@ -1,121 +1,875 @@
-# DESIGN — Claude Team Plan Connector
+# DESIGN — Claude Team Connector
 
-> Version 1.0 — March 2026
-> Based on: `docs/CONNECTORS_REFERENCE.md` Source 14 (Claude Team Plan)
+- [ ] `p3` - **ID**: `cpt-insightspec-design-claude-team-connector`
 
 <!-- toc -->
 
-- [1. Overview](#1-overview)
-- [2. Bronze Tables](#2-bronze-tables)
-  - [`claude_team_seats` — Seat assignment and status](#claudeteamseats-seat-assignment-and-status)
-  - [`claude_team_activity` — Daily usage per user per model per client](#claudeteamactivity-daily-usage-per-user-per-model-per-client)
-  - [`claude_team_collection_runs` — Connector execution log](#claudeteamcollectionruns-connector-execution-log)
-- [3. Identity Resolution](#3-identity-resolution)
-- [4. Silver / Gold Mappings](#4-silver--gold-mappings)
+- [1. Architecture Overview](#1-architecture-overview)
+  - [1.1 Architectural Vision](#11-architectural-vision)
+  - [1.2 Architecture Drivers](#12-architecture-drivers)
+  - [1.3 Architecture Layers](#13-architecture-layers)
+- [2. Principles & Constraints](#2-principles--constraints)
+  - [2.1 Design Principles](#21-design-principles)
+  - [2.2 Constraints](#22-constraints)
+- [3. Technical Architecture](#3-technical-architecture)
+  - [3.1 Domain Model](#31-domain-model)
+  - [3.2 Component Model](#32-component-model)
+  - [3.3 API Contracts](#33-api-contracts)
+  - [3.4 Internal Dependencies](#34-internal-dependencies)
+  - [3.5 External Dependencies](#35-external-dependencies)
+  - [3.6 Interactions & Sequences](#36-interactions--sequences)
+  - [3.7 Database schemas & tables](#37-database-schemas--tables)
+  - [3.8 Deployment Topology](#38-deployment-topology)
+- [4. Additional context](#4-additional-context)
+  - [Identity Resolution Strategy](#identity-resolution-strategy)
+  - [Silver / Gold Mappings](#silver--gold-mappings)
+  - [Incremental Sync Strategy](#incremental-sync-strategy)
+  - [Capacity Estimates](#capacity-estimates)
+  - [Open Questions](#open-questions)
+  - [Non-Applicable Domains](#non-applicable-domains)
+  - [Architecture Decision Records](#architecture-decision-records)
+- [5. Traceability](#5-traceability)
 
 <!-- /toc -->
 
----
+## 1. Architecture Overview
 
-## 1. Overview
+### 1.1 Architectural Vision
 
-**API**: Anthropic Admin API — user management and usage endpoints for Team/Enterprise accounts
+The Claude Team connector extracts team membership, Claude Code usage reports, workspace structures, workspace membership, and pending invitations from five Anthropic Admin API endpoints and delivers them to the Bronze layer of the Insight platform. The connector is implemented as an Airbyte declarative manifest -- a YAML file that defines all streams, authentication, pagination, incremental sync, and schemas without code.
 
-**Category**: AI Tool
+The connector defines five data streams and one monitoring stream:
 
-**Authentication**: Admin API key (Anthropic Console — Team/Enterprise plan)
+1. **`claude_team_users`** -- seat roster via `GET /v1/organizations/users` (full refresh, cursor-paginated)
+2. **`claude_team_code_usage`** -- daily Claude Code metrics via `GET /v1/organizations/usage_report/claude_code` (incremental, date-based)
+3. **`claude_team_workspaces`** -- workspace structure via `GET /v1/organizations/workspaces` (full refresh)
+4. **`claude_team_workspace_members`** -- per-workspace membership via `GET /v1/organizations/workspaces/{id}/members` (full refresh, substream of workspaces)
+5. **`claude_team_invites`** -- pending invitations via `GET /v1/organizations/invites` (full refresh)
 
-**Identity**: `email` in both `claude_team_seats` and `claude_team_activity` — resolved to canonical `person_id` via Identity Manager.
+A sixth stream (`claude_team_collection_runs`) captures connector execution metadata for operational monitoring.
 
-**Field naming**: snake_case — preserved as-is at Bronze level.
+All data streams share the identity key `email` (field name varies: `email` in users/invites, `actor_identifier` in code usage). The monitoring stream does not carry a user identity field.
 
-**Why two tables**: Seat assignment (one row per user) and daily activity (many rows per user over time) are different entities. Merging would repeat seat metadata on every activity row.
+#### System Context
 
-**Key difference from Claude API (Source 13)**: This connector covers usage through the web interface (`web`), mobile app (`mobile`), and Claude Code CLI (`claude_code`) — not programmatic API calls. Billing is flat per-seat/month; per-request cost is not meaningful.
+```mermaid
+graph LR
+    AnthropicAPI["Anthropic Admin API<br/>api.anthropic.com"]
+    SrcContainer["Source Container<br/>source-declarative-manifest<br/>+ connector.yaml"]
+    Airbyte["Airbyte Platform<br/>orchestration, state, scheduling"]
+    Dest["Destination Connector<br/>PostgreSQL / ClickHouse"]
+    Bronze["Bronze Layer<br/>6 tables: users, code_usage,<br/>workspaces, workspace_members,<br/>invites, collection_runs"]
+    Silver["Silver Layer<br/>Identity Manager -> person_id<br/>class_ai_dev_usage<br/>class_ai_tool_usage"]
 
-| Aspect | Claude API (Source 13) | Claude Team (Source 14) |
-|--------|------------------------|-------------------------|
-| Billing | Pay-per-token | Fixed per-seat/month |
-| Access | `api.anthropic.com` | `claude.ai` + Claude Code |
-| Usage data | Token counts + costs | Token counts, no per-request cost |
-| Clients | Programmatic only | `web`, `claude_code`, `mobile` |
+    AnthropicAPI -->|"REST/JSON<br/>x-api-key auth"| SrcContainer
+    SrcContainer -->|"RECORD messages"| Dest
+    SrcContainer -->|"STATE messages"| Airbyte
+    Airbyte -->|"triggers sync"| SrcContainer
+    Dest -->|"writes"| Bronze
+    Bronze -->|"reads"| Silver
+```
 
-**Claude Code** (`client = 'claude_code'`) signals developer AI tool usage — large contexts, long multi-turn sessions, heavy tool use (`stop_reason = 'tool_use'`), high `cache_write_tokens` from system prompt and file context caching.
+### 1.2 Architecture Drivers
 
----
+**PRD**: [PRD.md](./PRD.md)
 
-## 2. Bronze Tables
+#### Functional Drivers
 
-### `claude_team_seats` — Seat assignment and status
+| Requirement | Design Response |
+|-------------|-----------------|
+| `cpt-insightspec-fr-claude-team-users-collect` | Stream `claude_team_users` -> `GET /v1/organizations/users` (full refresh, cursor-paginated) |
+| `cpt-insightspec-fr-claude-team-code-usage-collect` | Stream `claude_team_code_usage` -> `GET /v1/organizations/usage_report/claude_code` (incremental) |
+| `cpt-insightspec-fr-claude-team-workspaces-collect` | Stream `claude_team_workspaces` -> `GET /v1/organizations/workspaces` (full refresh) |
+| `cpt-insightspec-fr-claude-team-workspace-members-collect` | Stream `claude_team_workspace_members` -> `GET /v1/organizations/workspaces/{id}/members` (substream) |
+| `cpt-insightspec-fr-claude-team-invites-collect` | Stream `claude_team_invites` -> `GET /v1/organizations/invites` (full refresh) |
+| `cpt-insightspec-fr-claude-team-collection-runs` | Stream `claude_team_collection_runs` -- connector execution log |
+| `cpt-insightspec-fr-claude-team-deduplication` | Primary keys: `id` (users/workspaces/invites), `unique` (code_usage/workspace_members), `run_id` (collection_runs) |
+| `cpt-insightspec-fr-claude-team-identity-key` | `email`/`actor_identifier` present in user-facing streams |
+
+#### NFR Allocation
+
+| NFR ID | NFR Summary | Allocated To | Design Response | Verification Approach |
+|--------|-------------|--------------|-----------------|----------------------|
+| `cpt-insightspec-nfr-claude-team-freshness` | Data in Bronze within 48h of activity | Orchestrator scheduling | Daily scheduled runs; cursor starts from last sync position | Compare latest `date` in Bronze with current date |
+| `cpt-insightspec-nfr-claude-team-completeness` | 100% extraction per stream per run | Pagination | All endpoints paginated to exhaustion | Compare record count with API pagination metadata |
+| `cpt-insightspec-nfr-claude-team-schema-stability` | No unannounced breaking changes | Manifest schema | Inline schema definitions; versioned connector | Schema diff on version updates |
+
+### 1.3 Architecture Layers
+
+- [ ] `p3` - **ID**: `cpt-insightspec-tech-claude-team-connector`
+
+| Layer | Responsibility | Technology |
+|-------|---------------|------------|
+| Source API | Anthropic Admin API endpoints | REST / JSON (GET only) |
+| Authentication | API key via `x-api-key` header | `ApiKeyAuthenticator` with `anthropic-version: 2023-06-01` |
+| Connector | Stream definitions, pagination, incremental sync | Airbyte declarative manifest (YAML) |
+| Execution | Container runtime for source and destination | Airbyte Declarative Connector framework (latest) |
+| Bronze | Raw data storage with source-native schema | Destination connector (PostgreSQL / ClickHouse) |
+
+## 2. Principles & Constraints
+
+### 2.1 Design Principles
+
+#### One Stream per Endpoint
+
+- [ ] `p2` - **ID**: `cpt-insightspec-principle-claude-team-one-stream-per-endpoint`
+
+Each Anthropic Admin API endpoint maps to exactly one stream. `GET /v1/organizations/users` -> `claude_team_users`. `GET /v1/organizations/usage_report/claude_code` -> `claude_team_code_usage`. `GET /v1/organizations/workspaces` -> `claude_team_workspaces`. `GET /v1/organizations/workspaces/{id}/members` -> `claude_team_workspace_members`. `GET /v1/organizations/invites` -> `claude_team_invites`. This preserves the API's data model without transformation and keeps each stream independently configurable.
+
+#### Source-Native Schema
+
+- [ ] `p2` - **ID**: `cpt-insightspec-principle-claude-team-source-native-schema`
+
+Bronze tables preserve the original Anthropic Admin API field names in their native casing (snake_case). Nested objects (notably `data_residency` in workspaces) are preserved as-is at Bronze level -- flattening and type normalization happen in the Silver layer. The only added fields are `tenant_id`, `source_instance_id`, `collected_at`, `data_source`, and `_version` for framework support and deduplication.
+
+### 2.2 Constraints
+
+#### API Key Authentication with Version Header
+
+- [ ] `p2` - **ID**: `cpt-insightspec-constraint-claude-team-api-key-auth`
+
+The Anthropic Admin API uses API key authentication via the `x-api-key` header. Every request must also include the `anthropic-version: 2023-06-01` header. This differs from Bearer token auth and from Basic auth (as used by Cursor). The manifest must use `ApiKeyAuthenticator` with `header: x-api-key` and add `anthropic-version` as a request header on each requester.
+
+#### All Endpoints are GET
+
+- [ ] `p2` - **ID**: `cpt-insightspec-constraint-claude-team-get-endpoints`
+
+All five Anthropic Admin API endpoints use HTTP GET with query parameters for pagination and date ranges. This differs from the Cursor connector where two endpoints use POST with JSON body. All parameters are passed as query strings.
+
+#### Cursor-Based Pagination
+
+- [ ] `p2` - **ID**: `cpt-insightspec-constraint-claude-team-cursor-pagination`
+
+The users endpoint uses cursor-based pagination with `after_id` parameter (the ID of the last record in the previous page). This differs from the page-increment pagination used by Cursor. The manifest must use `CursorPagination` for streams that support it.
+
+#### Substream Pattern for Workspace Members
+
+- [ ] `p2` - **ID**: `cpt-insightspec-constraint-claude-team-substream`
+
+Workspace members requires iterating over all workspaces from the `claude_team_workspaces` stream and fetching members for each workspace. In the Airbyte declarative framework, this is implemented via `SubstreamPartitionRouter` keyed on workspace `id` values. A 1-second delay between workspace iterations prevents rate limiting.
+
+#### ISO 8601 Date Parameters
+
+- [ ] `p2` - **ID**: `cpt-insightspec-constraint-claude-team-iso-dates`
+
+The code usage endpoint uses ISO 8601 datetime parameters (`starting_at`, `ending_at`) with `bucket_width=1d`. This differs from Cursor's epoch millisecond format. The manifest's `DatetimeBasedCursor` must use ISO format strings.
+
+## 3. Technical Architecture
+
+### 3.1 Domain Model
+
+| Entity | Description |
+|--------|-------------|
+| `User` | A seat assignment in the Claude Team workspace. Key: `id`. Contains email, name, role, status, activity timestamps. |
+| `CodeUsage` | One user's daily Claude Code usage. Key: composite `(date, actor_type, actor_identifier, terminal_type)`. Contains token metrics, tool call counts, session counts. |
+| `Workspace` | An organizational unit. Key: `id`. Contains name, display name, creation/archival timestamps, data residency. |
+| `WorkspaceMember` | A user-to-workspace assignment. Key: composite `{user_id}:{workspace_id}`. Contains workspace role. |
+| `Invite` | A pending seat invitation. Key: `id`. Contains email, role, status, creation/expiry timestamps, target workspace. |
+
+**Relationships**:
+
+- `User` -> provides `email` -> identity key for cross-system resolution
+- `CodeUsage` -> keyed by `actor_identifier` (email) + `date` -> daily usage roll-up per user
+- `Workspace` -> parent of `WorkspaceMember` (1:N)
+- `WorkspaceMember` -> links `User` to `Workspace` (M:N join)
+- `Invite` -> references target `Workspace` via `workspace_id`
+- All entities -> `email`/`actor_identifier` -> resolved to `person_id` by Identity Manager (Silver)
+
+**Schema format**: Airbyte declarative manifest YAML with inline JSON Schema definitions per stream.
+**Schema location**: `src/ingestion/connectors/ai/claude-team/connector.yaml`.
+
+### 3.2 Component Model
+
+The Claude Team connector is a single declarative manifest that defines five data streams and one monitoring stream. There are no custom code components.
+
+#### Component Diagram
+
+```mermaid
+graph TD
+    subgraph Manifest["connector.yaml (Declarative Manifest)"]
+        Auth["ApiKeyAuthenticator<br/>x-api-key header<br/>+ anthropic-version: 2023-06-01"]
+        S1["Stream: claude_team_users<br/>GET /v1/organizations/users<br/>Full refresh, CursorPagination (after_id)"]
+        S2["Stream: claude_team_code_usage<br/>GET /v1/organizations/usage_report/claude_code<br/>Incremental, DatetimeBasedCursor"]
+        S3["Stream: claude_team_workspaces<br/>GET /v1/organizations/workspaces<br/>Full refresh"]
+        S4["Stream: claude_team_workspace_members<br/>GET /v1/organizations/workspaces/{id}/members<br/>Full refresh, SubstreamPartitionRouter"]
+        S5["Stream: claude_team_invites<br/>GET /v1/organizations/invites<br/>Full refresh"]
+        Auth --> S1 & S2 & S3 & S4 & S5
+    end
+
+    S1 -->|"data[]"| Dest["Destination"]
+    S2 -->|"data[]"| Dest
+    S3 -->|"data[]"| Dest
+    S4 -->|"data[]"| Dest
+    S5 -->|"data[]"| Dest
+```
+
+#### Connector Package Structure
+
+The Claude Team connector is packaged as a self-contained unit following the standard connector package layout:
+
+```text
+src/ingestion/connectors/ai/claude-team/
++-- connector.yaml          # Airbyte declarative manifest (nocode)
++-- descriptor.yaml         # Package metadata: streams, Silver targets
++-- dbt/
+    +-- to_ai_dev_usage.sql # dbt model: Bronze -> Silver (class_ai_dev_usage)
+    +-- to_ai_tool_usage.sql# dbt model: placeholder (class_ai_tool_usage)
+    +-- schema.yml          # Column documentation + dbt tests
+```
+
+The dbt model `to_ai_dev_usage.sql` transforms `claude_team_code_usage` Bronze table into the unified `class_ai_dev_usage` Silver table. `tenant_id` MUST be preserved and tested with a `not_null` dbt test. The `data_source` column (set to `'insight_claude_team'` in Bronze) MUST be carried through to Silver as the canonical source discriminator.
+
+The dbt model `to_ai_tool_usage.sql` is a placeholder -- the Anthropic Admin API does not currently expose web/mobile activity data through a separate endpoint. This model documents the architectural gap and will be implemented when the data becomes available.
+
+#### Connector Package Descriptor
+
+- [ ] `p2` - **ID**: `cpt-insightspec-component-claude-team-descriptor`
+
+The `descriptor.yaml` registers the connector package with the platform, declaring its streams, Bronze table mappings, and Silver layer targets:
+
+```yaml
+name: claude-team
+version: "1.0"
+type: nocode
+
+silver_targets:
+  - class_ai_dev_usage
+  - class_ai_tool_usage
+
+streams:
+  - name: claude_team_users
+    bronze_table: claude_team_users
+    primary_key: [id]
+    cursor_field: null
+
+  - name: claude_team_code_usage
+    bronze_table: claude_team_code_usage
+    primary_key: [unique]
+    cursor_field: date
+
+  - name: claude_team_workspaces
+    bronze_table: claude_team_workspaces
+    primary_key: [id]
+    cursor_field: null
+
+  - name: claude_team_workspace_members
+    bronze_table: claude_team_workspace_members
+    primary_key: [unique]
+    cursor_field: null
+
+  - name: claude_team_invites
+    bronze_table: claude_team_invites
+    primary_key: [id]
+    cursor_field: null
+
+  - name: claude_team_collection_runs
+    bronze_table: claude_team_collection_runs
+    primary_key: [run_id]
+    cursor_field: null
+```
+
+**Descriptor fields**:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `user_id` | String | Anthropic platform user ID |
-| `email` | String | User email — primary key for cross-system identity resolution |
+| `name` | String | Unique connector identifier |
+| `version` | String | Package semantic version |
+| `type` | Enum | `nocode` (declarative manifest) or `cdk` (custom Python) |
+| `silver_targets` | Array(String) | Silver tables this connector populates |
+| `streams[].name` | String | Airbyte stream name |
+| `streams[].bronze_table` | String | ClickHouse Bronze table name |
+| `streams[].primary_key` | Array(String) | Deduplication key fields |
+| `streams[].cursor_field` | String / null | Incremental sync cursor field (`null` for full refresh or monitoring streams) |
+
+#### Claude Team Connector Manifest
+
+- [ ] `p2` - **ID**: `cpt-insightspec-component-claude-team-manifest`
+
+##### Why this component exists
+
+Defines the complete Claude Team connector as a YAML declarative manifest executed by the Airbyte Declarative Connector framework. No code required.
+
+##### Responsibility scope
+
+Defines all 5 data streams with: Anthropic Admin API endpoint paths, API key authentication, cursor-based pagination, date-range-based incremental sync (code usage), substream routing (workspace members), and inline JSON schemas.
+
+##### Manifest Skeleton
+
+The manifest follows the Airbyte declarative framework structure (latest stable version). Key structural elements:
+
+```yaml
+version: "6.2.0"
+type: DeclarativeSource
+check:
+  type: CheckStream
+  stream_names: [claude_team_users]
+
+definitions:
+  bearer_authenticator:
+    type: ApiKeyAuthenticator
+    api_token: "{{ config['admin_api_key'] }}"
+    header: x-api-key
+
+streams:
+  - type: DeclarativeStream
+    name: claude_team_users
+    primary_key: [id]
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        properties:
+          tenant_id: { type: string }
+          id: { type: string }
+          email: { type: string }
+          # ... remaining fields per S3.7 table schema
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: https://api.anthropic.com
+        path: /v1/organizations/users
+        http_method: GET
+        authenticator:
+          $ref: "#/definitions/bearer_authenticator"
+        request_headers:
+          anthropic-version: "2023-06-01"
+        request_parameters:
+          limit: "100"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ last_record['id'] }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: after_id
+    transformations:
+      - type: AddFields
+        fields:
+          - path: [tenant_id]
+            value: "{{ config['tenant_id'] }}"
+          - path: [source_instance_id]
+            value: "{{ config.get('source_instance_id', '') }}"
+          - path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - path: [data_source]
+            value: "insight_claude_team"
+  # ... remaining streams follow same pattern
+
+spec:
+  type: Spec
+  connection_specification:
+    type: object
+    required: [tenant_id, admin_api_key]
+    properties:
+      tenant_id:
+        type: string
+        title: Tenant ID
+        order: 0
+      admin_api_key:
+        type: string
+        title: Admin API Key
+        airbyte_secret: true
+        order: 1
+```
+
+This is a structural skeleton -- the full manifest is in `src/ingestion/connectors/ai/claude-team/connector.yaml`.
+
+##### Responsibility boundaries
+
+Orchestration, scheduling, and state storage are handled by the Airbyte platform. Silver/Gold transformations and destination-specific configuration are out of scope.
+
+##### Related components (by ID)
+
+- Airbyte Declarative Connector framework (`source-declarative-manifest` image) -- executes this manifest
+
+#### tenant_id Injection Component
+
+- [ ] `p1` - **ID**: `cpt-insightspec-component-claude-team-tenant-id-injection`
+
+Ensures every record emitted by all streams contains `tenant_id` from the connector config. Implemented as an `AddFields` transformation in the manifest, applied to every stream. See SS3.3 Source Config Schema for the injection pattern.
+
+### 3.3 API Contracts
+
+#### Anthropic Admin API Endpoints
+
+- [ ] `p2` - **ID**: `cpt-insightspec-interface-claude-team-api-endpoints`
+
+- **Contracts**: `cpt-insightspec-contract-claude-team-admin-api`
+- **Technology**: REST / JSON
+
+| Stream | Endpoint | Method | Pagination | Date Params |
+|--------|----------|--------|------------|-------------|
+| `claude_team_users` | `GET /v1/organizations/users` | GET | Cursor: `after_id`, `limit=100` | None |
+| `claude_team_code_usage` | `GET /v1/organizations/usage_report/claude_code` | GET | Cursor-based | Query: `starting_at` (ISO), `ending_at` (ISO), `bucket_width=1d` |
+| `claude_team_workspaces` | `GET /v1/organizations/workspaces` | GET | `limit` param | None |
+| `claude_team_workspace_members` | `GET /v1/organizations/workspaces/{id}/members` | GET | `limit` param | None |
+| `claude_team_invites` | `GET /v1/organizations/invites` | GET | `limit` param | None |
+
+**Pagination details**:
+
+| Stream | Pagination mechanism | Stop condition |
+|--------|---------------------|----------------|
+| `claude_team_users` | `after_id` cursor (last record ID) | Empty response or fewer records than `limit` |
+| `claude_team_code_usage` | Cursor-based | No more pages returned |
+| `claude_team_workspaces` | Single page (all results with `limit`) | Single response |
+| `claude_team_workspace_members` | Per-workspace, single page each | Iterated over all workspace IDs |
+| `claude_team_invites` | Single page (all results with `limit`) | Single response |
+
+**Response structure**:
+
+| Stream | Response root | Records path |
+|--------|--------------|--------------|
+| `claude_team_users` | `{data: [...], has_more: bool}` | `data` |
+| `claude_team_code_usage` | `{data: [...]}` | `data` |
+| `claude_team_workspaces` | `{data: [...]}` | `data` |
+| `claude_team_workspace_members` | `{data: [...]}` | `data` |
+| `claude_team_invites` | `{data: [...]}` | `data` |
+
+**Authentication**:
+
+API key authentication:
+- Header: `x-api-key: {admin_api_key}`
+- Required header: `anthropic-version: 2023-06-01`
+- In Airbyte manifest: `ApiKeyAuthenticator` with `header: x-api-key`, plus `request_headers` for the version header
+
+#### Source Config Schema
+
+- [ ] `p2` - **ID**: `cpt-insightspec-interface-claude-team-source-config`
+
+The source config (credentials) for the Claude Team connector:
+
+```json
+{
+  "tenant_id": "Tenant isolation identifier (UUID)",
+  "admin_api_key": "Anthropic Admin API key (Team/Enterprise workspace)"
+}
+```
+
+Both fields are required. `tenant_id` is a platform invariant -- every connector must accept it. `admin_api_key` is marked `airbyte_secret: true` -- it is never logged or displayed.
+
+#### tenant_id Injection
+
+Per the ingestion layer tenant isolation principle, every record emitted by the connector MUST contain `tenant_id`. This is achieved via an `AddFields` transformation in the manifest:
+
+```yaml
+# In spec.connection_specification:
+required: [tenant_id, admin_api_key]
+properties:
+  tenant_id:
+    type: string
+    title: Tenant ID
+    description: Tenant isolation identifier
+    order: 0
+  admin_api_key:
+    type: string
+    title: Admin API Key
+    airbyte_secret: true
+    order: 1
+
+# In each stream's transformations:
+transformations:
+  - type: AddFields
+    fields:
+      - path: [tenant_id]
+        value: "{{ config['tenant_id'] }}"
+      - path: [source_instance_id]
+        value: "{{ config.get('source_instance_id', '') }}"
+      - path: [collected_at]
+        value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+      - path: [data_source]
+        value: "insight_claude_team"
+```
+
+This transformation is applied to **every stream** in the manifest, ensuring `tenant_id`, `source_instance_id`, `collected_at`, and `data_source` are present in every record before it reaches the destination.
+
+### 3.4 Internal Dependencies
+
+| Component | Depends On | Interface |
+|-----------|------------|-----------|
+| Claude Team Manifest | Airbyte Declarative Connector framework | Executed by `source-declarative-manifest` image |
+| Silver pipeline | Claude Team Bronze tables | Reads `email`/`actor_identifier`, activity fields |
+| Identity Manager | `email`/`actor_identifier` fields | Resolves email -> canonical `person_id` |
+
+### 3.5 External Dependencies
+
+#### Anthropic Admin API
+
+| Dependency | Purpose | Notes |
+|------------|---------|-------|
+| `api.anthropic.com` | All five endpoints | Rate-limited; API key auth with version header |
+
+#### Docker Hub Images
+
+| Image | Purpose |
+|-------|---------|
+| `airbyte/source-declarative-manifest` | Executes the Claude Team manifest |
+| `airbyte/destination-postgres` (or other) | Writes to Bronze layer |
+
+### 3.6 Interactions & Sequences
+
+#### Incremental Sync Run
+
+**ID**: `cpt-insightspec-seq-claude-team-sync`
+
+**Use cases**: `cpt-insightspec-usecase-claude-team-incremental-sync`
+
+**Actors**: `cpt-insightspec-actor-claude-team-operator`
+
+```mermaid
+sequenceDiagram
+    participant Orch as Orchestrator
+    participant Src as Source Container
+    participant AApi as Anthropic Admin API
+    participant Dest as Destination
+
+    Orch->>Src: run read (config, manifest, catalog, state)
+
+    Note over Src,AApi: Stream 1: claude_team_users (full refresh)
+    loop Cursor pagination (after_id)
+        Src->>AApi: GET /v1/organizations/users?limit=100&after_id={cursor}<br/>[x-api-key, anthropic-version]
+        AApi-->>Src: {data: [...], has_more: bool}
+        Src->>Src: Wait 1s between pages
+    end
+    Src-->>Dest: RECORD messages (one per user)
+
+    Note over Src,AApi: Stream 2: claude_team_code_usage (incremental)
+    loop For each day (cursor -> now)
+        Src->>AApi: GET /v1/organizations/usage_report/claude_code?starting_at=ISO&ending_at=ISO&bucket_width=1d
+        AApi-->>Src: {data: [...]}
+    end
+    Src-->>Dest: RECORD messages
+
+    Note over Src,AApi: Stream 3: claude_team_workspaces (full refresh)
+    Src->>AApi: GET /v1/organizations/workspaces?limit=100
+    AApi-->>Src: {data: [...]}
+    Src-->>Dest: RECORD messages
+
+    Note over Src,AApi: Stream 4: claude_team_workspace_members (substream)
+    loop For each workspace ID from Stream 3
+        Src->>AApi: GET /v1/organizations/workspaces/{id}/members
+        AApi-->>Src: {data: [...]}
+        Src->>Src: Wait 1s between workspaces
+    end
+    Src-->>Dest: RECORD messages
+
+    Note over Src,AApi: Stream 5: claude_team_invites (full refresh)
+    Src->>AApi: GET /v1/organizations/invites?limit=100
+    AApi-->>Src: {data: [...]}
+    Src-->>Dest: RECORD messages
+
+    Src-->>Dest: STATE messages (updated cursors)
+    Dest-->>Orch: STATE messages -> persist to state store
+
+    Note over Src,AApi: Error handling (any stream)
+    alt HTTP 429 (Rate Limited)
+        AApi-->>Src: 429 Too Many Requests
+        Src->>Src: Exponential backoff
+        Src->>AApi: Retry same request
+    end
+    alt HTTP 401 (Auth Failure)
+        AApi-->>Src: 401 Unauthorized
+        Src-->>Orch: ABORT -- invalid credentials
+    end
+```
+
+**Description**: The connector authenticates via `x-api-key` header on every request, with `anthropic-version: 2023-06-01` included. It first fetches the full user directory (cursor-paginated), then incrementally fetches code usage for the date range from the last cursor to now. Workspaces are fetched in full, followed by per-workspace member iteration using the SubstreamPartitionRouter pattern. Finally, invites are fetched in full. After all streams complete, the updated cursor state is persisted.
+
+### 3.7 Database schemas & tables
+
+Bronze tables are created by the Airbyte destination (ClickHouse). In addition to the connector-defined columns listed below, the Airbyte destination automatically adds framework columns to every table:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `_airbyte_raw_id` | String | Airbyte deduplication key -- auto-generated |
+| `_airbyte_extracted_at` | DateTime64 | Extraction timestamp -- auto-generated |
+
+These columns are not defined in the manifest schema but are present in all Bronze tables at runtime.
+
+#### Table: `claude_team_users`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tenant_id` | UUID | Workspace isolation key -- framework-injected |
+| `source_instance_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
+| `id` | String | Anthropic platform user ID -- primary key |
+| `email` | String | User email -- primary identity key -> `person_id` |
+| `name` | String | User display name |
 | `role` | String | `owner` / `admin` / `member` |
 | `status` | String | `active` / `inactive` / `pending` |
-| `added_at` | DateTime64(3) | When the seat was assigned |
-| `last_active_at` | DateTime64(3) | Last recorded activity across all clients |
+| `added_at` | String | When the seat was assigned (ISO 8601) |
+| `last_active_at` | String | Last recorded activity across all clients (ISO 8601) |
+| `collected_at` | DateTime | Collection timestamp |
+| `data_source` | String | Always `insight_claude_team` |
+| `_version` | Int | Deduplication version |
+| `metadata` | String (JSON) | Full API response |
 
-One row per user. Current-state only — no versioning.
+One row per user. Current-state only -- no versioning.
 
----
-
-### `claude_team_activity` — Daily usage per user per model per client
+#### Table: `claude_team_code_usage`
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `user_id` | String | Anthropic platform user ID |
-| `email` | String | User email — identity key |
-| `date` | Date | Activity date |
-| `client` | String | `web` / `claude_code` / `mobile` — which surface was used |
-| `model` | String | Model ID, e.g. `claude-opus-4-6`, `claude-sonnet-4-6` |
-| `message_count` | Float64 | Number of messages / turns sent |
-| `conversation_count` | Float64 | Number of distinct conversations or sessions |
+| `tenant_id` | UUID | Workspace isolation key -- framework-injected |
+| `source_instance_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
+| `unique` | String | Primary key -- computed composite of date + actor fields + terminal_type |
+| `date` | String | Activity date (ISO 8601) -- cursor for incremental sync |
+| `actor_type` | String | `user` or `api_key` |
+| `actor_identifier` | String | Email (for users) or API key name (for API keys) -- identity key |
+| `terminal_type` | String | Terminal/client type used |
 | `input_tokens` | Float64 | Input tokens consumed |
 | `output_tokens` | Float64 | Output tokens generated |
 | `cache_read_tokens` | Float64 | Tokens served from prompt cache |
 | `cache_write_tokens` | Float64 | Tokens written to prompt cache |
-| `tool_use_count` | Float64 | Tool/function calls made (relevant for Claude Code agent sessions) |
+| `tool_use_count` | Float64 | Tool/function calls made (agent-style usage signal) |
+| `session_count` | Float64 | Number of distinct Claude Code sessions |
+| `collected_at` | DateTime | Collection timestamp |
+| `data_source` | String | Always `insight_claude_team` |
+| `_version` | Int | Deduplication version |
+| `metadata` | String (JSON) | Full API response |
 
-No `cost_cents` field — under a Team subscription the per-token cost is not meaningful; the cost is the seat fee.
+One row per `(date, actor_type, actor_identifier, terminal_type)`. Incremental sync by `date`.
 
-**Claude Code signals** (`client = 'claude_code'`): high `tool_use_count`, long multi-turn `conversation_count`, large `cache_write_tokens` from system prompt caching.
+**Note**: No `cost_cents` field -- under a Team subscription the per-token cost is not meaningful; the cost is the seat fee.
 
----
-
-### `claude_team_collection_runs` — Connector execution log
+#### Table: `claude_team_workspaces`
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `run_id` | String | Unique run identifier |
-| `started_at` | DateTime64(3) | Run start time |
-| `completed_at` | DateTime64(3) | Run end time |
+| `tenant_id` | UUID | Workspace isolation key -- framework-injected |
+| `source_instance_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
+| `id` | String | Workspace ID -- primary key |
+| `name` | String | Workspace slug name |
+| `display_name` | String | Human-readable workspace name |
+| `created_at` | String | Workspace creation timestamp (ISO 8601) |
+| `archived_at` | String | Workspace archival timestamp (ISO 8601), null if active |
+| `data_residency` | String (JSON) | Nested data residency configuration |
+| `collected_at` | DateTime | Collection timestamp |
+| `data_source` | String | Always `insight_claude_team` |
+| `_version` | Int | Deduplication version |
+| `metadata` | String (JSON) | Full API response |
+
+Full refresh -- one row per workspace.
+
+#### Table: `claude_team_workspace_members`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tenant_id` | UUID | Workspace isolation key -- framework-injected |
+| `source_instance_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
+| `unique` | String | Primary key -- computed as `{user_id}:{workspace_id}` |
+| `user_id` | String | Anthropic user ID |
+| `workspace_id` | String | Workspace ID (from parent stream partition) |
+| `workspace_role` | String | User's role in this workspace |
+| `collected_at` | DateTime | Collection timestamp |
+| `data_source` | String | Always `insight_claude_team` |
+| `_version` | Int | Deduplication version |
+| `metadata` | String (JSON) | Full API response |
+
+Full refresh -- one row per user-workspace pair.
+
+#### Table: `claude_team_invites`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tenant_id` | UUID | Workspace isolation key -- framework-injected |
+| `source_instance_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
+| `id` | String | Invite ID -- primary key |
+| `email` | String | Invited user's email |
+| `role` | String | Invited role |
+| `status` | String | Invitation status |
+| `created_at` | String | Invitation creation timestamp (ISO 8601) |
+| `expires_at` | String | Invitation expiry timestamp (ISO 8601) |
+| `workspace_id` | String | Target workspace ID (nullable) |
+| `collected_at` | DateTime | Collection timestamp |
+| `data_source` | String | Always `insight_claude_team` |
+| `_version` | Int | Deduplication version |
+| `metadata` | String (JSON) | Full API response |
+
+Full refresh -- one row per invite.
+
+#### Table: `claude_team_collection_runs`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tenant_id` | UUID | Workspace isolation key -- framework-injected |
+| `source_instance_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
+| `run_id` | String | Unique run identifier -- primary key |
+| `started_at` | DateTime | Run start time |
+| `completed_at` | DateTime | Run end time |
 | `status` | String | `running` / `completed` / `failed` |
-| `seats_collected` | Float64 | Rows collected for `claude_team_seats` |
-| `activity_records_collected` | Float64 | Rows collected for `claude_team_activity` |
-| `api_calls` | Float64 | Admin API calls made |
-| `errors` | Float64 | Errors encountered |
-| `settings` | String | Collection configuration (workspace, lookback period) |
+| `users_collected` | Number | Rows collected for `claude_team_users` |
+| `code_usage_collected` | Number | Rows collected for `claude_team_code_usage` |
+| `workspaces_collected` | Number | Rows collected for `claude_team_workspaces` |
+| `workspace_members_collected` | Number | Rows collected for `claude_team_workspace_members` |
+| `invites_collected` | Number | Rows collected for `claude_team_invites` |
+| `api_calls` | Number | Total API calls made |
+| `errors` | Number | Errors encountered |
+| `settings` | String (JSON) | Collection configuration |
 
-Monitoring table — not an analytics source.
+Monitoring table -- not an analytics source.
 
----
+### 3.8 Deployment Topology
 
-## 3. Identity Resolution
+- [ ] `p3` - **ID**: `cpt-insightspec-topology-claude-team-connector`
 
-`email` in both `claude_team_seats` and `claude_team_activity` is the primary identity key — resolved to canonical `person_id` via Identity Manager in Silver step 2.
+The Claude Team connector uses one manifest and one Airbyte connection (daily schedule):
 
-`user_id` (Anthropic platform user ID) is Anthropic-internal — not used for cross-system resolution.
+```text
+Package: src/ingestion/connectors/ai/claude-team/
++-- connector.yaml (declarative manifest -- 6 streams)
++-- descriptor.yaml (package metadata)
++-- dbt/ (Bronze -> Silver)
 
----
+Connection: claude-team-{org_name}-daily
++-- Schedule: daily (via Kestra cron)
++-- Source image: airbyte/source-declarative-manifest
++-- Source config: {tenant_id, admin_api_key}
++-- Streams: claude_team_users, claude_team_code_usage,
+|            claude_team_workspaces, claude_team_workspace_members,
+|            claude_team_invites, claude_team_collection_runs
++-- Destination: ClickHouse (Bronze)
++-- State: per-stream cursors (code_usage date cursor)
+```
 
-## 4. Silver / Gold Mappings
+## 4. Additional context
+
+### Identity Resolution Strategy
+
+`email` (in `claude_team_users` and `claude_team_invites`) and `actor_identifier` (in `claude_team_code_usage`, when `actor_type = 'user'`) are the identity keys across Claude Team streams.
+
+The Identity Manager resolves `email`/`actor_identifier` -> canonical `person_id` in Silver step 2. The `id` (Anthropic platform user ID) is available for internal lookups but is not used for cross-system resolution.
+
+**Cross-platform note**: Development teams commonly use multiple AI dev tools (Claude Code, Cursor, Windsurf) simultaneously. Because all three sources use `email` as the identity key and map to the same `class_ai_dev_usage` unified table with `data_source` discriminators, Silver step 2 can aggregate total AI usage across all platforms per `person_id` without joins.
+
+**Key difference from Claude API connector**: The Claude API connector (sibling) identifies users via an optional `X-Anthropic-User-Id` header passed by API consumers. Claude Team always has `email` from the users endpoint and `actor_identifier` from code usage -- identity resolution is more reliable.
+
+### Silver / Gold Mappings
 
 | Bronze table | Silver target | Status |
 |-------------|--------------|--------|
-| `claude_team_seats` | *(seat roster)* | Available — no unified stream defined yet |
-| `claude_team_activity` (where `client = 'claude_code'`) | `class_ai_dev_usage` | Planned — alongside Cursor and Windsurf |
-| `claude_team_activity` (where `client IN ('web', 'mobile')`) | `class_ai_tool_usage` | Planned — alongside ChatGPT Team |
+| `claude_team_users` | Identity Manager (`email` -> `person_id`) | Used for identity resolution |
+| `claude_team_code_usage` | `class_ai_dev_usage` | Planned -- Claude Code activity |
+| `claude_team_workspaces` | *(organizational structure)* | Available -- no unified stream defined yet |
+| `claude_team_workspace_members` | *(workspace membership)* | Available -- no unified stream defined yet |
+| `claude_team_invites` | *(seat management)* | Available -- no unified stream defined yet |
 
-**Gold**: Developer AI tool metrics (Claude Code sessions alongside Cursor/Windsurf) and general AI tool adoption metrics (web/mobile usage alongside ChatGPT Team). The `client` field enables splitting the same source into two different Silver streams.
+**`class_ai_dev_usage` field mapping** (from `claude_team_code_usage`):
+
+| Unified field | Claude Team source | Notes |
+|---------------|-------------------|-------|
+| `tenant_id` | `tenant_id` | Framework-injected |
+| `source_instance_id` | `source_instance_id` | Connector instance |
+| `data_source` | `data_source` | Always `insight_claude_team` |
+| `email` | `actor_identifier` | Identity key (when `actor_type = 'user'`) |
+| `date` | `date` | Report date (ISO 8601) |
+| `input_tokens` | `input_tokens` | Input tokens consumed |
+| `output_tokens` | `output_tokens` | Output tokens generated |
+| `cache_read_tokens` | `cache_read_tokens` | Tokens from prompt cache |
+| `cache_write_tokens` | `cache_write_tokens` | Tokens written to cache |
+| `tool_use_count` | `tool_use_count` | Tool/function calls -- Claude Code signal |
+| `session_count` | `session_count` | Distinct sessions |
+| `terminal_type` | `terminal_type` | Client terminal type |
+
+**`class_ai_tool_usage` field mapping** (placeholder):
+
+The Anthropic Admin API's `usage_report/claude_code` endpoint is specifically for Claude Code activity. Web/mobile Claude usage data is not available from the current API endpoints covered by this connector. The `to_ai_tool_usage.sql` dbt model is a placeholder that documents this gap.
+
+A future connector or endpoint (potentially `usage_report/messages` or similar) may provide web/mobile activity. When available, the mapping would be:
+
+| Unified field | Expected source | Notes |
+|---------------|----------------|-------|
+| `email` | actor identifier | Identity key |
+| `date` | activity date | Report date |
+| `message_count` | messages sent | Per-day total |
+| `conversation_count` | conversations | Per-day total |
+| `client` | `web` / `mobile` | Surface discriminator |
+| `model` | model used | E.g. `claude-sonnet-4-6` |
+
+**Gold metrics** produced by including Claude Code in `class_ai_dev_usage`:
+- **AI adoption rate**: percentage of team members with Claude Code activity per week
+- **Tool use intensity**: `tool_use_count` per user per day -- measures agent-style usage
+- **Token consumption**: input + output tokens per user, compared across Claude Code, Cursor, and Windsurf
+- **Cache efficiency**: `cache_read_tokens / (cache_read_tokens + input_tokens)` -- prompt caching effectiveness
+- **Cross-tool comparison**: Claude Code vs Cursor vs Windsurf adoption and usage intensity per `person_id`
+
+### Incremental Sync Strategy
+
+Only the code usage stream uses incremental sync:
+
+| Stream | Sync mode | Cursor field | Cursor format | Start (first run) | End |
+|--------|-----------|-------------|---------------|-------------------|-----|
+| `claude_team_users` | Full refresh | N/A | N/A | N/A | N/A |
+| `claude_team_code_usage` | Incremental | `date` | ISO 8601 | Probe backward, stop after 6 empty days | now |
+| `claude_team_workspaces` | Full refresh | N/A | N/A | N/A | N/A |
+| `claude_team_workspace_members` | Full refresh | N/A | N/A | N/A | N/A |
+| `claude_team_invites` | Full refresh | N/A | N/A | N/A | N/A |
+
+On first run (empty state), the code usage stream probes backward day-by-day. After 6 consecutive days with zero records, it assumes no earlier data exists and fetches forward from the earliest non-empty day to now. On subsequent runs, the cursor starts from the last stored `date` position.
+
+**Backfill probe**: Unlike Cursor's zero-activity rows (which return data for all team members even on empty days), the Anthropic code usage endpoint returns empty results for days with no activity. This makes the probe simpler -- an empty response genuinely means no data.
+
+### Capacity Estimates
+
+Expected data volumes for typical deployments (10-500 user teams):
+
+| Stream | Volume per sync | Estimated sync time |
+|--------|----------------|---------------------|
+| `claude_team_users` | 10-500 rows | < 10s (1-5 pages) |
+| `claude_team_code_usage` | 10-500 rows/day | < 30s per day |
+| `claude_team_workspaces` | 1-20 rows | < 5s |
+| `claude_team_workspace_members` | 10-500 rows (across all workspaces) | 5-30s (1s delay per workspace) |
+| `claude_team_invites` | 0-50 rows | < 5s |
+
+A full daily sync for a 200-person team with 10 workspaces takes approximately 1-3 minutes total across all streams.
+
+### Open Questions
+
+**OQ-CT-1: Web/mobile usage data** -- The current `usage_report/claude_code` endpoint is specifically for Claude Code. Web/mobile Claude activity data is not available from this API. The Claude API connector's `messages_usage` covers all message-level usage (including web/mobile), but that uses a different credential scope (Organization admin key). Should `class_ai_tool_usage` be populated from a future endpoint in this connector, or from the Claude API connector filtered to non-API usage?
+
+**OQ-CT-2: Relationship between Claude Team and Claude API for the same user** -- A developer may use both Claude Team Plan (via Claude Code and web) and the Claude API (programmatic calls). Both generate usage under the same `person_id`. Team Plan usage (developer sessions) and API usage (programmatic/product calls) are kept in separate Silver streams. Cross-stream analysis by `person_id` is performed at Gold level.
+
+**OQ-CT-3: `class_ai_dev_usage` unified schema** -- Claude Code metrics differ from Cursor and Windsurf:
+- Cursor/Windsurf have `completions_accepted`, `lines_accepted` -- Claude Code does not.
+- Claude Code has `tool_use_count`, `session_count` -- Cursor/Windsurf do not have exact equivalents (Cursor has `agentRequests`, Windsurf has its own metrics).
+- Should `class_ai_dev_usage` use nullable columns for tool-specific metrics, or separate tables per tool category?
+
+**OQ-CT-4: Backfill depth** -- The connector stops probing backward after 6 consecutive empty days. Is this sufficient for all deployment scenarios? Organizations that enable the Admin API months after initial usage may need deeper backfill.
+
+### Non-Applicable Domains
+
+The following checklist domains have been evaluated and are not applicable for this connector:
+
+| Domain | Reason |
+|--------|--------|
+| **PERF (Performance)** | Batch data pipeline with native API pagination. No caching, connection pooling, or latency optimization needed. Rate limit handling (1s inter-page delay) is the only performance-related concern, documented in Constraints SS2.2. |
+| **SEC (Security)** | Authentication is delegated to the Airbyte framework: the API key is stored as `airbyte_secret`, never logged or exposed. The declarative manifest contains no custom security logic. |
+| **REL (Reliability)** | Idempotent extraction via deduplication keys. No distributed state, no transactions. Recovery = re-run the sync; the Airbyte framework manages cursor state and retry. |
+| **OPS (Operations)** | Deployed as a standard Airbyte connection -- no custom infrastructure, no IaC, no observability beyond what the Airbyte platform provides. Deployment topology documented in SS3.8. |
+| **MAINT (Maintainability)** | Declarative YAML manifest with no custom code. Maintenance consists of updating field definitions when the API schema changes. |
+| **TEST (Testing)** | Declarative connector validated by the Airbyte framework's built-in checks (connection check, schema validation). No custom code to unit-test. |
+| **COMPL (Compliance)** | The connector extracts work emails and AI activity metrics -- personal/work-linked data under GDPR. Retention, deletion, and access controls are delegated to the Airbyte platform and destination operator. |
+| **UX (Usability)** | No user-facing interface. The only UX surface is the Airbyte connection configuration form (two required fields: `tenant_id` and `admin_api_key`). |
+
+### Architecture Decision Records
+
+No ADRs have been recorded for this connector yet. Architectural decisions are documented inline:
+
+- **Authentication mechanism** (API key via `x-api-key` over Basic/Bearer): SS2.2 Constraint `cpt-insightspec-constraint-claude-team-api-key-auth`
+- **Substream pattern for workspace members**: SS2.2 Constraint `cpt-insightspec-constraint-claude-team-substream`
+- **ISO 8601 dates over epoch milliseconds**: SS2.2 Constraint `cpt-insightspec-constraint-claude-team-iso-dates`
+- **Two Silver targets from one connector**: SS4 Silver / Gold Mappings
+
+## 5. Traceability
+
+- **PRD**: [PRD.md](./PRD.md)
+- **ADRs**: [ADR/](./ADR/) (none yet)
+- **Connector Reference**: Source 14 (Claude Team Plan) in `docs/CONNECTORS_REFERENCE.md`
+- **AI Tool domain**: [docs/components/connectors/ai/](../../)
