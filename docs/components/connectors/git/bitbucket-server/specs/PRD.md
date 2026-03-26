@@ -1,6 +1,6 @@
 # PRD — Bitbucket Server Connector
 
-> Version 1.0 — March 2026
+> Version 1.3 — March 2026
 > Based on: Unified git data model (`docs/components/connectors/git/README.md`)
 
 <!-- toc -->
@@ -23,9 +23,9 @@
   - [5.2 Commit Collection](#52-commit-collection)
   - [5.3 Pull Request Collection](#53-pull-request-collection)
   - [5.4 Review and Comment Collection](#54-review-and-comment-collection)
-  - [5.5 Identity Resolution](#55-identity-resolution)
-  - [5.6 Incremental Collection](#56-incremental-collection)
-  - [5.7 Fault Tolerance and Resilience](#57-fault-tolerance-and-resilience)
+  - [5.5 Incremental Collection](#55-incremental-collection)
+  - [5.6 Fault Tolerance and Resilience](#56-fault-tolerance-and-resilience)
+  - [5.7 Metadata & Admin Collection](#57-metadata--admin-collection)
 - [6. Non-Functional Requirements](#6-non-functional-requirements)
   - [6.1 NFR Inclusions](#61-nfr-inclusions)
   - [6.2 NFR Exclusions](#62-nfr-exclusions)
@@ -50,7 +50,7 @@
 
 ### 1.1 Purpose
 
-The Bitbucket Server connector collects version control data — repositories, branches, commits, pull requests, reviews, and comments — from self-hosted Bitbucket Server and Bitbucket Data Center instances. It integrates into the unified git pipeline, enabling cross-platform analytics alongside GitHub and GitLab data.
+The Bitbucket Server connector extracts version control data — repositories, branches, commits, pull requests, reviews, and comments — from self-hosted Bitbucket Server and Bitbucket Data Center instances. It emits structured messages to stdout following the Airbyte protocol, enabling an orchestrator to route records to Bronze tables for downstream dbt transformation into unified cross-platform analytics.
 
 ### 1.2 Background / Problem Statement
 
@@ -61,9 +61,9 @@ Bitbucket Server differs from cloud git platforms in several ways that require s
 ### 1.3 Goals (Business Outcomes)
 
 - Collect all repositories, branches, commits, pull requests, reviewer actions, and comments from Bitbucket Server instances.
-- Store collected data in the unified `git_*` Silver tables using `data_source = "insight_bitbucket_server"` as the discriminator, enabling cross-platform queries alongside GitHub and GitLab data.
+- Emit collected raw data as Airbyte protocol RECORD messages to stdout, with `data_source = "insight_bitbucket_server"` included in each record. An orchestrator routes records to Bronze tables; dbt transforms Bronze to unified `git_*` Silver tables.
 - Support incremental collection so that repeated runs only fetch data that changed since the last successful run.
-- Resolve Bitbucket user identities (email, username) to canonical `person_id` via the Identity Manager, enabling cross-platform person analytics.
+- Support multiple connector instances per Bitbucket Server (e.g., different tokens/project scopes). Each instance embeds its `instance_name` in stream names (`bitbucket_{instance}_{stream}`), so the orchestrator routes each instance to its own set of Bronze tables with no special routing config. dbt unions multiple instances in Silver.
 - Tolerate API errors, deleted resources, and temporary outages without losing collection progress.
 
 ### 1.4 Glossary
@@ -77,9 +77,12 @@ Bitbucket Server differs from cloud git platforms in several ways that require s
 | Reviewer | A user explicitly assigned to review a pull request |
 | Participant | A user who interacted with a PR (commented or acted) without being a formal reviewer |
 | Task | An inline checkbox within a PR comment, Bitbucket-specific concept |
-| `data_source` | Discriminator field in all unified `git_*` tables; value for this connector is `"insight_bitbucket_server"` |
-| `person_id` | Canonical cross-system person identifier resolved by the Identity Manager |
+| `data_source` | Discriminator field injected by the connector into all Bronze records; propagated to Silver tables by dbt. Value for this connector is `"insight_bitbucket_server"` |
+| Airbyte protocol | Message format for connector output: RECORD (data), STATE (cursor checkpoint), LOG (status/errors), CATALOG (stream schema). Connector emits JSON messages to stdout; orchestrator consumes them |
+| RECORD message | Airbyte protocol message containing one extracted record: `{"type": "RECORD", "record": {"stream": "...", "data": {...}, "emitted_at": ...}}` |
+| STATE message | Airbyte protocol message containing cursor checkpoint: `{"type": "STATE", "state": {"data": {...}}}`. Orchestrator persists state; connector reads it on next run |
 | Incremental sync | Collection mode where only new or updated records are fetched, based on cursor state |
+| `instance_name` | User-configured identifier for a connector instance (e.g., `team-alpha`). Determines Bronze table naming (`bitbucket_{instance}_{stream}`) and disambiguates multiple instances against the same Bitbucket Server |
 | PAT | Personal Access Token — one of the supported authentication methods |
 
 ---
@@ -99,7 +102,7 @@ Bitbucket Server differs from cloud git platforms in several ways that require s
 
 **ID**: `cpt-insightspec-actor-bb-analytics-eng`
 
-**Role**: Consumes unified `git_*` Silver tables to build Gold-layer analytics, reports, and dashboards.
+**Role**: Consumes unified `git_*` Silver tables produced by dbt transformations from Bronze data to build Gold-layer analytics, reports, and dashboards.
 **Needs**: Bitbucket data to be in the same schema as GitHub/GitLab data; nullable fields for missing Bitbucket metadata to be well-documented; Bitbucket-specific fields (task count, comment severity) to be accessible.
 
 #### Engineering Manager / Director
@@ -117,12 +120,6 @@ Bitbucket Server differs from cloud git platforms in several ways that require s
 
 **Role**: Source system — provides project, repository, branch, commit, pull request, and activity data via the REST API v1.0.
 
-#### Identity Manager
-
-**ID**: `cpt-insightspec-actor-bb-identity-manager`
-
-**Role**: Resolves Bitbucket user emails and usernames to canonical `person_id` values for cross-platform identity unification.
-
 #### ETL Scheduler / Orchestrator
 
 **ID**: `cpt-insightspec-actor-bb-scheduler`
@@ -138,6 +135,8 @@ Bitbucket Server differs from cloud git platforms in several ways that require s
 - Requires network access to the organization's self-hosted Bitbucket Server or Data Center instance.
 - Authentication credentials (Basic Auth / Bearer Token / PAT) must be provisioned with read access to all target projects and repositories.
 - The connector operates in batch pull mode only; it does not require an inbound network port or webhook endpoint.
+- The connector emits Airbyte protocol messages to stdout. It does NOT write to databases directly. An orchestrator (Airbyte or compatible) consumes stdout, routes RECORD messages to Bronze tables, and persists STATE messages for incremental sync.
+- The connector has no dependency on ClickHouse or any specific database driver.
 - Compatible with Bitbucket Server REST API v1.0; Bitbucket Data Center uses the same API surface.
 
 ---
@@ -153,23 +152,35 @@ Bitbucket Server differs from cloud git platforms in several ways that require s
 - Collection of PR reviewer assignments and review actions (approve / unapprove).
 - Collection of PR comments (general and inline), including Bitbucket task state and severity.
 - Collection of PR-to-commit linkage.
-- Extraction of ticket references (e.g., Jira issue keys) from PR titles, descriptions, and commit messages.
 - Incremental collection strategy: only fetch data changed since the last run.
-- Optional API response caching to reduce redundant API calls.
 - Checkpoint-based fault tolerance: save progress after each repository, support resume on failure.
 - Recording of connector execution statistics in a collection runs log.
-- Identity resolution for commit authors and PR reviewers via the Identity Manager.
+- Collection of access control and permission data: project permissions, repository permissions, and global permissions for users and groups. *(Added in v1.1)*
+- Collection of PR participant data embedded within pull request records (user, role, approval status). *(Added in v1.1)*
+- Collection of commit build statuses from CI/CD integrations. *(Added in v1.1)*
+- Collection of git tags per repository. *(Added in v1.1)*
+- Collection of Bitbucket user directory (standalone user inventory with active status and account type). *(Added in v1.1)*
+- Collection of user group memberships. *(Added in v1.1)*
+- Collection of webhook configurations per repository. *(Added in v1.1)*
+- Collection of branch restriction rules. *(Added in v1.1)*
+- Collection of repository hook (server-side) configurations. *(Added in v1.1)*
+- Collection of per-repository PR merge strategy configuration. *(Added in v1.1)*
+- Collection of branching model configuration per repository. *(Added in v1.1)*
+- Collection of instance-level server properties and metadata. *(Added in v1.1)*
+- Support for multiple connector instances per Bitbucket Server, each with its own credentials, project scope, and Bronze table set. *(Added in v1.3)*
+- Collection of default reviewer rules per repository. *(Added in v1.1)*
+- Collection of PR merge eligibility (pre-merge condition checks). *(Added in v1.1)*
 
 ### 4.2 Out of Scope
 
 - Bitbucket Cloud (separate API and auth model).
 - Webhook-based real-time ingestion (batch pull only in this version).
 - Collection of Bitbucket-native CI/CD pipeline data (Bamboo, Bitbucket Pipelines).
-- Collection of access control and permission data.
+- ~~Collection of access control and permission data.~~ *(Moved to In Scope in v1.1)*
 - Collection of repository wiki or issue tracker content.
 - Repository mirroring or replication.
 - Gold-layer transformations (owned by analytics pipeline, not this connector).
-- Participant tracking as a separate entity (participants are implicit from comments; see OQ-BB-3).
+- ~~Participant tracking as a separate entity (participants are implicit from comments; see OQ-BB-3).~~ *(Moved to In Scope in v1.1 — participants embedded in PR record; see OQ-BB-3 resolution)*
 
 ---
 
@@ -181,7 +192,7 @@ Bitbucket Server differs from cloud git platforms in several ways that require s
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-bb-discover-repos`
 
-The connector MUST enumerate all accessible Bitbucket Server projects and their repositories using the REST API, and record repository metadata (name, slug, project key, visibility, fork policy) in the unified repository table.
+The connector MUST enumerate all accessible Bitbucket Server projects and their repositories using the REST API, and record repository metadata (name, slug, project key, visibility, fork policy) in the Bronze `bitbucket_repositories` stream. Additionally, the connector MUST collect repository state (`AVAILABLE`, `INITIALISING`, `OFFLINE`), archived flag, clone URLs (HTTP and SSH), web URL, and fork hierarchy identifier (origin repository reference for forked repositories).
 
 **Rationale**: Cross-platform analytics require a complete inventory of all repositories, not a manually maintained list.
 
@@ -211,7 +222,7 @@ The connector MUST collect the full commit history for each branch, including au
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-bb-collect-commit-files`
 
-The connector MUST collect per-file line change statistics (file path, lines added, lines removed) for each commit.
+The connector MUST collect per-file line change statistics (file path, lines added, lines removed) for each commit. Additionally, the connector MUST collect the change type classification (`ADD`, `MODIFY`, `DELETE`, `MOVE`, `COPY`), node type (`FILE`, `SUBMODULE`), executable bit, blob content SHAs (source and destination), and parent directory path for each changed file.
 
 **Rationale**: File-level data enables code churn analysis, language breakdown, and hotspot detection.
 
@@ -231,7 +242,7 @@ The connector MUST identify and flag merge commits (commits with more than one p
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-bb-collect-prs`
 
-The connector MUST collect all pull requests across all states (open, merged, declined), including title, description, author, source branch, destination branch, state, timestamps (created, updated, closed), and merge commit reference.
+The connector MUST collect all pull requests across all states (open, merged, declined), including title, description, author, source branch, destination branch, state, timestamps (created, updated, closed), and merge commit reference. Additionally, the connector MUST collect draft and locked flags, source and target HEAD commit SHAs, the full reviewer list with per-reviewer approval status, the participants list, browser URL, merge result currency (whether the merge result is current with the source branch), and task/comment counts from API properties.
 
 **Actors**: `cpt-insightspec-actor-bb-eng-manager`, `cpt-insightspec-actor-bb-api`
 
@@ -242,14 +253,6 @@ The connector MUST collect all pull requests across all states (open, merged, de
 The connector MUST populate PR-level statistics: commit count, comment count, task count (Bitbucket-specific), and file-level change counts (files changed, lines added, lines removed).
 
 **Rationale**: PR size and comment volume are key inputs to cycle time and review quality metrics.
-
-**Actors**: `cpt-insightspec-actor-bb-analytics-eng`
-
-#### Extract Ticket References
-
-- [ ] `p2` - **ID**: `cpt-insightspec-fr-bb-extract-tickets`
-
-The connector MUST extract ticket references (e.g., Jira issue keys) from PR titles, descriptions, and commit messages, and store them in the ticket references table.
 
 **Actors**: `cpt-insightspec-actor-bb-analytics-eng`
 
@@ -273,35 +276,33 @@ The connector MUST collect reviewer assignments and review actions (approve / un
 
 **Actors**: `cpt-insightspec-actor-bb-eng-manager`, `cpt-insightspec-actor-bb-api`
 
-**Note**: Bitbucket's review model supports only `APPROVED` and `UNAPPROVED` states. The connector MUST map these to the unified schema `status` field; it MUST NOT fabricate states not present in the Bitbucket API (`CHANGES_REQUESTED`, `COMMENTED`).
+**Note**: Bitbucket's review model supports `APPROVED`, `UNAPPROVED`, and `NEEDS_WORK` states. The connector MUST map these to the unified schema `status` field; it MUST NOT fabricate states not present in the Bitbucket API (`CHANGES_REQUESTED`, `COMMENTED`).
 
 #### Collect PR Comments
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-bb-collect-comments`
 
-The connector MUST collect all PR comments (both general and inline), including comment author, content, timestamps (created, updated), and Bitbucket-specific fields: task state (`OPEN`/`RESOLVED`), severity (`NORMAL`/`BLOCKER`), thread resolution status, and inline anchor (file path and line number where applicable).
+The connector MUST collect all PR comments (both general and inline), including comment author, content, timestamps (created, updated), and Bitbucket-specific fields: task state (`OPEN`/`RESOLVED`), severity (`NORMAL`/`BLOCKER`), thread resolution status, and inline anchor (file path and line number where applicable). Additionally, the connector MUST collect comment version tracking (version number for edit history), parent comment ID for nested reply threading, anchor detail fields (base and head commit SHAs, line type, file type, source path for renames, diff type), and orphaned anchor detection for comments invalidated by force-pushes or rebases.
 
 **Actors**: `cpt-insightspec-actor-bb-analytics-eng`
 
-### 5.5 Identity Resolution
+#### Collect PR Activity Types (UPDATED and RESCOPED)
 
-#### Resolve Author and Reviewer Identities
+- [ ] `p2` - **ID**: `cpt-insightspec-fr-bb-collect-pr-activity-types`
 
-- [ ] `p1` - **ID**: `cpt-insightspec-fr-bb-identity-resolution`
+The connector MUST collect UPDATED and RESCOPED activity types from the PR activities stream. UPDATED activities capture reviewer additions and removals (`addedReviewers`, `removedReviewers`). RESCOPED activities capture force-push events including the previous and new HEAD SHAs (`fromHash`, `toHash`) and the lists of added and removed commits. Both activity types MUST be emitted as RECORD messages on the `bitbucket_pr_activities` stream.
 
-The connector MUST resolve commit authors and PR reviewers to canonical `person_id` values via the Identity Manager. Email address is the primary resolution key; username (`author_name`) is the fallback when email is absent. Bitbucket numeric user IDs serve as a last-resort fallback.
+**Rationale**: Reviewer change history and force-push tracking are essential for understanding PR lifecycle dynamics beyond simple approve/comment events. RESCOPED events reveal rebases and force-pushes that affect commit lineage.
 
-**Rationale**: Cross-platform analytics require all persons to be unified under a single canonical identity regardless of their source platform representation.
+**Actors**: `cpt-insightspec-actor-bb-analytics-eng`, `cpt-insightspec-actor-bb-api`
 
-**Actors**: `cpt-insightspec-actor-bb-identity-manager`, `cpt-insightspec-actor-bb-analytics-eng`
-
-### 5.6 Incremental Collection
+### 5.5 Incremental Collection
 
 #### Track Collection Cursors
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-bb-incremental-cursors`
 
-The connector MUST maintain per-branch commit cursors (last collected commit hash and timestamp) and per-repository PR cursors (last collected updated timestamp) to support incremental collection runs that only fetch new or changed data.
+The connector MUST maintain per-branch commit cursors (last collected commit hash) and per-repository PR cursors (last collected `updatedDate` timestamp) to support incremental collection. Cursor state is received from the orchestrator at startup (previous STATE message) and emitted as a STATE message at the end of each run. The state storage mechanism is opaque to the connector — it may be a JSON file, database table, or other persistent store managed by the orchestrator. Additionally, the connector MUST implement sub-stream cursor inheritance: PR Activities, PR Changes, PR Commits, and PR Merge Eligibility are fetched only for PRs updated since last sync (driven by the PR cursor). Build statuses are fetched only for new commits (piggybacked on the commit SHA cursor).
 
 **Rationale**: Full re-collection of large repositories is prohibitively expensive; incremental runs must complete in reasonable time.
 
@@ -319,11 +320,11 @@ The connector MUST stop fetching commits for a branch when it encounters a commi
 
 - [ ] `p2` - **ID**: `cpt-insightspec-fr-bb-collection-runs`
 
-The connector MUST record the start time, end time, status, and item counts (repositories processed, commits collected, PRs collected, errors encountered) for each collection run in the collection runs log table.
+The connector MUST emit LOG messages with start time, end time, status, and item counts (repositories processed, commits collected, PRs collected, errors encountered) for each collection run.
 
 **Actors**: `cpt-insightspec-actor-bb-platform-engineer`
 
-### 5.7 Fault Tolerance and Resilience
+### 5.6 Fault Tolerance and Resilience
 
 #### Retry on Transient Errors
 
@@ -345,17 +346,141 @@ The connector MUST continue collection when individual items fail with non-fatal
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-bb-checkpoint`
 
-The connector MUST checkpoint its progress after completing each repository so that a failed run can be resumed from the last successful checkpoint rather than restarting from the beginning.
+The connector MUST emit STATE messages after completing each repository so that a failed run can be resumed from the last successful checkpoint rather than restarting from the beginning. The orchestrator persists STATE messages; on restart, it provides the last persisted STATE to the connector.
 
 **Actors**: `cpt-insightspec-actor-bb-platform-engineer`
 
-#### Optional API Response Caching
+### 5.7 Metadata & Admin Collection
 
-- [ ] `p3` - **ID**: `cpt-insightspec-fr-bb-api-cache`
+#### Collect CI Build Statuses
 
-The connector SHOULD support optional caching of API responses to reduce redundant API calls for frequently accessed, slow-changing data (e.g., repository metadata, branch lists). Caching MUST be configurable (enabled/disabled, TTL per data category).
+- [ ] `p2` - **ID**: `cpt-insightspec-fr-bb-collect-builds`
 
-**Actors**: `cpt-insightspec-actor-bb-platform-engineer`
+The connector MUST collect CI build statuses for each commit via the build-status API (`GET /rest/build-status/1.0/commits/{hash}`). Each build status record MUST include: state (SUCCESSFUL, FAILED, INPROGRESS), build key, build name, build URL, description, and timestamp. Build statuses MUST be emitted as RECORD messages on the `bitbucket_build_statuses` stream.
+
+**Rationale**: Build status data enables CI/CD pipeline analytics, build success rate tracking, and correlation of build health with PR merge velocity.
+
+**Actors**: `cpt-insightspec-actor-bb-analytics-eng`, `cpt-insightspec-actor-bb-api`
+
+#### Collect Tags
+
+- [ ] `p2` - **ID**: `cpt-insightspec-fr-bb-collect-tags`
+
+The connector MUST collect all tags per repository via the REST API (`GET /rest/api/1.0/projects/{key}/repos/{slug}/tags`), including the tag display name, the full ref ID, the latest commit SHA (for annotated tags this is the commit the tag points to), and the tag hash.
+
+**Rationale**: Tags mark releases and version milestones. Collecting tags enables release frequency analytics and mapping deployments to commit ranges.
+
+**Actors**: `cpt-insightspec-actor-bb-analytics-eng`, `cpt-insightspec-actor-bb-api`
+
+#### Collect User Inventory
+
+- [ ] `p2` - **ID**: `cpt-insightspec-fr-bb-collect-users`
+
+The connector MUST collect a standalone user inventory via the REST API (`GET /rest/api/1.0/users`), recording user ID, username, slug, display name, email address, active status, and account type (NORMAL or SERVICE). When the connector authenticates with admin privileges, it MUST additionally collect: account creation timestamp, last authentication timestamp, deletable flag, directory name, and mutable details/groups flags. All user records MUST be emitted as RECORD messages on the `bitbucket_users` stream.
+
+**Rationale**: A complete user inventory is required for contributor activity reporting and detecting inactive or service accounts.
+
+**Actors**: `cpt-insightspec-actor-bb-platform-engineer`, `cpt-insightspec-actor-bb-api`
+
+#### Collect Groups and Group Membership
+
+- [ ] `p3` - **ID**: `cpt-insightspec-fr-bb-collect-groups`
+
+The connector MUST collect admin groups via the REST API (`GET /rest/api/1.0/admin/groups`) and group membership via the group members endpoint (`GET /rest/api/1.0/admin/groups/more-members?context={group}`). Group records MUST include group name and deletable flag. Group membership records MUST include the group name and the full user object for each member. Groups MUST be emitted as RECORD messages on the `bitbucket_groups` stream and membership on the `bitbucket_group_members` stream. This stream requires admin permissions and the connector MUST gracefully skip collection with a warning if the authenticated user lacks admin access.
+
+**Rationale**: Group inventory and membership data support access audit, permission analysis, and organizational structure mapping.
+
+**Actors**: `cpt-insightspec-actor-bb-platform-engineer`, `cpt-insightspec-actor-bb-api`
+
+#### Check PR Merge Eligibility
+
+- [ ] `p2` - **ID**: `cpt-insightspec-fr-bb-pr-merge-eligibility`
+
+The connector MUST check merge readiness for each open pull request via the merge endpoint (`GET /rest/api/1.0/projects/{key}/repos/{slug}/pull-requests/{id}/merge`). The connector MUST record: canMerge flag, conflicted flag, merge outcome (CLEAN, CONFLICTED, UNKNOWN), and the list of vetoes (summary and detailed messages explaining why merge is blocked). Results MUST be emitted as RECORD messages on the `bitbucket_pr_merge_eligibility` stream.
+
+**Rationale**: Merge eligibility data reveals bottlenecks in the PR pipeline — whether PRs are blocked by failing builds, insufficient approvals, or unresolved tasks — enabling targeted process improvements.
+
+**Actors**: `cpt-insightspec-actor-bb-eng-manager`, `cpt-insightspec-actor-bb-api`
+
+#### Collect Permission Assignments
+
+- [ ] `p3` - **ID**: `cpt-insightspec-fr-bb-collect-permissions`
+
+The connector MUST collect permission assignments at three scopes: project-level (users and groups), repository-level (users and groups), and global-level (users and groups) via the corresponding REST API permissions endpoints. Each record MUST include the scope context (project key and/or repo slug where applicable), the user or group identity, and the permission level (e.g., PROJECT_READ, PROJECT_WRITE, PROJECT_ADMIN, REPO_READ, REPO_WRITE, REPO_ADMIN, LICENSED_USER, PROJECT_CREATE, ADMIN, SYS_ADMIN). All records MUST be emitted as RECORD messages on the `bitbucket_permissions` stream. Global permission endpoints require admin access; the connector MUST gracefully skip with a warning if the authenticated user lacks admin permissions.
+
+**Rationale**: Permission data enables access audit, least-privilege analysis, and compliance reporting across the Bitbucket instance.
+
+**Actors**: `cpt-insightspec-actor-bb-platform-engineer`, `cpt-insightspec-actor-bb-api`
+
+#### Collect Webhook Configurations
+
+- [ ] `p3` - **ID**: `cpt-insightspec-fr-bb-collect-webhooks`
+
+The connector MUST collect webhook configurations per repository via the REST API (`GET /rest/api/1.0/projects/{key}/repos/{slug}/webhooks`). Each webhook record MUST include: webhook ID, name, target URL, active flag, subscribed events list, scope type (repository or project), SSL verification flag, creation and update timestamps, and configuration metadata. Records MUST be emitted as RECORD messages on the `bitbucket_webhooks` stream.
+
+**Rationale**: Webhook configuration data supports integration audit — understanding which repositories have CI/CD hooks, notification hooks, or third-party integrations configured.
+
+**Actors**: `cpt-insightspec-actor-bb-platform-engineer`, `cpt-insightspec-actor-bb-api`
+
+#### Collect Branch Protection Rules
+
+- [ ] `p3` - **ID**: `cpt-insightspec-fr-bb-collect-branch-restrictions`
+
+The connector MUST collect branch restriction rules per repository via the branch permissions API (`GET /rest/branch-permissions/2.0/projects/{key}/repos/{slug}/restrictions`). Each restriction record MUST include: restriction ID, scope (REPOSITORY or PROJECT), restriction type (no-deletes, read-only, pull-request-only, fast-forward-only), branch matcher (ref pattern, matcher type, active flag), and lists of exempted users, groups, and access keys. Records MUST be emitted as RECORD messages on the `bitbucket_branch_restrictions` stream.
+
+**Rationale**: Branch protection rules are critical governance metadata. Collecting them enables compliance auditing — verifying that main branches require PR-only merges, that appropriate exemptions are in place, and that protection policies are consistent across repositories.
+
+**Actors**: `cpt-insightspec-actor-bb-platform-engineer`, `cpt-insightspec-actor-bb-api`
+
+#### Collect Repository Hook Configurations
+
+- [ ] `p3` - **ID**: `cpt-insightspec-fr-bb-collect-repo-hooks`
+
+The connector MUST collect repository hook (plugin) configurations per repository via the REST API (`GET /rest/api/1.0/projects/{key}/repos/{slug}/settings/hooks`). Each hook record MUST include: hook key, name, type (PRE_RECEIVE, POST_RECEIVE, PRE_PULL_REQUEST_MERGE), description, plugin version, applicable scope types, enabled flag, configured flag, and scope details. Records MUST be emitted as RECORD messages on the `bitbucket_repo_hooks` stream.
+
+**Rationale**: Repository hooks enforce server-side policies (committer verification, merge checks). Collecting hook configurations supports governance auditing and ensures critical hooks are consistently enabled across repositories.
+
+**Actors**: `cpt-insightspec-actor-bb-platform-engineer`, `cpt-insightspec-actor-bb-api`
+
+#### Collect PR Merge Strategy Configuration
+
+- [ ] `p3` - **ID**: `cpt-insightspec-fr-bb-collect-pr-merge-config`
+
+The connector MUST collect pull request merge configuration per repository via the REST API (`GET /rest/api/1.0/projects/{key}/repos/{slug}/settings/pull-requests`). The record MUST include: merge config type (DEFAULT, REPOSITORY, PROJECT), default merge strategy (no-ff, squash, ff-only), list of all available strategies with enabled flags, required approver count, required-all-approvers flag, required-all-tasks-complete flag, required successful builds count, and commit summary settings. Records MUST be emitted as RECORD messages on the `bitbucket_pr_merge_config` stream.
+
+**Rationale**: Merge strategy and approval requirements directly impact code quality governance. Collecting this configuration enables analysis of merge policy consistency across repositories and identification of repos with insufficient merge guards.
+
+**Actors**: `cpt-insightspec-actor-bb-platform-engineer`, `cpt-insightspec-actor-bb-api`
+
+#### Collect Branch Model
+
+- [ ] `p3` - **ID**: `cpt-insightspec-fr-bb-collect-branch-model`
+
+The connector MUST collect the branch model configuration per repository via the REST API (`GET /rest/branch-utils/1.0/projects/{key}/repos/{slug}/branchmodel`). The record MUST include: the development branch reference (ref ID, display name, whether it is the default branch, latest commit), and the list of branch type definitions (type ID, display name, prefix pattern). Records MUST be emitted as RECORD messages on the `bitbucket_branch_model` stream.
+
+**Rationale**: Branch model data reveals how teams structure their branching workflow (GitFlow, trunk-based, etc.) and enables analytics on branch naming convention compliance.
+
+**Actors**: `cpt-insightspec-actor-bb-analytics-eng`, `cpt-insightspec-actor-bb-api`
+
+#### Collect Server Version and Build Info
+
+- [ ] `p3` - **ID**: `cpt-insightspec-fr-bb-collect-server-info`
+
+The connector MUST collect server version and build information via the application properties endpoint (`GET /rest/api/1.0/application-properties`). The record MUST include: server version string, build number, build date timestamp, and display name. Records MUST be emitted as RECORD messages on the `bitbucket_application_properties` stream.
+
+**Rationale**: Server version data enables the connector to adapt behavior to API version differences and provides operational metadata for troubleshooting collection issues tied to specific Bitbucket Server releases.
+
+**Actors**: `cpt-insightspec-actor-bb-platform-engineer`, `cpt-insightspec-actor-bb-api`
+
+#### Collect Default Reviewer Conditions
+
+- [ ] `p3` - **ID**: `cpt-insightspec-fr-bb-collect-default-reviewers`
+
+The connector MUST collect default reviewer conditions per repository via the REST API (`GET /rest/default-reviewers/1.0/projects/{key}/repos/{slug}/conditions`). Each condition record MUST include: condition ID, source branch matcher (ref pattern and matcher type), target branch matcher (ref pattern and matcher type), the list of default reviewer users, and the required approval count. Records MUST be emitted as RECORD messages on the `bitbucket_default_reviewers` stream.
+
+**Rationale**: Default reviewer conditions automate code review assignments. Collecting them enables audit of review coverage — verifying that critical code paths have mandatory reviewers assigned and that review policies are consistently applied.
+
+**Actors**: `cpt-insightspec-actor-bb-platform-engineer`, `cpt-insightspec-actor-bb-api`
 
 ---
 
@@ -381,19 +506,19 @@ The connector MUST support configurable inter-request sleep intervals and pagina
 
 - [ ] `p1` - **ID**: `cpt-insightspec-nfr-bb-schema-compliance`
 
-All collected data MUST be stored in the unified `git_*` Silver tables defined in `docs/components/connectors/git/README.md`. The connector MUST NOT create Bitbucket-specific Silver tables (the Bronze `bitbucket_api_cache` table is the only Bitbucket-specific table).
+All extracted data MUST be emitted as Airbyte protocol RECORD messages to stdout. Each RECORD specifies a stream name (e.g., `bitbucket_commits`, `bitbucket_permissions`). The connector does NOT write to databases directly — an orchestrator routes RECORD messages to Bronze tables. Stream names follow the `bitbucket_{stream}` convention for all tiers.
 
 #### Data Source Discriminator
 
 - [ ] `p1` - **ID**: `cpt-insightspec-nfr-bb-data-source`
 
-All rows written to unified tables MUST carry `data_source = "insight_bitbucket_server"` to enable source-level filtering and deduplication in cross-platform queries.
+All RECORD messages MUST include `data_source = "insight_bitbucket_server"` in the record data to enable source-level filtering and deduplication in downstream queries.
 
 #### Idempotent Writes
 
 - [ ] `p1` - **ID**: `cpt-insightspec-nfr-bb-idempotent`
 
-Repeated collection of the same data MUST NOT create duplicate rows. The connector MUST use upsert semantics (keyed on natural primary keys) for all write operations.
+The connector MUST emit deterministic RECORD messages: given the same input state and API data, repeated runs MUST produce identical output records. Deduplication and upsert semantics are the responsibility of the orchestrator and write layer, not the connector.
 
 ### 6.2 NFR Exclusions
 
@@ -414,7 +539,7 @@ Repeated collection of the same data MUST NOT create duplicate rows. The connect
 
 **Stability**: stable
 
-**Description**: The connector exposes a `collect` command (or callable) that accepts configuration (base URL, credentials, project scope, schedule parameters) and executes a full or incremental collection run.
+**Description**: The connector exposes a `collect` command (or callable) that accepts configuration (base URL, credentials, project scope, instance name) and emits Airbyte protocol messages (RECORD, STATE, LOG) to stdout. The orchestrator invokes the connector as a subprocess and consumes its stdout.
 
 **Breaking Change Policy**: Configuration schema changes require a version bump and migration guide.
 
@@ -430,15 +555,15 @@ Repeated collection of the same data MUST NOT create duplicate rows. The connect
 
 **Compatibility**: API v1.0; no backwards-incompatible changes expected within Bitbucket Server 7.x / 8.x / Data Center versions
 
-#### Identity Manager Contract
+#### Airbyte Protocol Contract
 
-- [ ] `p2` - **ID**: `cpt-insightspec-contract-bb-identity-mgr`
+- [ ] `p1` - **ID**: `cpt-insightspec-contract-bb-airbyte-protocol`
 
-**Direction**: required from client (Identity Manager service)
+**Direction**: provided to orchestrator (stdout)
 
-**Protocol/Format**: Internal service call; input is email + name + source label; output is canonical `person_id`
+**Protocol/Format**: JSON-line messages to stdout. Message types: `RECORD` (extracted data), `STATE` (cursor checkpoint), `LOG` (status/errors), `CATALOG` (stream schema declarations). One JSON object per line.
 
-**Compatibility**: Identity Manager must be available and responsive during collection runs
+**Compatibility**: Compatible with Airbyte protocol v0.2+. Custom orchestrators must implement RECORD/STATE/LOG message handling.
 
 ---
 
@@ -459,11 +584,11 @@ Repeated collection of the same data MUST NOT create duplicate rows. The connect
 1. Platform Engineer triggers the connector run.
 2. Connector enumerates all configured projects and their repositories.
 3. For each repository: collect branches, then all commits per branch (full history), then all PRs with activities and file changes.
-4. Connector writes all data to unified `git_*` Silver tables with `data_source = "insight_bitbucket_server"`.
-5. Connector records the completed run in the collection runs log.
+4. Connector emits RECORD messages to stdout with `data_source = "insight_bitbucket_server"` in each record.
+5. Connector emits a final STATE message with cursor checkpoints and LOG messages with run statistics.
 
 **Postconditions**:
-- All repositories, commits, PRs, reviews, and comments are present in the Silver tables.
+- All repositories, commits, PRs, reviews, and comments have been emitted as RECORD messages to stdout.
 - Collection run log shows `status = completed`.
 
 **Alternative Flows**:
@@ -482,27 +607,35 @@ Repeated collection of the same data MUST NOT create duplicate rows. The connect
 
 **Main Flow**:
 1. Scheduler triggers connector run on configured schedule.
-2. Connector reads cursors from `git_repository_branches` and `git_pull_requests`.
+2. Orchestrator provides previous STATE to connector (cursor checkpoints).
 3. For each branch: fetch commits only up to the last known commit hash; stop at cursor.
 4. For PRs: fetch with `order=NEWEST`; stop when `updated_on` < last cursor.
-5. Write only new/changed records; skip unchanged items.
-6. Update cursors for next run.
+5. Emit only new/changed records as RECORD messages; skip unchanged items.
+6. Emit STATE message with updated cursors for next run.
 
 **Postconditions**:
-- Only new or updated data is added to Silver tables.
+- Only new or updated data is emitted as RECORD messages.
 - Run completes significantly faster than a full collection.
 
 ---
 
 ## 9. Acceptance Criteria
 
-- [ ] All repositories, branches, commits, PRs, reviews, and comments from a sample Bitbucket Server instance are present in the unified `git_*` Silver tables after a full collection run.
+- [ ] All repositories, branches, commits, PRs, reviews, and comments from a sample Bitbucket Server instance are emitted as RECORD messages to stdout during a full collection run.
 - [ ] `data_source = "insight_bitbucket_server"` is set on every row written by this connector.
-- [ ] A second collection run (incremental) completes without creating duplicate rows.
+- [ ] A second collection run (incremental) emits only new/changed records (deterministic output given same state).
 - [ ] An incremental run fetches only data updated since the last run (verified by comparing run durations and API call counts).
 - [ ] Collection continues and completes when one repository returns 404 (deleted) or one PR returns a malformed response.
-- [ ] Identity resolution populates `person_id` for all commit authors and reviewers that have a matching email in the Identity Manager.
-- [ ] Collection run log records correct start time, end time, item counts, and status for each run.
+- [ ] Connector emits LOG messages with correct start time, end time, item counts, and status for each run.
+
+- [ ] Permission data (project-level, repository-level, and global for both users and groups) is emitted as RECORD messages on the `bitbucket_permissions` stream after a full collection run.
+- [ ] Build statuses for commits are emitted as RECORD messages on the `bitbucket_build_statuses` stream with state, URL, and timestamp for each build.
+- [ ] Tags per repository are collected and stored with tag name, tagged commit hash, and tag object SHA.
+- [ ] A standalone user inventory is collected, including account active/inactive status and user type (NORMAL / SERVICE).
+- [ ] Group membership data is collected for all admin-visible groups, capturing group name and member list.
+- [ ] PR merge eligibility (canMerge flag, vetoes list) is collected for all open pull requests.
+- [ ] Repository metadata includes state (AVAILABLE / INITIALISING / OFFLINE), archived flag, and at least one clone URL per repository.
+- [ ] PR comments include nested reply threading (parent comment reference) and orphaned anchor detection for file-level comments on outdated diffs.
 
 ---
 
@@ -511,8 +644,7 @@ Repeated collection of the same data MUST NOT create duplicate rows. The connect
 | Dependency | Description | Criticality |
 |------------|-------------|-------------|
 | Bitbucket Server REST API v1.0 | Source data — all collected data originates from this API | `p1` |
-| Unified `git_*` Silver tables | Target schema defined in `docs/components/connectors/git/README.md` | `p1` |
-| Identity Manager | Resolves author emails and usernames to canonical `person_id` | `p1` |
+| Airbyte-compatible orchestrator | Consumes stdout RECORD/STATE/LOG messages, routes to Bronze tables | `p1` |
 | ETL Scheduler / Orchestrator | Triggers collection runs on schedule | `p2` |
 
 ---
@@ -522,9 +654,7 @@ Repeated collection of the same data MUST NOT create duplicate rows. The connect
 - The Bitbucket Server instance is accessible from the connector's deployment environment over HTTPS.
 - The provided credentials have read access to all configured projects and repositories.
 - The Bitbucket Server REST API v1.0 is available and stable on the target instance (Bitbucket Server 6.x+ or Data Center).
-- The Identity Manager is operational and reachable during collection runs.
-- The unified `git_*` Silver tables are pre-provisioned per the schema in `docs/components/connectors/git/README.md`.
-- Author emails in Bitbucket commits are corporate email addresses resolvable by the Identity Manager.
+- An Airbyte-compatible orchestrator is available to consume connector stdout and route records to Bronze tables.
 
 ---
 
@@ -536,8 +666,7 @@ Repeated collection of the same data MUST NOT create duplicate rows. The connect
 | API credentials expire or are revoked | Collection fails with 401/403 | Alert on auth failures; document credential rotation procedure |
 | Large repositories with deep commit history cause slow initial collection | First run takes hours | Support configurable history depth limit for initial collection; document expected run times |
 | Bitbucket API rate limiting enforced by organization | Throttled or blocked requests | Configurable inter-request delay + exponential backoff; default conservative settings |
-| Author email absent from Bitbucket commits | Identity resolution falls back to username only | Document fallback behavior; flag unresolved identities for manual review |
-| `bitbucket_api_cache` table grows unbounded | Storage pressure | Implement configurable TTL + periodic purge (see OQ-BB-2) |
+| Author email absent from Bitbucket commits | Downstream dbt identity resolution cannot match by email | Connector stores raw author name and email as-is in Bronze; dbt handles fallback logic |
 
 ---
 
@@ -549,25 +678,19 @@ Bitbucket author names frequently use dot-separated corporate format (e.g., `Joh
 
 **Question**: Should the connector normalize author names during Silver-layer mapping, or preserve the raw Bitbucket format and delegate normalization to Gold-layer identity resolution?
 
-**Current approach**: Preserve as-is in Silver; normalize in Gold identity resolution.
+**Resolution (v1.2)**: Resolved — the connector stores raw Bitbucket author names as-is in Bronze. Normalization is handled by dbt Silver-layer transformations.
 
-**Consideration**: Dot-separated names may be a corporate standard; normalizing early could lose information useful for matching across systems.
+**Status**: CLOSED
 
 ---
 
 ### OQ-BB-2: API cache retention policy
 
-The optional `bitbucket_api_cache` Bronze table can grow unbounded without a retention policy.
-
 **Question**: What is the recommended retention period for cached API responses?
 
-**Options**:
-1. Short TTL (1–4 hours) for volatile data (commits, PRs)
-2. Long TTL (24 hours) for stable data (repositories, branches)
-3. Event-based invalidation (webhook triggers)
-4. Periodic purge (delete entries older than 7 days)
+**Resolution (v1.3)**: Resolved — API caching is removed from the connector. The Bronze layer stores all collected data permanently. Data retention is an infrastructure/ops concern, not a connector concern. The `bitbucket_api_cache` concept is eliminated.
 
-**Current approach**: No automatic expiration — manual cache management required.
+**Status**: CLOSED
 
 ---
 
@@ -577,7 +700,11 @@ Bitbucket distinguishes between formally assigned reviewers and participants (us
 
 **Question**: Should the schema include a separate participant tracking table, or should participant roles be merged into the reviewer table using a `role` discriminator field?
 
-**Current approach**: Only formal reviewers are stored in `git_pull_requests_reviewers`; participants are implicit from `git_pull_requests_comments.author_name`.
+**Current approach** (superseded): Only formal reviewers were emitted; participants were implicit from comment authors.
 
 **Consideration**: Explicit participant data supports collaboration graph analytics but may duplicate comment-author data already present in the comments table.
+
+**Resolution (v1.1)**: Resolved — participants are stored as an embedded JSON array (`participants[]`) within the pull request record. Each entry contains `user`, `role` (PARTICIPANT / REVIEWER / AUTHOR), and `approved` status. No separate participant table is created. This approach preserves explicit participant data for collaboration graph analytics while avoiding table proliferation. See DESIGN.md field mapping and stream inventory for implementation details.
+
+**Status**: CLOSED
 
