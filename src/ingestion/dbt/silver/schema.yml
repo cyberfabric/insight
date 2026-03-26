@@ -1,0 +1,10 @@
+version: 2
+
+models:
+  - name: class_comms_events
+    description: "Unified communication events from all sources"
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null

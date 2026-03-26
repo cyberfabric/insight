@@ -263,6 +263,36 @@ kind = "ADR"
 path = "docs/domain/connector/specs/ADR/0001-connector-integration-protocol.md"
 name = "ADR-0001: Connector-to-System Integration Protocol"
 
+[[systems.artifacts]]
+kind = "DECOMPOSITION"
+path = "docs/domain/ingestion/specs/DECOMPOSITION.md"
+name = "Ingestion Layer Decomposition"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/domain/ingestion/specs/PRD.md"
+name = "Ingestion Layer PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/ingestion/specs/DESIGN.md"
+name = "Ingestion Layer Design"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/ingestion/specs/ADR/0001-kestra-over-airflow.md"
+name = "ADR-0001: Kestra over Airflow"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/airbyte-connector/specs/DESIGN.md"
+name = "Airbyte Connector Development Guide"
+traceability = "DOCS-ONLY"
+
 [[systems]]
 name = "Orchestrator"
 slug = "orch"

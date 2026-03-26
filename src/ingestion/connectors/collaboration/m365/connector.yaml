@@ -1,0 +1,222 @@
+version: 7.0.4
+
+type: DeclarativeSource
+
+check:
+  type: CheckStream
+  stream_names:
+    - email_activity
+
+definitions:
+  auth:
+    type: SessionTokenAuthenticator
+    login_requester:
+      type: HttpRequester
+      http_method: GET
+      url: >-
+        https://login.microsoftonline.com/{{ config['azure_tenant_id'] }}/oauth2/v2.0/token
+      request_body:
+        type: RequestBodyUrlEncodedForm
+        value:
+          scope: https://graph.microsoft.com/.default
+          client_id: "{{ config['azure_client_id'] }}"
+          grant_type: client_credentials
+          client_secret: "{{ config['azure_client_secret'] }}"
+    session_token_path:
+      - access_token
+    request_authentication:
+      type: Bearer
+    expiration_duration: PT1H
+
+  paginator:
+    type: DefaultPaginator
+    page_token_option:
+      type: RequestPath
+    pagination_strategy:
+      type: CursorPagination
+      cursor_value: "{{ response.get('@odata.nextLink', '') }}"
+      stop_condition: "{{ not response.get('@odata.nextLink') }}"
+
+  incremental:
+    type: DatetimeBasedCursor
+    cursor_field: reportRefreshDate
+    datetime_format: "%Y-%m-%d"
+    cursor_granularity: P1D
+    start_datetime:
+      type: MinMaxDatetime
+      datetime: "{{ (today_utc() - duration('P27D')).strftime('%Y-%m-%d') }}"
+      datetime_format: "%Y-%m-%d"
+    end_datetime:
+      type: MinMaxDatetime
+      datetime: "{{ (today_utc() - duration('P2D')).strftime('%Y-%m-%d') }}"
+      datetime_format: "%Y-%m-%d"
+    step: P1D
+    lookback_window: P0D
+
+  add_fields:
+    type: AddFields
+    fields:
+      - path: [tenant_id]
+        value: "{{ config['insights_tenant_id'] }}"
+      - path: [unique_key]
+        value: "{{ record['userPrincipalName'] }}-{{ record['reportRefreshDate'] }}"
+
+  base_requester:
+    type: HttpRequester
+    http_method: GET
+    authenticator:
+      $ref: "#/definitions/auth"
+    request_parameters:
+      $format: application/json
+
+  base_record_selector:
+    type: RecordSelector
+    extractor:
+      type: DpathExtractor
+      field_path:
+        - value
+
+  base_retriever:
+    type: SimpleRetriever
+    record_selector:
+      $ref: "#/definitions/base_record_selector"
+    paginator:
+      $ref: "#/definitions/paginator"
+
+  common_fields:
+    type: object
+    $schema: http://json-schema.org/schema#
+    properties:
+      tenant_id:
+        type: string
+      unique_key:
+        type: string
+      reportRefreshDate:
+        type: [string, "null"]
+      userPrincipalName:
+        type: [string, "null"]
+      displayName:
+        type: [string, "null"]
+      isDeleted:
+        type: [boolean, "null"]
+      lastActivityDate:
+        type: [string, "null"]
+      assignedProducts:
+        type: [array, "null"]
+        items:
+          type: [string, "null"]
+      reportPeriod:
+        type: [string, "null"]
+    additionalProperties: true
+
+streams:
+  - type: DeclarativeStream
+    name: email_activity
+    primary_key:
+      - unique_key
+    retriever:
+      $ref: "#/definitions/base_retriever"
+      requester:
+        $ref: "#/definitions/base_requester"
+        url: >-
+          https://graph.microsoft.com/beta/reports/getEmailActivityUserDetail(date={{ stream_slice.start_time }})
+    incremental_sync:
+      $ref: "#/definitions/incremental"
+    transformations:
+      - $ref: "#/definitions/add_fields"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $ref: "#/definitions/common_fields"
+
+  - type: DeclarativeStream
+    name: teams_activity
+    primary_key:
+      - unique_key
+    retriever:
+      $ref: "#/definitions/base_retriever"
+      requester:
+        $ref: "#/definitions/base_requester"
+        url: >-
+          https://graph.microsoft.com/beta/reports/getTeamsUserActivityUserDetail(date={{ stream_slice.start_time }})
+    incremental_sync:
+      $ref: "#/definitions/incremental"
+    transformations:
+      - $ref: "#/definitions/add_fields"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $ref: "#/definitions/common_fields"
+
+  - type: DeclarativeStream
+    name: onedrive_activity
+    primary_key:
+      - unique_key
+    retriever:
+      $ref: "#/definitions/base_retriever"
+      requester:
+        $ref: "#/definitions/base_requester"
+        url: >-
+          https://graph.microsoft.com/beta/reports/getOneDriveActivityUserDetail(date={{ stream_slice.start_time }})
+    incremental_sync:
+      $ref: "#/definitions/incremental"
+    transformations:
+      - $ref: "#/definitions/add_fields"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $ref: "#/definitions/common_fields"
+
+  - type: DeclarativeStream
+    name: sharepoint_activity
+    primary_key:
+      - unique_key
+    retriever:
+      $ref: "#/definitions/base_retriever"
+      requester:
+        $ref: "#/definitions/base_requester"
+        url: >-
+          https://graph.microsoft.com/beta/reports/getSharePointActivityUserDetail(date={{ stream_slice.start_time }})
+    incremental_sync:
+      $ref: "#/definitions/incremental"
+    transformations:
+      - $ref: "#/definitions/add_fields"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $ref: "#/definitions/common_fields"
+
+spec:
+  type: Spec
+  connection_specification:
+    type: object
+    $schema: http://json-schema.org/draft-07/schema#
+    required:
+      - azure_client_id
+      - azure_client_secret
+      - azure_tenant_id
+      - insights_tenant_id
+    properties:
+      azure_client_id:
+        type: string
+        title: Azure Client ID
+        order: 0
+      azure_client_secret:
+        type: string
+        title: Azure Client Secret
+        airbyte_secret: true
+        order: 1
+      azure_tenant_id:
+        type: string
+        title: Azure Tenant ID
+        order: 2
+      insights_tenant_id:
+        type: string
+        title: Insights Tenant ID
+        description: Tenant isolation identifier for the ingestion layer
+        order: 3
+    additionalProperties: true
+
+concurrency_level:
+  type: ConcurrencyLevel
+  default_concurrency: 1

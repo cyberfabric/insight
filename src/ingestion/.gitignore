@@ -1,0 +1,11 @@
+# Secrets — never commit credentials
+.env.local
+*.env.local
+
+# Connector discovery output
+catalog.json
+
+# Terraform local state
+*.tfstate
+*.tfstate.backup
+.terraform/

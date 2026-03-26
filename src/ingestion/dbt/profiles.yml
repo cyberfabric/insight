@@ -1,0 +1,11 @@
+ingestion:
+  target: local
+  outputs:
+    local:
+      type: clickhouse
+      host: localhost
+      port: 8123
+      schema: silver
+      user: default
+      password: ""
+      secure: false
