@@ -144,6 +144,16 @@ path = "docs/components/connectors/collaboration/m365/specs/DESIGN.md"
 name = "Microsoft 365 Connector Design"
 
 [[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/collaboration/zoom/specs/PRD.md"
+name = "Zoom Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/collaboration/zoom/specs/DESIGN.md"
+name = "Zoom Connector Design"
+
+[[systems.artifacts]]
 kind = "DESIGN"
 path = "docs/components/connectors/zulip.md"
 name = "Zulip Connector Specification"
@@ -182,6 +192,16 @@ name = "Outline Connector Specification"
 kind = "DESIGN"
 path = "docs/components/connectors/ai-dev/cursor.md"
 name = "Cursor Connector Specification"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/ai-dev/cursor/specs/PRD.md"
+name = "Cursor Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/ai-dev/cursor/specs/DESIGN.md"
+name = "Cursor Connector Design"
 
 [[systems.artifacts]]
 kind = "DESIGN"
