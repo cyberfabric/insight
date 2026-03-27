@@ -253,6 +253,16 @@ kind = "ADR"
 path = "docs/domain/connector/specs/ADR/0001-connector-integration-protocol.md"
 name = "ADR-0001: Connector-to-System Integration Protocol"
 
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/connector/specs/ADR/0002-connector-responsibility-scope.md"
+name = "ADR-0002: Connector Responsibility Scope"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/connector/specs/ADR/0003-connector-message-protocol.md"
+name = "ADR-0003: Connector Message Protocol"
+
 [[systems]]
 name = "Orchestrator"
 slug = "orch"

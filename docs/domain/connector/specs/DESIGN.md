@@ -97,6 +97,8 @@ With 2,000+ potential customers each using different tooling stacks, the connect
 | ADR | Decision | Status |
 |-----|----------|--------|
 | `cpt-insightspec-adr-connector-integration-protocol` | Use stdout JSON-per-line protocol for connector-to-system data delivery — language-agnostic, runner-mediated, backend-enforced integrity | proposed |
+| `cpt-insightspec-adr-connector-responsibility-scope` | Connectors are thin extractors (Airbyte-style) — extract raw data to stdout, no DB dependencies, dbt handles all transformations | proposed |
+| `cpt-insightspec-adr-connector-message-protocol` | Airbyte-compatible message protocol subset (RECORD, STATE, LOG, CATALOG, SPEC, CONNECTION_STATUS) with Insight extensions (METRIC, PROGRESS) | proposed |
 
 ### 1.3 Architecture Layers
 
