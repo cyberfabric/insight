@@ -16,7 +16,7 @@ decision-makers: antonz
 - [Decision Outcome](#decision-outcome)
   - [Core Message Types (from Airbyte Protocol)](#core-message-types-from-airbyte-protocol)
   - [Insight-Specific Extensions](#insight-specific-extensions)
-  - [Connector CLI Interface](#connector-cli-interface)
+  - [Connector CLI](#connector-cli-interface)
   - [Consequences](#consequences)
   - [Confirmation](#confirmation)
 - [Pros and Cons of the Options](#pros-and-cons-of-the-options)
@@ -177,7 +177,7 @@ Maps to the orchestrator's METRIC message type defined in the Orchestrator PRD.
 
 Maps to the orchestrator's PROGRESS message type. The runner translates PROGRESS to the orchestrator's expected format.
 
-### Connector CLI Interface
+### Connector CLI
 
 Connectors MUST support these command-line modes:
 
