@@ -1,0 +1,796 @@
+version: 7.0.4
+
+type: DeclarativeSource
+
+check:
+  type: CheckStream
+  stream_names:
+    - users
+
+definitions:
+  base_error_handler:
+    type: CompositeErrorHandler
+    error_handlers:
+      - type: DefaultErrorHandler
+        response_filters:
+          - type: HttpResponseFilter
+            action: RATE_LIMITED
+            http_codes:
+              - 429
+        backoff_strategies:
+          - type: WaitTimeFromHeader
+            header: Retry-After
+      - type: DefaultErrorHandler
+        response_filters:
+          - type: HttpResponseFilter
+            action: RATE_LIMITED
+            http_codes:
+              - 503
+        backoff_strategies:
+          - type: WaitTimeFromHeader
+            header: Retry-After
+      - type: DefaultErrorHandler
+        max_retries: 5
+        response_filters:
+          - type: HttpResponseFilter
+            action: RETRY
+            http_codes:
+              - 500
+              - 502
+              - 504
+        backoff_strategies:
+          - type: ExponentialBackoffStrategy
+            factor: 5
+  participants_error_handler:
+    type: CompositeErrorHandler
+    error_handlers:
+      - type: DefaultErrorHandler
+        response_filters:
+          - type: HttpResponseFilter
+            action: SUCCESS
+            http_codes:
+              - 404
+      - type: DefaultErrorHandler
+        response_filters:
+          - type: HttpResponseFilter
+            action: RATE_LIMITED
+            http_codes:
+              - 429
+        backoff_strategies:
+          - type: WaitTimeFromHeader
+            header: Retry-After
+      - type: DefaultErrorHandler
+        response_filters:
+          - type: HttpResponseFilter
+            action: RATE_LIMITED
+            http_codes:
+              - 503
+        backoff_strategies:
+          - type: WaitTimeFromHeader
+            header: Retry-After
+      - type: DefaultErrorHandler
+        max_retries: 5
+        response_filters:
+          - type: HttpResponseFilter
+            action: RETRY
+            http_codes:
+              - 500
+              - 502
+              - 504
+        backoff_strategies:
+          - type: ExponentialBackoffStrategy
+            factor: 5
+  base_requester:
+    type: HttpRequester
+    url_base: https://api.zoom.us/v2/
+    authenticator:
+      type: SessionTokenAuthenticator
+      login_requester:
+        type: HttpRequester
+        url_base: https://zoom.us/oauth
+        path: token
+        authenticator:
+          type: BasicHttpAuthenticator
+          username: "{{ config['zoom_client_id'] }}"
+          password: "{{ config['zoom_client_secret'] }}"
+        http_method: POST
+        request_parameters:
+          grant_type: account_credentials
+          account_id: "{{ config['zoom_account_id'] }}"
+        request_headers: {}
+        request_body_json: {}
+      expiration_duration: PT1H
+      session_token_path:
+        - access_token
+      request_authentication:
+        type: Bearer
+    request_headers:
+      Accept: application/json
+  streams:
+    users:
+      type: DeclarativeStream
+      name: users
+      retriever:
+        type: SimpleRetriever
+        decoder:
+          type: JsonDecoder
+        requester:
+          $ref: "#/definitions/base_requester"
+          path: users
+          http_method: GET
+          error_handler:
+            $ref: "#/definitions/base_error_handler"
+          request_parameters:
+            page_size: "100"
+            status: active
+        paginator:
+          type: DefaultPaginator
+          page_token_option:
+            type: RequestOption
+            inject_into: request_parameter
+            field_name: next_page_token
+          pagination_strategy:
+            type: CursorPagination
+            cursor_value: "{{ response.get('next_page_token') }}"
+          stop_condition:
+            type: StopCondition
+            condition: "{{ not response.get('next_page_token') }}"
+        record_selector:
+          type: RecordSelector
+          extractor:
+            type: DpathExtractor
+            field_path:
+              - users
+      primary_key:
+        - zoom_user_id
+      schema_loader:
+        type: InlineSchemaLoader
+        schema:
+          $ref: "#/schemas/users"
+      transformations:
+        - type: AddFields
+          fields:
+            - type: AddedFieldDefinition
+              path:
+                - zoom_user_id
+              value: "{{ record['id'] }}"
+            - type: AddedFieldDefinition
+              path:
+                - tenant_id
+              value: "{{ config['insight_tenant_id'] }}"
+            - type: AddedFieldDefinition
+              path:
+                - source_id
+              value: "{{ config['insight_source_id'] }}"
+            - type: AddedFieldDefinition
+              path:
+                - unique_key
+              value: >-
+                {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+    meetings:
+      type: DeclarativeStream
+      name: meetings
+      retriever:
+        type: SimpleRetriever
+        decoder:
+          type: JsonDecoder
+        requester:
+          $ref: "#/definitions/base_requester"
+          path: metrics/meetings
+          http_method: GET
+          error_handler:
+            $ref: "#/definitions/base_error_handler"
+          request_parameters:
+            type: past
+            page_size: "100"
+        paginator:
+          type: DefaultPaginator
+          page_token_option:
+            type: RequestOption
+            inject_into: request_parameter
+            field_name: next_page_token
+          pagination_strategy:
+            type: CursorPagination
+            cursor_value: "{{ response.get('next_page_token') }}"
+          stop_condition:
+            type: StopCondition
+            condition: "{{ not response.get('next_page_token') }}"
+        record_selector:
+          type: RecordSelector
+          extractor:
+            type: DpathExtractor
+            field_path:
+              - meetings
+      incremental_sync:
+        type: DatetimeBasedCursor
+        cursor_field: end_time
+        cursor_datetime_formats:
+          - "%Y-%m-%dT%H:%M:%SZ"
+          - "%Y-%m-%dT%H:%M:%S%z"
+        start_datetime:
+          type: MinMaxDatetime
+          datetime: "{{ (today_utc() - duration('P30D')).strftime('%Y-%m-%d') }}"
+          datetime_format: "%Y-%m-%d"
+        end_datetime:
+          type: MinMaxDatetime
+          datetime: "{{ now_utc().strftime('%Y-%m-%d') }}"
+          datetime_format: "%Y-%m-%d"
+        datetime_format: "%Y-%m-%d"
+        start_time_option:
+          type: RequestOption
+          field_name: from
+          inject_into: request_parameter
+        end_time_option:
+          type: RequestOption
+          field_name: to
+          inject_into: request_parameter
+        lookback_window: "P7D"
+        step: "P30D"
+        cursor_granularity: "P1D"
+      primary_key:
+        - meeting_instance_key
+      schema_loader:
+        type: InlineSchemaLoader
+        schema:
+          $ref: "#/schemas/meetings"
+      transformations:
+        - type: AddFields
+          fields:
+            - type: AddedFieldDefinition
+              path:
+                - meeting_series_id
+              value: "{{ record['id'] }}"
+            - type: AddedFieldDefinition
+              path:
+                - meeting_occurrence_id
+              value: "{{ record.get('occurrence_id') }}"
+            - type: AddedFieldDefinition
+              path:
+                - meeting_uuid
+              value: "{{ record.get('uuid') }}"
+        - type: AddFields
+          fields:
+            - type: AddedFieldDefinition
+              path:
+                - identity_strength
+              value: >-
+                {{ 'uuid' if record.get('uuid') else ('occurrence' if
+                record.get('occurrence_id') else 'fallback') }}
+            - type: AddedFieldDefinition
+              path:
+                - meeting_instance_key
+              value: >-
+                {{ ('zoom:uuid:' ~ record.get('uuid')|lower) if record.get('uuid')
+                else (('zoom:occurrence:' ~ record.get('id') ~ ':' ~
+                record.get('occurrence_id')) if record.get('occurrence_id')
+                else ('zoom:series-window:' ~ record.get('id') ~ ':' ~
+                (record.get('start_time') or record.get('scheduled_start_time') or
+                record.get('date')))) }}
+        - type: AddFields
+          fields:
+            - type: AddedFieldDefinition
+              path:
+                - tenant_id
+              value: "{{ config['insight_tenant_id'] }}"
+            - type: AddedFieldDefinition
+              path:
+                - source_id
+              value: "{{ config['insight_source_id'] }}"
+            - type: AddedFieldDefinition
+              path:
+                - unique_key
+              value: >-
+                {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record.get('uuid') or record.get('id') }}-{{ record.get('start_time','') }}
+    participants:
+      type: DeclarativeStream
+      name: participants
+      retriever:
+        type: SimpleRetriever
+        partition_router:
+          type: SubstreamPartitionRouter
+          parent_stream_configs:
+            - type: ParentStreamConfig
+              parent_key: meeting_uuid
+              partition_field: meeting_uuid
+              stream:
+                $ref: "#/definitions/streams/meetings"
+            - type: ParentStreamConfig
+              parent_key: meeting_series_id
+              partition_field: meeting_series_id
+              stream:
+                $ref: "#/definitions/streams/meetings"
+            - type: ParentStreamConfig
+              parent_key: meeting_occurrence_id
+              partition_field: meeting_occurrence_id
+              stream:
+                $ref: "#/definitions/streams/meetings"
+            - type: ParentStreamConfig
+              parent_key: meeting_instance_key
+              partition_field: meeting_instance_key
+              stream:
+                $ref: "#/definitions/streams/meetings"
+        decoder:
+          type: JsonDecoder
+        requester:
+          $ref: "#/definitions/base_requester"
+          path: >-
+            metrics/meetings/{{ stream_partition.meeting_uuid | replace('/',
+            '%2F') | replace('+', '%2B') | replace('=', '%3D') }}/participants
+          http_method: GET
+          error_handler:
+            $ref: "#/definitions/participants_error_handler"
+          request_parameters:
+            type: past
+            page_size: "100"
+        paginator:
+          type: DefaultPaginator
+          page_token_option:
+            type: RequestOption
+            inject_into: request_parameter
+            field_name: next_page_token
+          pagination_strategy:
+            type: CursorPagination
+            cursor_value: "{{ response.get('next_page_token') }}"
+          stop_condition:
+            type: StopCondition
+            condition: "{{ not response.get('next_page_token') }}"
+        record_selector:
+          type: RecordSelector
+          extractor:
+            type: DpathExtractor
+            field_path:
+              - participants
+      primary_key:
+        - meeting_instance_key
+        - participant_key
+        - join_at
+      schema_loader:
+        type: InlineSchemaLoader
+        schema:
+          $ref: "#/schemas/participants"
+      transformations:
+        - type: AddFields
+          fields:
+            - type: AddedFieldDefinition
+              path:
+                - meeting_series_id
+              value: "{{ stream_partition.meeting_series_id }}"
+            - type: AddedFieldDefinition
+              path:
+                - meeting_occurrence_id
+              value: "{{ stream_partition.meeting_occurrence_id }}"
+            - type: AddedFieldDefinition
+              path:
+                - meeting_uuid
+              value: "{{ stream_partition.meeting_uuid }}"
+            - type: AddedFieldDefinition
+              path:
+                - meeting_instance_key
+              value: "{{ stream_partition.meeting_instance_key }}"
+            - type: AddedFieldDefinition
+              path:
+                - participant_key
+              value: >-
+                {{ record.get('id') or record.get('user_id') or record.get('email')
+                or record.get('name') }}
+            - type: AddedFieldDefinition
+              path:
+                - join_at
+              value: "{{ record.get('join_time') }}"
+            - type: AddedFieldDefinition
+              path:
+                - leave_at
+              value: "{{ record.get('leave_time') }}"
+            - type: AddedFieldDefinition
+              path:
+                - attendance_duration_seconds
+              value: "{{ record.get('duration') }}"
+        - type: AddFields
+          fields:
+            - type: AddedFieldDefinition
+              path:
+                - tenant_id
+              value: "{{ config['insight_tenant_id'] }}"
+            - type: AddedFieldDefinition
+              path:
+                - source_id
+              value: "{{ config['insight_source_id'] }}"
+            - type: AddedFieldDefinition
+              path:
+                - unique_key
+              value: >-
+                {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.meeting_instance_key }}-{{ record.get('id') or record.get('user_id') or record.get('email') or record.get('name') }}
+    message_activities:
+      type: DeclarativeStream
+      name: message_activities
+      retriever:
+        type: SimpleRetriever
+        partition_router:
+          type: SubstreamPartitionRouter
+          parent_stream_configs:
+            - type: ParentStreamConfig
+              parent_key: zoom_user_id
+              partition_field: zoom_user_id
+              stream:
+                $ref: "#/definitions/streams/users"
+        decoder:
+          type: JsonDecoder
+        requester:
+          $ref: "#/definitions/base_requester"
+          path: "chat/users/{{ stream_partition.zoom_user_id }}/messages"
+          http_method: GET
+          error_handler:
+            $ref: "#/definitions/base_error_handler"
+          request_parameters:
+            from: "{{ (today_utc() - duration('P30D')).strftime('%Y-%m-%d') }}"
+            to: "{{ now_utc().strftime('%Y-%m-%d') }}"
+            page_size: "100"
+        paginator:
+          type: DefaultPaginator
+          page_token_option:
+            type: RequestOption
+            inject_into: request_parameter
+            field_name: next_page_token
+          pagination_strategy:
+            type: CursorPagination
+            cursor_value: "{{ response.get('next_page_token') }}"
+          stop_condition:
+            type: StopCondition
+            condition: "{{ not response.get('next_page_token') }}"
+        record_selector:
+          type: RecordSelector
+          extractor:
+            type: DpathExtractor
+            field_path:
+              - messages
+      primary_key:
+        - message_activity_id
+      schema_loader:
+        type: InlineSchemaLoader
+        schema:
+          $ref: "#/schemas/message_activities"
+      transformations:
+        - type: AddFields
+          fields:
+            - type: AddedFieldDefinition
+              path:
+                - collection_mode
+              value: separate_chat_flow
+            - type: AddedFieldDefinition
+              path:
+                - zoom_user_id
+              value: "{{ stream_partition.zoom_user_id }}"
+            - type: AddedFieldDefinition
+              path:
+                - message_activity_id
+              value: >-
+                {{ record.get('id') or record.get('message_id') or
+                (stream_partition.zoom_user_id ~ ':' ~ record.get('date', '') ~ ':' ~
+                record.get('channel_id', '') ~ ':' ~ record.get('count', '1')) }}
+            - type: AddedFieldDefinition
+              path:
+                - channel_type
+              value: "{{ record.get('channel_type') or 'direct' }}"
+            - type: AddedFieldDefinition
+              path:
+                - activity_date
+              value: >-
+                {{ record.get('date_time') or record.get('message_time') or
+                ((record.get('date') ~ 'T00:00:00Z') if record.get('date') else none) }}
+            - type: AddedFieldDefinition
+              path:
+                - message_count
+              value: "{{ record.get('count') or 1 }}"
+            - type: AddedFieldDefinition
+              path:
+                - source_endpoint
+              value: chat/users/{userId}/messages
+        - type: AddFields
+          fields:
+            - type: AddedFieldDefinition
+              path:
+                - tenant_id
+              value: "{{ config['insight_tenant_id'] }}"
+            - type: AddedFieldDefinition
+              path:
+                - source_id
+              value: "{{ config['insight_source_id'] }}"
+            - type: AddedFieldDefinition
+              path:
+                - unique_key
+              value: >-
+                {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record.get('id') or record.get('message_id') or (stream_partition.zoom_user_id ~ ':' ~ record.get('date', '') ~ ':' ~ record.get('channel_id', '') ~ ':' ~ record.get('count', '1')) }}
+
+streams:
+  - $ref: "#/definitions/streams/users"
+  - $ref: "#/definitions/streams/meetings"
+  - $ref: "#/definitions/streams/participants"
+  - $ref: "#/definitions/streams/message_activities"
+
+spec:
+  type: Spec
+  connection_specification:
+    type: object
+    $schema: http://json-schema.org/draft-07/schema#
+    required:
+      - zoom_account_id
+      - zoom_client_id
+      - zoom_client_secret
+      - insight_tenant_id
+      - insight_source_id
+    properties:
+      insight_tenant_id:
+        type: string
+        title: Insight Tenant ID
+        description: Insight tenant identifier stamped onto every emitted record.
+        order: 0
+      insight_source_id:
+        type: string
+        title: Insight Source ID
+        description: Insight source instance ID (e.g. zoom-main).
+        order: 1
+      zoom_account_id:
+        type: string
+        title: Zoom Account ID
+        description: Zoom Server-to-Server OAuth account ID.
+        order: 2
+      zoom_client_id:
+        type: string
+        title: Zoom Client ID
+        description: Zoom Server-to-Server OAuth client ID.
+        order: 3
+      zoom_client_secret:
+        type: string
+        title: Zoom Client Secret
+        description: Zoom Server-to-Server OAuth client secret.
+        airbyte_secret: true
+        order: 4
+    additionalProperties: true
+
+metadata:
+  assist: {}
+  autoImportSchema:
+    users: false
+    meetings: false
+    participants: false
+    message_activities: false
+
+schemas:
+  users:
+    type: object
+    $schema: http://json-schema.org/draft-07/schema#
+    properties:
+      tenant_id:
+        type:
+          - string
+          - "null"
+      source_id:
+        type:
+          - string
+          - "null"
+      unique_key:
+        type: string
+      zoom_user_id:
+        type:
+          - string
+          - "null"
+      email:
+        type:
+          - string
+          - "null"
+      first_name:
+        type:
+          - string
+          - "null"
+      last_name:
+        type:
+          - string
+          - "null"
+      display_name:
+        type:
+          - string
+          - "null"
+      type:
+        type:
+          - integer
+          - "null"
+      status:
+        type:
+          - string
+          - "null"
+      timezone:
+        type:
+          - string
+          - "null"
+    additionalProperties: true
+  meetings:
+    type: object
+    $schema: http://json-schema.org/draft-07/schema#
+    properties:
+      tenant_id:
+        type:
+          - string
+          - "null"
+      source_id:
+        type:
+          - string
+          - "null"
+      unique_key:
+        type: string
+      meeting_instance_key:
+        type: string
+      meeting_series_id:
+        type:
+          - string
+          - "null"
+      meeting_occurrence_id:
+        type:
+          - string
+          - "null"
+      meeting_uuid:
+        type:
+          - string
+          - "null"
+      identity_strength:
+        type:
+          - string
+          - "null"
+      host_user_id:
+        type:
+          - string
+          - "null"
+      topic:
+        type:
+          - string
+          - "null"
+      meeting_type:
+        type:
+          - string
+          - integer
+          - "null"
+      scheduled_start_at:
+        type:
+          - string
+          - "null"
+        format: date-time
+      actual_start_at:
+        type:
+          - string
+          - "null"
+        format: date-time
+      actual_end_at:
+        type:
+          - string
+          - "null"
+        format: date-time
+      duration_seconds:
+        type:
+          - integer
+          - "null"
+      discovered_at:
+        type:
+          - string
+          - "null"
+        format: date-time
+      limitation_code:
+        type:
+          - string
+          - "null"
+      source_endpoint:
+        type:
+          - string
+          - "null"
+    additionalProperties: true
+  participants:
+    type: object
+    $schema: http://json-schema.org/draft-07/schema#
+    properties:
+      tenant_id:
+        type:
+          - string
+          - "null"
+      source_id:
+        type:
+          - string
+          - "null"
+      unique_key:
+        type: string
+      meeting_instance_key:
+        type: string
+      meeting_series_id:
+        type:
+          - string
+          - "null"
+      meeting_occurrence_id:
+        type:
+          - string
+          - "null"
+      meeting_uuid:
+        type:
+          - string
+          - "null"
+      participant_key:
+        type:
+          - string
+          - "null"
+      zoom_user_id:
+        type:
+          - string
+          - "null"
+      email:
+        type:
+          - string
+          - "null"
+      display_name:
+        type:
+          - string
+          - "null"
+      join_at:
+        type:
+          - string
+          - "null"
+        format: date-time
+      leave_at:
+        type:
+          - string
+          - "null"
+        format: date-time
+      attendance_duration_seconds:
+        type:
+          - integer
+          - "null"
+      attendance_status:
+        type:
+          - string
+          - "null"
+    additionalProperties: true
+  message_activities:
+    type: object
+    $schema: http://json-schema.org/draft-07/schema#
+    properties:
+      tenant_id:
+        type:
+          - string
+          - "null"
+      source_id:
+        type:
+          - string
+          - "null"
+      unique_key:
+        type: string
+      message_activity_id:
+        type: string
+      zoom_user_id:
+        type:
+          - string
+          - "null"
+      email:
+        type:
+          - string
+          - "null"
+      activity_date:
+        type:
+          - string
+          - "null"
+        format: date-time
+      channel_type:
+        type:
+          - string
+          - "null"
+      message_count:
+        type:
+          - integer
+          - "null"
+      aggregation_level:
+        type:
+          - string
+          - "null"
+      collection_mode:
+        type:
+          - string
+          - "null"
+      source_endpoint:
+        type:
+          - string
+          - "null"
+    additionalProperties: true
