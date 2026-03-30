@@ -31,7 +31,7 @@ date: 2026-03-23
   - [4.6 dbt Models (Bronze to Silver)](#46-dbt-models-bronze-to-silver)
 - [5. Deployment & Debugging](#5-deployment--debugging)
   - [5.1 Production Registration](#51-production-registration)
-  - [5.2 Local Development: Full Stack (Docker Compose)](#52-local-development-full-stack-docker-compose)
+  - [5.2 Local Development: Full Stack (Kind K8s)](#52-local-development-full-stack-kind-k8s)
   - [5.3 Local Development: Ultra-Light (source.sh)](#53-local-development-ultra-light-sourcesh)
   - [5.4 Running dbt Locally](#54-running-dbt-locally)
 - [6. Open Questions](#6-open-questions)

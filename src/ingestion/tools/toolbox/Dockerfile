@@ -14,9 +14,6 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
 RUN curl -fsSL "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)" \
     -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq
 
-# OpenTofu (Terraform)
-RUN curl -fsSL https://get.opentofu.org/install-opentofu.sh | sh -s -- --install-method deb
-
 # kubectl
 RUN curl -fsSL "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/$(dpkg --print-architecture)/kubectl" \
     -o /usr/local/bin/kubectl && chmod +x /usr/local/bin/kubectl

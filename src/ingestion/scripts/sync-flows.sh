@@ -14,7 +14,7 @@ CONNECTIONS_DIR="./connections"
 echo "  Applying WorkflowTemplates..."
 kubectl apply -f "${WORKFLOWS_DIR}/templates/"
 
-# --- Get connection_id from terraform output ---
+# --- Get connection_id from state ---
 get_connection_id() {
   local tenant="$1" connector="$2"
   local state_file="${CONNECTIONS_DIR}/.state/${tenant}.yaml"
@@ -54,7 +54,7 @@ sync_tenant() {
       continue
     fi
 
-    # Get connection_id from terraform
+    # Get connection_id from state
     local connection_id
     connection_id=$(get_connection_id "$tenant" "$connector") || true
     if [[ -z "$connection_id" ]]; then

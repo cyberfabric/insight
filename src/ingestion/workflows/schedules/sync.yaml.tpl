@@ -1,5 +1,5 @@
 # Generic sync CronWorkflow template
-# Variables resolved by sync-flows.sh from descriptor.yaml + terraform output:
+# Variables resolved by sync-flows.sh from descriptor.yaml + connection state:
 #   CONNECTOR, TENANT_ID, CONNECTION_ID, SCHEDULE, DBT_SELECT
 
 apiVersion: argoproj.io/v1alpha1

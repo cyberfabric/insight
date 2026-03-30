@@ -20,8 +20,8 @@ fi
 # Kill port-forwards
 pkill -f 'port-forward.*airbyte' 2>/dev/null || true
 
-# Clean terraform state
-rm -rf connections/.terraform connections/terraform.tfstate* connections/terraform.tfstate.d 2>/dev/null || true
+# Clean connection state
+rm -rf connections/.state 2>/dev/null || true
 
 # Clean generated workflows
 rm -rf workflows/example-tenant 2>/dev/null || true
