@@ -210,12 +210,15 @@ for connector_name, creds in tenant.get("connectors", {}).items():
         sync_catalog = {"streams": []}
         if discover_result and "catalog" in discover_result:
             for entry in discover_result["catalog"].get("streams", []):
-                stream_name = entry.get("name", "")
+                # Discover returns {"stream": {...}, "config": {...}}
+                stream_def = entry.get("stream", entry)
+                stream_name = stream_def.get("name", "")
                 # Include all streams if no explicit list, otherwise filter
                 if configured_names and stream_name not in configured_names:
                     continue
 
-                sync_mode = "incremental" if "incremental" in entry.get("supportedSyncModes", []) else "full_refresh"
+                supported = stream_def.get("supportedSyncModes", ["full_refresh"])
+                sync_mode = "incremental" if "incremental" in supported else "full_refresh"
                 dest_sync_mode = "append_dedup" if sync_mode == "incremental" else "overwrite"
 
                 stream_config = {
@@ -224,13 +227,13 @@ for connector_name, creds in tenant.get("connectors", {}).items():
                     "selected": True,
                 }
                 # Use source-defined primary key and cursor if available
-                if entry.get("sourceDefinedPrimaryKey"):
-                    stream_config["primaryKey"] = entry["sourceDefinedPrimaryKey"]
-                if entry.get("defaultCursorField"):
-                    stream_config["cursorField"] = entry["defaultCursorField"]
+                if stream_def.get("sourceDefinedPrimaryKey"):
+                    stream_config["primaryKey"] = stream_def["sourceDefinedPrimaryKey"]
+                if stream_def.get("defaultCursorField"):
+                    stream_config["cursorField"] = stream_def["defaultCursorField"]
 
                 sync_catalog["streams"].append({
-                    "stream": entry,
+                    "stream": stream_def,
                     "config": stream_config,
                 })
                 print(f"      Stream: {stream_name} ({sync_mode})")

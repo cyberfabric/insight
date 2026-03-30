@@ -176,7 +176,7 @@ streams:
       cursor_field: reportRefreshDate
       end_datetime:
         type: MinMaxDatetime
-        datetime: "{{ (today_utc() - duration('P2D')).strftime('%Y-%m-%d') }}"
+        datetime: "{{ (today_utc() - duration('P3D')).strftime('%Y-%m-%d') }}"
         datetime_format: "%Y-%m-%d"
       start_datetime:
         type: MinMaxDatetime
@@ -383,7 +383,7 @@ streams:
       cursor_field: reportRefreshDate
       end_datetime:
         type: MinMaxDatetime
-        datetime: "{{ (today_utc() - duration('P2D')).strftime('%Y-%m-%d') }}"
+        datetime: "{{ (today_utc() - duration('P3D')).strftime('%Y-%m-%d') }}"
         datetime_format: "%Y-%m-%d"
       start_datetime:
         type: MinMaxDatetime
@@ -510,7 +510,7 @@ streams:
       cursor_field: reportRefreshDate
       end_datetime:
         type: MinMaxDatetime
-        datetime: "{{ (today_utc() - duration('P2D')).strftime('%Y-%m-%d') }}"
+        datetime: "{{ (today_utc() - duration('P3D')).strftime('%Y-%m-%d') }}"
         datetime_format: "%Y-%m-%d"
       start_datetime:
         type: MinMaxDatetime
@@ -641,7 +641,7 @@ streams:
       cursor_field: reportRefreshDate
       end_datetime:
         type: MinMaxDatetime
-        datetime: "{{ (today_utc() - duration('P2D')).strftime('%Y-%m-%d') }}"
+        datetime: "{{ (today_utc() - duration('P3D')).strftime('%Y-%m-%d') }}"
         datetime_format: "%Y-%m-%d"
       start_datetime:
         type: MinMaxDatetime

@@ -5,4 +5,7 @@
     tags=['silver']
 ) }}
 
+-- explicit dependency so dbt knows to run staging models first
+-- depends_on: {{ ref('m365__comms_events') }}
+
 {{ union_by_tag('silver:class_comms_events') }}
