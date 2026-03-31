@@ -123,7 +123,7 @@ The `cost_report` Bronze schema is expanded to include all fields returned by th
 
 ### Confirmation
 
-Verified via Airbyte Connector Builder testing against live Anthropic Admin API. All three streams (messages_usage, cost_report, cost_report) return records with correct field mapping.
+Verified via Airbyte Connector Builder testing against live Anthropic Admin API. All streams using nested extraction (messages_usage and cost_report) return records with correct field mapping.
 
 ---
 

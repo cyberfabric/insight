@@ -1,6 +1,6 @@
 -- Bronze → Silver step 1: Claude Team code usage → class_ai_dev_usage
 -- Filters to actor_type = 'user' and maps actor_identifier (email) as identity key.
--- Token data is extracted from model_breakdown_json (per-model array) and summed.
+-- Per-model token data is in model_breakdown_json (Bronze); token extraction deferred to Silver step 2 or Gold.
 -- This model handles Claude Code sessions — developer AI tool usage alongside Cursor/Windsurf.
 {{ config(materialized='incremental', unique_key='unique_id') }}
 

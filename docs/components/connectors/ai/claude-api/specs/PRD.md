@@ -536,7 +536,7 @@ Repeated collection of the same date range **MUST NOT** create duplicate rows. T
 
 ### OQ-CAPI-2: Web search requests billing
 
-**Question**: How are `web_search_requests` billed? Are they included in `amount_cents` from the cost report, or billed separately?
+**Question**: How are `web_search_requests` billed? Are they included in `amount` from the cost report, or billed separately?
 
 **Current approach**: Collect the field; defer billing interpretation to Gold analytics.
 
