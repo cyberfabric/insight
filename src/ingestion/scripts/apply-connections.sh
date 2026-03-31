@@ -226,7 +226,8 @@ for connector_name, creds in tenant.get("connectors", {}).items():
 
                 supported = stream_def.get("supportedSyncModes", ["full_refresh"])
                 sync_mode = "incremental" if "incremental" in supported else "full_refresh"
-                dest_sync_mode = "append_dedup" if sync_mode == "incremental" else "overwrite"
+                # Always use append_dedup — ClickHouse destination v2 NPEs on overwrite with no cursor
+                dest_sync_mode = "append_dedup"
 
                 stream_config = {
                     "syncMode": sync_mode,

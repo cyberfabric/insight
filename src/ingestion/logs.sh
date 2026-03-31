@@ -2,18 +2,20 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Show logs for a workflow run
+# Show logs for a workflow run or Airbyte sync job
 #
 # Usage:
-#   ./logs.sh <workflow-name>                      # all logs (completed)
-#   ./logs.sh <workflow-name> sync                 # only sync step
-#   ./logs.sh <workflow-name> dbt                  # only dbt step
-#   ./logs.sh -f <workflow-name|latest>            # follow live
-#   ./logs.sh latest                               # latest workflow
+#   ./logs.sh <workflow|latest>            # all logs (Argo + Airbyte)
+#   ./logs.sh <workflow|latest> sync       # only Airbyte sync step
+#   ./logs.sh <workflow|latest> dbt        # only dbt step
+#   ./logs.sh -f <workflow|latest>         # follow live
+#   ./logs.sh airbyte <job-id|latest>      # Airbyte job logs via API
 # ---------------------------------------------------------------------------
 
 KUBECONFIG="${KUBECONFIG:-${HOME}/.kube/kind-ingestion}"
 export KUBECONFIG
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 FOLLOW=""
 if [[ "${1:-}" == "-f" ]]; then
@@ -21,11 +23,12 @@ if [[ "${1:-}" == "-f" ]]; then
   shift
 fi
 
-workflow="${1:-}"
-step="${2:-}"
+cmd="${1:-}"
+arg2="${2:-}"
 
-if [[ -z "$workflow" ]]; then
+if [[ -z "$cmd" ]]; then
   echo "Usage: $0 [-f] <workflow-name|latest> [sync|dbt|all]" >&2
+  echo "       $0 airbyte <job-id|latest|connection-name>" >&2
   echo "" >&2
   echo "  -f    Follow logs in real time" >&2
   echo "" >&2
@@ -33,6 +36,93 @@ if [[ -z "$workflow" ]]; then
   kubectl get workflows -n argo --sort-by=.metadata.creationTimestamp --no-headers 2>/dev/null | tail -5 | awk '{print "  " $1 "  " $2 "  " $4}' >&2
   exit 1
 fi
+
+# ---------------------------------------------------------------------------
+# Airbyte mode: fetch logs via API (survives pod deletion)
+# ---------------------------------------------------------------------------
+if [[ "$cmd" == "airbyte" ]]; then
+  source "${SCRIPT_DIR}/scripts/resolve-airbyte-env.sh" 2>/dev/null
+
+  job_id="${arg2:-}"
+
+  if [[ -z "$job_id" || "$job_id" == "latest" ]]; then
+    # Find latest job
+    job_id=$(curl -sf -H "Authorization: Bearer $AIRBYTE_TOKEN" \
+      "${AIRBYTE_API}/api/v1/jobs/list" -X POST \
+      -H "Content-Type: application/json" \
+      -d "{\"configTypes\":[\"sync\"],\"configId\":\"\"}" \
+      | python3 -c "
+import sys,json
+data = json.load(sys.stdin)
+jobs = data.get('jobs',[])
+if jobs:
+    print(jobs[0]['job']['id'])
+" 2>/dev/null)
+    if [[ -z "$job_id" ]]; then
+      echo "No Airbyte jobs found" >&2
+      exit 1
+    fi
+    echo "Latest Airbyte job: $job_id" >&2
+  fi
+
+  echo "=== Airbyte Job $job_id ===" >&2
+
+  # Get job details + attempt logs
+  curl -sf -H "Authorization: Bearer $AIRBYTE_TOKEN" \
+    "${AIRBYTE_API}/api/v1/jobs/get" -X POST \
+    -H "Content-Type: application/json" \
+    -d "{\"id\":$job_id}" \
+    | python3 -c "
+import sys,json
+j = json.load(sys.stdin)
+job = j.get('job',{})
+print(f'Job {job.get(\"id\")}: {job.get(\"status\")} ({job.get(\"configType\",\"?\")})')
+print(f'Connection: {job.get(\"configId\",\"?\")}')
+print(f'Created: {job.get(\"createdAt\",\"?\")}')
+print(f'Updated: {job.get(\"updatedAt\",\"?\")}')
+print()
+for a in j.get('attempts',[]):
+    attempt = a.get('attempt',{})
+    print(f'--- Attempt {attempt.get(\"id\",\"?\")} ({attempt.get(\"status\",\"?\")}) ---')
+    logs = a.get('logs',{}).get('logLines',[])
+    if logs:
+        for line in logs:
+            print(line)
+    else:
+        print('  (no log lines in API response)')
+    fail = a.get('failureSummary',{})
+    if fail:
+        for f in fail.get('failures',[]):
+            print(f'FAILURE [{f.get(\"failureType\",\"?\")}]: {f.get(\"externalMessage\",\"no message\")}')
+            internal = f.get('internalMessage','')
+            if internal:
+                print(f'  Internal: {internal[:500]}')
+            stack = f.get('stacktrace','')
+            if stack:
+                # Print first 30 lines of stack
+                for line in stack.split('\\\\n')[:30]:
+                    print(f'  {line}')
+    print()
+" 2>&1
+
+  # Also try to get logs from replication pods if still alive
+  echo "--- Replication pods (if available) ---" >&2
+  repl_pods=$(kubectl get pods -n airbyte --no-headers 2>/dev/null | grep "replication-job-${job_id}" | awk '{print $1}')
+  for pod in $repl_pods; do
+    for container in orchestrator source destination; do
+      echo "--- $pod/$container ---" >&2
+      kubectl logs "$pod" -n airbyte -c "$container" 2>/dev/null | tail -50 || true
+    done
+  done
+
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Argo workflow mode
+# ---------------------------------------------------------------------------
+workflow="$cmd"
+step="$arg2"
 
 if [[ "$workflow" == "latest" ]]; then
   workflow=$(kubectl get workflows -n argo --sort-by=.metadata.creationTimestamp --no-headers | tail -1 | awk '{print $1}')
@@ -49,9 +139,9 @@ echo "=== Workflow: $workflow ===" >&2
 kubectl get workflow "$workflow" -n argo --no-headers 2>/dev/null | awk '{print "Status: " $2 "  Age: " $4}' >&2
 echo "" >&2
 
-# --- Static mode: dump all logs from completed pods ---
+# --- Static mode ---
 if [[ -z "$FOLLOW" ]]; then
-  # Argo workflow pods
+  # Argo pods
   pods=$(kubectl get pods -n argo -l "$SELECTOR" --sort-by=.metadata.creationTimestamp --no-headers 2>/dev/null | awk '{print $1}')
   for pod in $pods; do
     case "${step}" in
@@ -64,54 +154,79 @@ if [[ -z "$FOLLOW" ]]; then
     kubectl logs "$pod" -n argo -c main 2>/dev/null || true
   done
 
-  # Airbyte replication pods (sync step runs Airbyte jobs)
+  # Airbyte replication pods
   if [[ "${step}" != "dbt" && "${step}" != "run" ]]; then
-    repl_pods=$(kubectl get pods -n airbyte -l "airbyte.io/sync-job-id" --sort-by=.metadata.creationTimestamp --no-headers 2>/dev/null | awk '{print $1}')
+    repl_pods=$(kubectl get pods -n airbyte --no-headers 2>/dev/null | grep "replication-job" | awk '{print $1}')
     for pod in $repl_pods; do
       echo "--- airbyte/$pod (orchestrator) ---" >&2
-      kubectl logs "$pod" -n airbyte -c orchestrator 2>/dev/null | tail -50 || true
+      kubectl logs "$pod" -n airbyte -c orchestrator 2>/dev/null | grep -E "ERROR|WARN|Exception|Caused by|fail|replication" | tail -20 || true
       echo "--- airbyte/$pod (source) ---" >&2
       kubectl logs "$pod" -n airbyte -c source 2>/dev/null | tail -30 || true
       echo "--- airbyte/$pod (destination) ---" >&2
       kubectl logs "$pod" -n airbyte -c destination 2>/dev/null | tail -30 || true
     done
+
+    # Airbyte job logs via API (survives pod deletion)
+    # Extract job ID from poll-job logs
+    poll_pod=$(echo "$pods" | grep "poll-job" | head -1)
+    if [[ -n "$poll_pod" ]]; then
+      job_id=$(kubectl logs "$poll_pod" -n argo -c main 2>/dev/null | grep -oE "Job [0-9]+" | head -1 | grep -oE "[0-9]+")
+      if [[ -n "$job_id" ]]; then
+        echo "" >&2
+        echo "--- Airbyte Job $job_id (via API) ---" >&2
+        source "${SCRIPT_DIR}/scripts/resolve-airbyte-env.sh" 2>/dev/null
+        curl -sf -H "Authorization: Bearer $AIRBYTE_TOKEN" \
+          "${AIRBYTE_API}/api/v1/jobs/get" -X POST \
+          -H "Content-Type: application/json" \
+          -d "{\"id\":$job_id}" \
+          | python3 -c "
+import sys,json
+j = json.load(sys.stdin)
+job = j.get('job',{})
+print(f'Status: {job.get(\"status\")}')
+for a in j.get('attempts',[]):
+    attempt = a.get('attempt',{})
+    fail = a.get('failureSummary',{})
+    if fail:
+        for f in fail.get('failures',[]):
+            print(f'FAILURE [{f.get(\"failureType\",\"?\")}]: {f.get(\"externalMessage\",\"no message\")}')
+            internal = f.get('internalMessage','')
+            if internal:
+                print(f'  {internal[:300]}')
+" 2>/dev/null || true
+      fi
+    fi
   fi
 
   exit 0
 fi
 
-# --- Follow mode: tail logs from running/new pods ---
+# --- Follow mode ---
 echo "Following logs (Ctrl+C to stop)..." >&2
 
 SEEN_PODS=""
 while true; do
-  # Check workflow status
   phase=$(kubectl get workflow "$workflow" -n argo -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
 
-  # Get all pods for this workflow
   pods=$(kubectl get pods -n argo -l "$SELECTOR" --no-headers 2>/dev/null | awk '{print $1, $3}')
 
   while IFS=' ' read -r pod status; do
     [[ -z "$pod" ]] && continue
 
-    # Filter by step
     case "${step}" in
       sync|trigger) echo "$pod" | grep -qE "trigger-sync|poll-job" || continue ;;
       dbt|run)      echo "$pod" | grep -q "run-" || continue ;;
       ""|all)       ;;
     esac
 
-    # Skip already seen pods
     echo "$SEEN_PODS" | grep -q "$pod" && continue
     SEEN_PODS="$SEEN_PODS $pod"
 
-    # Wait for container to be ready
     if [[ "$status" == *"Init"* || "$status" == "Pending" || "$status" == "ContainerCreating" ]]; then
       echo "[$pod] Waiting for container..." >&2
       kubectl wait --for=condition=Ready pod/"$pod" -n argo --timeout=120s 2>/dev/null || true
     fi
 
-    # Stream logs in background
     echo "--- $pod ---" >&2
     if [[ "$status" == "Completed" || "$status" == "Error" ]]; then
       kubectl logs "$pod" -n argo -c main 2>/dev/null || true
@@ -120,7 +235,6 @@ while true; do
     fi
   done <<< "$pods"
 
-  # Exit when workflow is done
   if [[ "$phase" == "Succeeded" || "$phase" == "Failed" || "$phase" == "Error" ]]; then
     wait 2>/dev/null || true
     echo "" >&2
