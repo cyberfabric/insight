@@ -1,0 +1,73 @@
+{
+  "documentationUrl": "https://docs.github.com/en/rest",
+  "connectionSpecification": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "GitHub Source",
+    "type": "object",
+    "required": ["tenant_id", "source_instance_id", "token", "organizations"],
+    "additionalProperties": true,
+    "properties": {
+      "tenant_id": {
+        "type": "string",
+        "title": "Tenant ID",
+        "description": "Tenant isolation identifier (UUID).",
+        "order": 0
+      },
+      "source_instance_id": {
+        "type": "string",
+        "title": "Source Instance ID",
+        "description": "Stable identifier for this GitHub instance (e.g., 'github-acme-prod').",
+        "examples": ["github-acme-prod"],
+        "order": 1
+      },
+      "token": {
+        "type": "string",
+        "title": "Access Token",
+        "description": "GitHub Personal Access Token or GitHub App installation token. Required scopes: repo, read:org, read:user.",
+        "airbyte_secret": true,
+        "order": 2
+      },
+      "organizations": {
+        "type": "array",
+        "items": { "type": "string" },
+        "title": "Organizations",
+        "description": "List of GitHub organization logins to collect (e.g., ['myorg']).",
+        "minItems": 1,
+        "order": 3
+      },
+      "start_date": {
+        "type": "string",
+        "title": "Start Date",
+        "description": "UTC date for initial collection (ISO 8601). Commits before this date are skipped on the first run. Default: no limit.",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+        "examples": ["2024-01-01T00:00:00Z"],
+        "order": 4
+      },
+      "page_size_graphql_commits": {
+        "type": "integer",
+        "title": "GraphQL Commits Page Size",
+        "description": "Number of commits per GraphQL request (max 100).",
+        "default": 100,
+        "minimum": 1,
+        "maximum": 100,
+        "order": 5
+      },
+      "page_size_graphql_prs": {
+        "type": "integer",
+        "title": "GraphQL PRs Page Size",
+        "description": "Number of PRs per GraphQL request (max 50).",
+        "default": 50,
+        "minimum": 1,
+        "maximum": 100,
+        "order": 6
+      },
+      "rate_limit_threshold": {
+        "type": "integer",
+        "title": "Rate Limit Threshold",
+        "description": "Proactive backoff when remaining API budget drops below this value.",
+        "default": 200,
+        "order": 7
+      }
+    }
+  }
+}
