@@ -48,14 +48,14 @@ The ingestion layer needs a credential resolution mechanism that is secure by de
 
 ## Considered Options
 
-* **K8s Secrets with label-based discovery** — `apply-connections.sh` discovers Secrets by label `app.kubernetes.io/part-of=insight` and reads connector type from annotation `insight.constructor.io/connector`
+* **K8s Secrets with label-based discovery** — `apply-connections.sh` discovers Secrets by label `app.kubernetes.io/part-of=insight` and reads connector type from annotation `insight.cyberfabric.com/connector`
 * **HashiCorp Vault direct integration** — `apply-connections.sh` calls the Vault HTTP API directly to fetch secrets
 * **SOPS-encrypted YAML** — credentials remain inline but encrypted using Mozilla SOPS; decrypted at apply time
 * **Environment variables** — credentials injected as environment variables by the Kubernetes pod spec (from Secrets or ConfigMaps)
 
 ## Decision Outcome
 
-Chosen option: **K8s Secrets with label-based discovery**, because Kubernetes Secrets are the lowest-common-denominator abstraction for secret storage in K8s environments. Regardless of how consumers provision secrets — Vault + ESO, Sealed Secrets, or manual creation — all approaches materialize as native K8s Secret objects. The script discovers Secrets by label `app.kubernetes.io/part-of=insight` and reads the connector type from annotation `insight.constructor.io/connector`, eliminating the need for any Secret references in tenant config YAML. This provides zero coupling to any specific vault technology while enabling a uniform credential flow for both production and local development (kind/minikube with the same Secret objects).
+Chosen option: **K8s Secrets with label-based discovery**, because Kubernetes Secrets are the lowest-common-denominator abstraction for secret storage in K8s environments. Regardless of how consumers provision secrets — Vault + ESO, Sealed Secrets, or manual creation — all approaches materialize as native K8s Secret objects. The script discovers Secrets by label `app.kubernetes.io/part-of=insight` and reads the connector type from annotation `insight.cyberfabric.com/connector`, eliminating the need for any Secret references in tenant config YAML. This provides zero coupling to any specific vault technology while enabling a uniform credential flow for both production and local development (kind/minikube with the same Secret objects).
 
 ### Consequences
 
@@ -80,7 +80,7 @@ Confirmed when:
 
 ### K8s Secrets with label-based discovery
 
-The apply script discovers Secrets by label `app.kubernetes.io/part-of=insight` in the current namespace. Connector type is read from annotation `insight.constructor.io/connector` (must match `descriptor.yaml` `name` field). Source instance ID is read from annotation `insight.constructor.io/source-id` and injected as `insight_source_id`. Naming convention `insight-{connector}-{source_id}` is recommended for human readability but not required — discovery uses labels/annotations, not Secret names.
+The apply script discovers Secrets by label `app.kubernetes.io/part-of=insight` in the current namespace. Connector type is read from annotation `insight.cyberfabric.com/connector` (must match `descriptor.yaml` `name` field). Source instance ID is read from annotation `insight.cyberfabric.com/source-id` and injected as `insight_source_id`. Naming convention `insight-{connector}-{source_id}` is recommended for human readability but not required — discovery uses labels/annotations, not Secret names.
 
 Multiple Secrets with the same connector annotation create multiple Airbyte source instances (multi-instance: multiple Bitbucket servers, multiple M365 tenants). Non-credential config (e.g., `start_date`) remains in tenant YAML and is merged with Secret data (inline takes precedence).
 
@@ -122,11 +122,11 @@ Credentials passed as environment variables to the pod running `apply-connection
 
 ## More Information
 
-- Discovery uses label `app.kubernetes.io/part-of=insight` and annotations `insight.constructor.io/connector`, `insight.constructor.io/source-id`.
+- Discovery uses label `app.kubernetes.io/part-of=insight` and annotations `insight.cyberfabric.com/connector`, `insight.cyberfabric.com/source-id`.
 - Naming convention `insight-{connector}-{source_id}` is recommended for readability: `insight-m365-main`, `insight-m365-emea`, `insight-bitbucket-server-prod`, etc.
 - Secret data field names are derived from each connector's `spec.connection_specification` in `connector.yaml`. Each connector's `README.md` documents required fields.
 - `insight_tenant_id` is injected from tenant YAML `tenant_id`, not from the Secret.
-- `insight_source_id` is injected from the Secret's `insight.constructor.io/source-id` annotation, not from Secret data.
+- `insight_source_id` is injected from the Secret's `insight.cyberfabric.com/source-id` annotation, not from Secret data.
 - The merge strategy (Secret fields as base, inline tenant YAML fields as override) allows non-sensitive configuration like `start_date` to remain in tenant YAML while credentials live in the Secret.
 - Consumers are responsible for Secret creation and lifecycle; Insight only reads them via label discovery.
 

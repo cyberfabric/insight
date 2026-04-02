@@ -88,7 +88,7 @@ Consumers deploy Constructor Insight into their own K8s clusters and need to man
 1. [ ] - `p1` - Toolbox loads tenant YAML and iterates over `connectors` dict - `inst-load-tenant`
 2. [ ] - `p1` - **FOR EACH** connector entry in tenant config - `inst-iterate-connectors`
    1. [ ] - `p1` - Find matching descriptor by `name` field in `descriptor.yaml` files - `inst-find-descriptor`
-   2. [ ] - `p1` - Discover K8s Secrets: `kubectl get secrets -l app.kubernetes.io/part-of=insight` filtered by annotation `insight.constructor.io/connector={connector_name}` - `inst-discover-secrets`
+   2. [ ] - `p1` - Discover K8s Secrets: `kubectl get secrets -l app.kubernetes.io/part-of=insight` filtered by annotation `insight.cyberfabric.com/connector={connector_name}` - `inst-discover-secrets`
    3. [ ] - `p1` - **IF** no matching Secret found - `inst-check-secret-exists`
       1. [ ] - `p1` - Log warning: "No K8s Secret found for connector {name}, checking inline credentials" - `inst-log-no-secret`
       2. [ ] - `p1` - **IF** inline credentials present in tenant config - `inst-check-inline`
@@ -99,7 +99,7 @@ Consumers deploy Constructor Insight into their own K8s clusters and need to man
       1. [ ] - `p1` - **IF** multiple Secrets match same connector name - `inst-check-multi-secret`
          1. [ ] - `p1` - Treat each Secret as a separate connector instance (multi-instance support) - `inst-multi-instance`
       2. [ ] - `p1` - **FOR EACH** matching Secret - `inst-iterate-secrets`
-         1. [ ] - `p1` - Read annotation `insight.constructor.io/source-id` as `insight_source_id` - `inst-read-source-id`
+         1. [ ] - `p1` - Read annotation `insight.cyberfabric.com/source-id` as `insight_source_id` - `inst-read-source-id`
          2. [ ] - `p1` - Read and base64-decode all Secret `.data` fields - `inst-decode-secret`
          3. [ ] - `p1` - Algorithm: merge credentials using `cpt-insightspec-algo-k8s-secret-credentials-merge` - `inst-call-merge`
          4. [ ] - `p1` - Set `insight_tenant_id` from tenant YAML `tenant_id` - `inst-set-tenant-id`
@@ -142,8 +142,8 @@ Consumers deploy Constructor Insight into their own K8s clusters and need to man
    1. [ ] - `p1` - Log error with kubectl exit code and stderr - `inst-log-kubectl-error`
    2. [ ] - `p1` - **RETURN** empty list - `inst-return-empty`
 4. [ ] - `p1` - **FOR EACH** Secret in items - `inst-filter-secrets`
-   1. [ ] - `p1` - Extract annotation `insight.constructor.io/connector` as connector type - `inst-extract-type`
-   2. [ ] - `p1` - Extract annotation `insight.constructor.io/source-id` as source ID - `inst-extract-source-id`
+   1. [ ] - `p1` - Extract annotation `insight.cyberfabric.com/connector` as connector type - `inst-extract-type`
+   2. [ ] - `p1` - Extract annotation `insight.cyberfabric.com/source-id` as source ID - `inst-extract-source-id`
    3. [ ] - `p1` - **IF** connector name filter provided AND type does not match - `inst-check-filter`
       1. [ ] - `p1` - Skip this Secret - `inst-skip-filtered`
 5. [ ] - `p1` - **RETURN** list of matching Secrets with parsed metadata - `inst-return-secrets`
@@ -160,7 +160,7 @@ Not applicable. Credential resolution is a stateless process — no entity lifec
 
 - [ ] `p1` - **ID**: `cpt-insightspec-dod-k8s-secret-credentials-discovery`
 
-The system **MUST** discover K8s Secrets by label `app.kubernetes.io/part-of=insight` and resolve connector type from annotation `insight.constructor.io/connector`.
+The system **MUST** discover K8s Secrets by label `app.kubernetes.io/part-of=insight` and resolve connector type from annotation `insight.cyberfabric.com/connector`.
 
 **Implements**:
 - `cpt-insightspec-flow-k8s-secret-credentials-configure`
@@ -188,7 +188,7 @@ The system **MUST** merge K8s Secret data with inline tenant YAML fields, where 
 
 - [ ] `p1` - **ID**: `cpt-insightspec-dod-k8s-secret-credentials-multi-instance`
 
-The system **MUST** support multiple Secrets for the same connector type (e.g., two M365 tenants), each with a distinct `insight.constructor.io/source-id` annotation. Each Secret **MUST** result in a separate Airbyte source.
+The system **MUST** support multiple Secrets for the same connector type (e.g., two M365 tenants), each with a distinct `insight.cyberfabric.com/source-id` annotation. Each Secret **MUST** result in a separate Airbyte source.
 
 **Implements**:
 - `cpt-insightspec-flow-k8s-secret-credentials-configure`
@@ -212,7 +212,7 @@ The system **MUST** fall back to inline credentials from tenant YAML when no mat
 
 - [ ] `p1` - **ID**: `cpt-insightspec-dod-k8s-secret-credentials-errors`
 
-The system **MUST** produce clear error messages when: (a) no K8s Secret and no inline credentials exist for a connector, (b) kubectl fails with RBAC or connectivity errors, (c) Secret is found but annotation `insight.constructor.io/connector` is missing.
+The system **MUST** produce clear error messages when: (a) no K8s Secret and no inline credentials exist for a connector, (b) kubectl fails with RBAC or connectivity errors, (c) Secret is found but annotation `insight.cyberfabric.com/connector` is missing.
 
 **Implements**:
 - `cpt-insightspec-flow-k8s-secret-credentials-configure`

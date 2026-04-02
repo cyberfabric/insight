@@ -20,8 +20,8 @@ metadata:
   labels:
     app.kubernetes.io/part-of: insight
   annotations:
-    insight.constructor.io/connector: m365          # must match descriptor.yaml name
-    insight.constructor.io/source-id: main          # passed as insight_source_id
+    insight.cyberfabric.com/connector: m365          # must match descriptor.yaml name
+    insight.cyberfabric.com/source-id: main          # passed as insight_source_id
 type: Opaque
 stringData:
   azure_tenant_id: ""       # Azure AD tenant ID
@@ -44,7 +44,7 @@ These fields are set by `apply-connections.sh` and should NOT be in the Secret:
 | Field | Source |
 |-------|--------|
 | `insight_tenant_id` | `tenant_id` from tenant YAML |
-| `insight_source_id` | `insight.constructor.io/source-id` annotation |
+| `insight_source_id` | `insight.cyberfabric.com/source-id` annotation |
 
 ## Tenant Config
 
@@ -64,9 +64,9 @@ To sync multiple Azure AD tenants, create separate Secrets with different `sourc
 ```yaml
 # Secret 1: insight-m365-main
 annotations:
-  insight.constructor.io/source-id: main
+  insight.cyberfabric.com/source-id: main
 
 # Secret 2: insight-m365-emea
 annotations:
-  insight.constructor.io/source-id: emea
+  insight.cyberfabric.com/source-id: emea
 ```

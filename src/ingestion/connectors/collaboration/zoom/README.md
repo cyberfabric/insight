@@ -18,8 +18,8 @@ metadata:
   labels:
     app.kubernetes.io/part-of: insight
   annotations:
-    insight.constructor.io/connector: zoom
-    insight.constructor.io/source-id: main
+    insight.cyberfabric.com/connector: zoom
+    insight.cyberfabric.com/source-id: main
 type: Opaque
 stringData:
   zoom_account_id: ""       # Zoom account ID
@@ -40,7 +40,7 @@ stringData:
 | Field | Source |
 |-------|--------|
 | `insight_tenant_id` | `tenant_id` from tenant YAML |
-| `insight_source_id` | `insight.constructor.io/source-id` annotation |
+| `insight_source_id` | `insight.cyberfabric.com/source-id` annotation |
 
 ## Tenant Config
 
