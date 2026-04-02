@@ -6,7 +6,7 @@ from typing import Any, Iterable, List, Mapping, MutableMapping, Optional
 import requests as req
 
 from source_github.clients.auth import rest_headers
-from source_github.clients.concurrent import fetch_parallel_with_slices
+from source_github.clients.concurrent import fetch_parallel_with_slices, retry_request
 from source_github.streams.base import GitHubRestStream, _make_pk, _now_iso, check_rest_response
 from source_github.streams.pull_requests import PullRequestsStream
 
@@ -48,15 +48,21 @@ class ReviewsStream(GitHubRestStream):
         state = stream_state or self._state
         total = 0
         skipped = 0
+        skipped_no_reviews = 0
         for pr in self._parent.read_records(sync_mode=None):
             owner = pr.get("_owner", "")
             repo = pr.get("_repo", "")
             pr_number = pr.get("number")
             pr_database_id = pr.get("database_id")
             pr_updated_at = pr.get("updated_at", "")
+            review_count = pr.get("review_count")
             if not (owner and repo and pr_number):
                 continue
             total += 1
+            # Skip PRs with zero reviews
+            if review_count == 0:
+                skipped_no_reviews += 1
+                continue
             partition_key = f"{owner}/{repo}/{pr_number}"
             child_cursor = state.get(partition_key, {}).get("synced_at", "")
             if pr_updated_at and child_cursor and pr_updated_at <= child_cursor:
@@ -70,8 +76,9 @@ class ReviewsStream(GitHubRestStream):
                 "pr_updated_at": pr_updated_at,
                 "partition_key": partition_key,
             }
-        if skipped:
-            logger.info(f"Reviews: {total - skipped}/{total} PRs need review sync ({skipped} skipped, unchanged)")
+        fetched = total - skipped - skipped_no_reviews
+        if skipped or skipped_no_reviews:
+            logger.info(f"Reviews: {fetched}/{total} PRs need review sync ({skipped} unchanged, {skipped_no_reviews} zero reviews)")
 
     def get_updated_state(
         self,
@@ -89,10 +96,10 @@ class ReviewsStream(GitHubRestStream):
             yield from records
             self._advance_state(stream_slice)
         else:
-            slices = list(self.stream_slices(stream_state=stream_state))
-            if not slices:
-                return
-            for result in fetch_parallel_with_slices(self._fetch_reviews, slices, self._max_workers):
+            # Feed slices as generator — chunked execution inside fetch_parallel_with_slices
+            for result in fetch_parallel_with_slices(
+                self._fetch_reviews, self.stream_slices(stream_state=stream_state), self._max_workers
+            ):
                 if result.error is not None:
                     raise result.error
                 yield from result.records
@@ -117,7 +124,15 @@ class ReviewsStream(GitHubRestStream):
         params = {"per_page": "100"}
 
         while url:
-            resp = req.get(url, headers=rest_headers(self._token), params=params, timeout=30)
+            _url, _params = url, params
+
+            def _call():
+                r = req.get(_url, headers=rest_headers(self._token), params=_params, timeout=30)
+                if r.status_code == 429 or r.status_code >= 500:
+                    raise RuntimeError(f"GitHub API error {r.status_code}")
+                return r
+
+            resp = retry_request(_call, context=f"{owner}/{repo} PR#{pr_number} reviews")
             params = {}
 
             remaining = resp.headers.get("X-RateLimit-Remaining")

@@ -1,7 +1,7 @@
 """GraphQL query templates for GitHub API v4.
 
-Only bulk listing queries use GraphQL (commits, PRs).
-Per-PR reviews, comments, and PR-commits use REST for simpler pagination.
+GraphQL for bulk listing (commits, PRs) and PR commit linkage.
+REST for reviews, comments (simpler pagination).
 """
 
 BULK_COMMIT_QUERY = """
@@ -128,6 +128,31 @@ query($owner: String!, $repo: String!, $first: Int!, $after: String, $orderBy: I
                 slug
               }
             }
+          }
+        }
+      }
+    }
+  }
+  rateLimit {
+    remaining
+    resetAt
+  }
+}
+"""
+
+PR_COMMITS_QUERY = """
+query($owner: String!, $repo: String!, $prNumber: Int!, $first: Int!, $after: String) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $prNumber) {
+      commits(first: $first, after: $after) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          commit {
+            oid
+            committedDate
           }
         }
       }

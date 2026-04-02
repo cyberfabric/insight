@@ -70,6 +70,7 @@ class SourceGitHub(AbstractSource):
         rate_limit_threshold = config.get("rate_limit_threshold", 200)
         skip_archived = config.get("skip_archived", True)
         skip_forks = config.get("skip_forks", True)
+        max_workers = config.get("max_workers", 10)
         rate_limiter = RateLimiter(threshold=rate_limit_threshold)
 
         shared_kwargs = {
@@ -103,11 +104,11 @@ class SourceGitHub(AbstractSource):
             repos,
             branches,
             commits,
-            CommitFilesStream(parent=commits, **shared_kwargs),
+            CommitFilesStream(parent=commits, max_workers=max_workers, **shared_kwargs),
             prs,
-            ReviewsStream(parent=prs, **shared_kwargs),
-            CommentsStream(parent=prs, **shared_kwargs),
-            PRCommitsStream(parent=prs, **shared_kwargs),
+            ReviewsStream(parent=prs, max_workers=max_workers, **shared_kwargs),
+            CommentsStream(parent=prs, max_workers=max_workers, **shared_kwargs),
+            PRCommitsStream(parent=prs, max_workers=max_workers, **shared_kwargs),
         ]
 
 

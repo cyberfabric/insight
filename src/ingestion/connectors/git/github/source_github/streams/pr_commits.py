@@ -1,23 +1,24 @@
-"""GitHub PR commits stream (REST, sub-stream of pull requests, concurrent, incremental)."""
+"""GitHub PR commits stream (GraphQL, sub-stream of pull requests, concurrent, incremental)."""
 
 import logging
 from typing import Any, Iterable, List, Mapping, MutableMapping, Optional
 
 import requests as req
 
-from source_github.clients.auth import rest_headers
+from source_github.clients.auth import graphql_headers
 from source_github.clients.concurrent import fetch_parallel_with_slices
-from source_github.streams.base import GitHubRestStream, _make_pk, _now_iso, check_rest_response
+from source_github.graphql.queries import PR_COMMITS_QUERY
+from source_github.streams.base import GitHubRestStream, _make_pk, _now_iso
 from source_github.streams.pull_requests import PullRequestsStream
 
 logger = logging.getLogger("airbyte")
 
 
 class PRCommitsStream(GitHubRestStream):
-    """Fetches commits linked to each PR via REST.
+    """Fetches commits linked to each PR via GraphQL with proper pagination.
 
-    Incremental: only fetches for PRs whose updated_at is newer
-    than the stored child cursor for that PR.
+    No 250-commit cap (unlike REST endpoint). Uses per-PR incremental state
+    keyed by owner/repo/pr_number with synced_at = parent PR updated_at.
     """
 
     name = "pull_request_commits"
@@ -29,9 +30,8 @@ class PRCommitsStream(GitHubRestStream):
         self._max_workers = max_workers
         self._state: MutableMapping[str, Any] = {}
 
-    def _path(self, stream_slice: Optional[Mapping[str, Any]] = None, **kwargs) -> str:
-        s = stream_slice or {}
-        return f"repos/{s['owner']}/{s['repo']}/pulls/{s['pr_number']}/commits"
+    def _path(self, **kwargs) -> str:
+        return ""
 
     @property
     def state(self) -> MutableMapping[str, Any]:
@@ -55,6 +55,7 @@ class PRCommitsStream(GitHubRestStream):
             pr_number = pr.get("number")
             pr_database_id = pr.get("database_id")
             pr_updated_at = pr.get("updated_at", "")
+            pr_commit_count = pr.get("commit_count")
             if not (owner and repo and pr_number):
                 continue
             total += 1
@@ -69,6 +70,7 @@ class PRCommitsStream(GitHubRestStream):
                 "pr_number": pr_number,
                 "pr_database_id": pr_database_id,
                 "pr_updated_at": pr_updated_at,
+                "pr_commit_count": pr_commit_count,
                 "partition_key": partition_key,
             }
         if skipped:
@@ -90,10 +92,9 @@ class PRCommitsStream(GitHubRestStream):
             yield from records
             self._advance_state(stream_slice)
         else:
-            slices = list(self.stream_slices(stream_state=stream_state))
-            if not slices:
-                return
-            for result in fetch_parallel_with_slices(self._fetch_pr_commits, slices, self._max_workers):
+            for result in fetch_parallel_with_slices(
+                self._fetch_pr_commits, self.stream_slices(stream_state=stream_state), self._max_workers
+            ):
                 if result.error is not None:
                     raise result.error
                 yield from result.records
@@ -105,37 +106,65 @@ class PRCommitsStream(GitHubRestStream):
         if partition_key and pr_updated_at:
             self._state[partition_key] = {"synced_at": pr_updated_at}
 
+    def _graphql_post(self, variables: dict) -> dict:
+        """Make a GraphQL POST request. Thread-safe. Raises on transient errors."""
+        resp = req.post(
+            "https://api.github.com/graphql",
+            json={"query": PR_COMMITS_QUERY, "variables": variables},
+            headers=graphql_headers(self._token),
+            timeout=30,
+        )
+        if resp.status_code == 429 or resp.status_code >= 500:
+            raise RuntimeError(f"GitHub GraphQL error {resp.status_code}")
+        body = resp.json()
+        # Update rate limit from GraphQL response
+        rate_limit = body.get("data", {}).get("rateLimit", {})
+        remaining = rate_limit.get("remaining")
+        reset_at = rate_limit.get("resetAt")
+        if remaining is not None and reset_at:
+            self._rate_limiter.update_graphql(remaining, reset_at)
+        self._rate_limiter.wait_if_needed("graphql")
+        return body
+
     def _fetch_pr_commits(self, stream_slice: dict) -> List[Mapping[str, Any]]:
-        """Fetch commits for one PR with pagination. Thread-safe."""
+        """Fetch all commits for one PR via GraphQL with pagination. Thread-safe."""
         owner = stream_slice.get("owner", "")
         repo = stream_slice.get("repo", "")
         pr_number = stream_slice.get("pr_number")
         pr_database_id = stream_slice.get("pr_database_id")
+        pr_updated_at = stream_slice.get("pr_updated_at", "")
+        pr_commit_count = stream_slice.get("pr_commit_count")
         pr_id = str(pr_database_id) if pr_database_id is not None else ""
         records = []
 
-        url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}/commits"
-        params = {"per_page": "100"}
+        after = None
+        while True:
+            variables = {
+                "owner": owner,
+                "repo": repo,
+                "prNumber": pr_number,
+                "first": 100,
+            }
+            if after:
+                variables["after"] = after
 
-        while url:
-            resp = req.get(url, headers=rest_headers(self._token), params=params, timeout=30)
-            params = {}
+            body = self._graphql_post(variables)
 
-            remaining = resp.headers.get("X-RateLimit-Remaining")
-            reset = resp.headers.get("X-RateLimit-Reset")
-            if remaining and reset:
-                self._rate_limiter.update_rest(int(remaining), float(reset))
-            self._rate_limiter.wait_if_needed("rest")
+            if "errors" in body:
+                if "data" not in body or body.get("data") is None:
+                    raise RuntimeError(f"GraphQL query failed for {owner}/{repo} PR#{pr_number}: {body['errors']}")
+                logger.warning(f"GraphQL partial errors for {owner}/{repo} PR#{pr_number} commits: {body['errors']}")
 
-            if not check_rest_response(resp, f"{owner}/{repo} PR#{pr_number} commits"):
-                break
+            pr_data = (body.get("data", {}).get("repository", {}).get("pullRequest") or {})
+            commits_data = pr_data.get("commits") or {}
+            nodes = commits_data.get("nodes") or []
+            page_info = commits_data.get("pageInfo") or {}
 
-            commits = resp.json()
-            if not isinstance(commits, list):
-                commits = [commits]
-
-            for commit in commits:
-                sha = commit.get("sha", "")
+            for node in nodes:
+                commit = node.get("commit") or {}
+                sha = commit.get("oid", "")
+                if not sha:
+                    continue
                 records.append({
                     "pk": _make_pk(self._tenant_id, self._source_instance_id, owner, repo, pr_id, sha),
                     "tenant_id": self._tenant_id,
@@ -145,21 +174,26 @@ class PRCommitsStream(GitHubRestStream):
                     "pr_database_id": pr_database_id,
                     "pr_number": pr_number,
                     "commit_hash": sha,
+                    "commit_committed_date": commit.get("committedDate"),
                     "commit_order": len(records),
-                    "pr_updated_at": stream_slice.get("pr_updated_at"),
+                    "pr_updated_at": pr_updated_at,
                     "_partition_key": stream_slice.get("partition_key"),
                     "_owner": owner,
                     "_repo": repo,
                 })
 
-            url = resp.links.get("next", {}).get("url")
+            if page_info.get("hasNextPage"):
+                after = page_info["endCursor"]
+            else:
+                break
 
-        # GitHub caps this endpoint at 250 commits total
-        if len(records) >= 250:
-            logger.warning(
-                f"PR {owner}/{repo}#{pr_number} returned {len(records)} commits — "
-                f"GitHub caps this endpoint at 250, linkage may be incomplete"
-            )
+        # Sanity check against parent commit_count
+        if pr_commit_count is not None and len(records) != pr_commit_count:
+            if abs(len(records) - pr_commit_count) > 1:  # Allow off-by-one
+                logger.warning(
+                    f"PR {owner}/{repo}#{pr_number}: fetched {len(records)} commits "
+                    f"but parent reported commit_count={pr_commit_count}"
+                )
 
         return records
 
@@ -183,8 +217,10 @@ class PRCommitsStream(GitHubRestStream):
                 "pr_database_id": {"type": ["null", "integer"]},
                 "pr_number": {"type": ["null", "integer"]},
                 "commit_hash": {"type": ["null", "string"]},
+                "commit_committed_date": {"type": ["null", "string"]},
                 "commit_order": {"type": ["null", "integer"]},
                 "pr_updated_at": {"type": ["null", "string"]},
+                "_partition_key": {"type": ["null", "string"]},
                 "_owner": {"type": "string"},
                 "_repo": {"type": "string"},
             },

@@ -87,10 +87,9 @@ class CommitFilesStream(GitHubRestStream):
             yield from records
             self._advance_state(stream_slice)
         else:
-            slices = list(self.stream_slices(stream_state=stream_state))
-            if not slices:
-                return
-            for result in fetch_parallel_with_slices(self._fetch_commit_files, slices, self._max_workers):
+            for result in fetch_parallel_with_slices(
+                self._fetch_commit_files, self.stream_slices(stream_state=stream_state), self._max_workers
+            ):
                 if result.error is not None:
                     raise result.error
                 yield from result.records

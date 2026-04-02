@@ -1,16 +1,18 @@
 """Concurrent execution utilities for GitHub API streams."""
 
 import logging
+import random
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Iterable, Iterator, List, Mapping, Optional
 
 logger = logging.getLogger("airbyte")
 
-DEFAULT_WORKERS = 5
+DEFAULT_WORKERS = 10
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 2.0
+CHUNK_SIZE = 50  # Process slices in chunks to bound memory
 
 
 @dataclass
@@ -42,28 +44,60 @@ def fetch_parallel_with_slices(
     slices: Iterable[Mapping[str, Any]],
     max_workers: int = DEFAULT_WORKERS,
 ) -> Iterable[SliceResult]:
-    """Execute fn(slice) in parallel, yielding SliceResult with both records and slice.
+    """Execute fn(slice) in parallel in bounded chunks, yielding SliceResult.
 
-    Callers can use the slice to update state only for successful slices.
-    Failed slices (after retries) are yielded with error set and empty records.
+    Processes slices in chunks of CHUNK_SIZE to bound memory on large orgs.
+    Adapts concurrency down after repeated transient failures.
     """
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {pool.submit(_with_retry, fn, s): s for s in slices}
-        for future in as_completed(futures):
-            s = futures[future]
-            exc = future.exception()
-            if exc is not None:
-                logger.error(f"Failed after {MAX_RETRIES} retries for slice {s}: {exc}")
-                yield SliceResult(slice=s, records=[], error=exc)
-            else:
-                yield SliceResult(slice=s, records=future.result())
+    current_workers = max_workers
+    consecutive_errors = 0
+
+    for chunk in _chunked(slices, CHUNK_SIZE):
+        with ThreadPoolExecutor(max_workers=current_workers) as pool:
+            futures = {pool.submit(_with_retry, fn, s): s for s in chunk}
+            for future in as_completed(futures):
+                s = futures[future]
+                exc = future.exception()
+                if exc is not None:
+                    consecutive_errors += 1
+                    logger.error(f"Failed after {MAX_RETRIES} retries: {exc}")
+                    # Adapt concurrency down under pressure
+                    if consecutive_errors >= 3 and current_workers > 2:
+                        current_workers = max(2, current_workers // 2)
+                        logger.warning(f"Reducing concurrency to {current_workers} after {consecutive_errors} errors")
+                    yield SliceResult(slice=s, records=[], error=exc)
+                else:
+                    consecutive_errors = 0
+                    yield SliceResult(slice=s, records=future.result())
+
+
+def retry_request(fn: Callable[[], Any], context: str = "") -> Any:
+    """Retry a single HTTP request with jittered backoff.
+
+    Use this inside fetch loops for page-level retry.
+    Raises on auth/permission errors immediately.
+    """
+    last_exc = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            return fn()
+        except Exception as e:
+            last_exc = e
+            error_str = str(e).lower()
+            if "401" in error_str or "403" in error_str or "404" in error_str:
+                raise
+            jitter = random.uniform(0, 1)
+            delay = RETRY_BASE_DELAY * (2 ** attempt) + jitter
+            logger.warning(f"Page retry {attempt + 1}/{MAX_RETRIES} for {context}: {e}. Waiting {delay:.1f}s...")
+            time.sleep(delay)
+    raise last_exc
 
 
 def _with_retry(
     fn: Callable[[Mapping[str, Any]], List[Mapping[str, Any]]],
     s: Mapping[str, Any],
 ) -> List[Mapping[str, Any]]:
-    """Call fn(s) with retry on transient errors."""
+    """Call fn(s) with retry on transient errors (slice-level)."""
     last_exc = None
     for attempt in range(MAX_RETRIES):
         try:
@@ -71,13 +105,24 @@ def _with_retry(
         except Exception as e:
             last_exc = e
             error_str = str(e).lower()
-            # Don't retry auth errors
             if "401" in error_str or "403" in error_str:
                 raise
-            delay = RETRY_BASE_DELAY * (2 ** attempt)
+            jitter = random.uniform(0, 1)
+            delay = RETRY_BASE_DELAY * (2 ** attempt) + jitter
             logger.warning(
-                f"Attempt {attempt + 1}/{MAX_RETRIES} failed for slice {s}: {e}. "
-                f"Retrying in {delay:.0f}s..."
+                f"Slice retry {attempt + 1}/{MAX_RETRIES}: {e}. Waiting {delay:.1f}s..."
             )
             time.sleep(delay)
     raise last_exc
+
+
+def _chunked(iterable: Iterable, size: int) -> Iterator[List]:
+    """Yield successive chunks from iterable."""
+    chunk = []
+    for item in iterable:
+        chunk.append(item)
+        if len(chunk) >= size:
+            yield chunk
+            chunk = []
+    if chunk:
+        yield chunk

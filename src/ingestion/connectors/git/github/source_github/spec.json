@@ -81,6 +81,15 @@
         "description": "Skip forked repositories during collection.",
         "default": true,
         "order": 9
+      },
+      "max_workers": {
+        "type": "integer",
+        "title": "Concurrent Workers",
+        "description": "Number of parallel threads for child stream fetches (reviews, comments, commit files, PR commits).",
+        "default": 10,
+        "minimum": 1,
+        "maximum": 20,
+        "order": 10
       }
     }
   }
