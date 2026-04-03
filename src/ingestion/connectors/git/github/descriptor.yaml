@@ -6,7 +6,7 @@ silver_targets:
   - class_git_repositories
   - class_git_repository_branches
   - class_git_commits
-  - class_git_commit_files
+  - class_git_file_changes
   - class_git_pull_requests
   - class_git_pull_requests_reviewers
   - class_git_pull_requests_comments
@@ -23,8 +23,8 @@ streams:
     bronze_table: commits
     primary_key: [pk]
     cursor_field: committed_date
-  - name: commit_files
-    bronze_table: commit_files
+  - name: file_changes
+    bronze_table: file_changes
     primary_key: [pk]
   - name: pull_requests
     bronze_table: pull_requests

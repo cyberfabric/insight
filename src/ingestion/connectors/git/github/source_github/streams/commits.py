@@ -26,7 +26,7 @@ class CommitsStream(GitHubGraphQLStream):
 
     name = "commits"
     cursor_field = "committed_date"
-    use_cache = True  # commit_files stream reads from this
+    # No use_cache — file_changes reads commits via read_records (no cache needed)
 
     def __init__(
         self,

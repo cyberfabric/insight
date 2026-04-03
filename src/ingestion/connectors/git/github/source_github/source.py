@@ -13,8 +13,8 @@ from airbyte_cdk.sources.streams import Stream
 from source_github.clients.rate_limiter import RateLimiter
 from source_github.streams.branches import BranchesStream
 from source_github.streams.comments import CommentsStream
-from source_github.streams.commit_files import CommitFilesStream
 from source_github.streams.commits import CommitsStream
+from source_github.streams.file_changes import FileChangesStream
 from source_github.streams.pr_commits import PRCommitsStream
 from source_github.streams.pull_requests import PullRequestsStream
 from source_github.streams.repositories import RepositoriesStream
@@ -104,8 +104,11 @@ class SourceGitHub(AbstractSource):
             repos,
             branches,
             commits,
-            CommitFilesStream(parent=commits, max_workers=max_workers, **shared_kwargs),
             prs,
+            FileChangesStream(
+                pr_parent=prs, commits_parent=commits,
+                max_workers=max_workers, **shared_kwargs,
+            ),
             ReviewsStream(parent=prs, max_workers=max_workers, **shared_kwargs),
             CommentsStream(parent=prs, max_workers=max_workers, **shared_kwargs),
             PRCommitsStream(parent=prs, max_workers=max_workers, **shared_kwargs),
