@@ -338,6 +338,16 @@ path = "docs/domain/airbyte-connector/specs/DESIGN.md"
 name = "Airbyte Connector Development Guide"
 traceability = "DOCS-ONLY"
 
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/shared/glossary/ADR/0001-uuidv7-primary-key.md"
+name = "ADR-0001: UUIDv7 as Universal Primary Key"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/shared/glossary/ADR/0002-database-field-conventions.md"
+name = "ADR-0002: Database Field Naming and Type Conventions"
+
 [[systems]]
 name = "Orchestrator"
 slug = "orch"
