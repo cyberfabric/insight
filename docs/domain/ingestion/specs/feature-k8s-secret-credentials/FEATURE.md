@@ -91,10 +91,7 @@ Consumers deploy Constructor Insight into their own K8s clusters and need to man
    2. [ ] - `p1` - Discover K8s Secrets: `kubectl get secrets -l app.kubernetes.io/part-of=insight` filtered by annotation `insight.cyberfabric.com/connector={connector_name}` - `inst-discover-secrets`
    3. [ ] - `p1` - **IF** no matching Secret found - `inst-check-secret-exists`
       1. [ ] - `p1` - Log warning: "No K8s Secret found for connector {name}, checking inline credentials" - `inst-log-no-secret`
-      2. [ ] - `p1` - **IF** inline credentials present in tenant config - `inst-check-inline`
-         1. [ ] - `p1` - Use inline credentials (backward compatibility) - `inst-use-inline`
-      3. [ ] - `p1` - **ELSE** - `inst-no-creds`
-         1. [ ] - `p1` - Log error: "No credentials for connector {name}: no K8s Secret and no inline config" and skip connector - `inst-skip-no-creds`
+      2. [ ] - `p1` - Log error: "No K8s Secret found for connector {name}, skipping" and skip connector - `inst-skip-no-creds`
    4. [ ] - `p1` - **ELSE** - `inst-secret-found`
       1. [ ] - `p1` - **IF** multiple Secrets match same connector name - `inst-check-multi-secret`
          1. [ ] - `p1` - Treat each Secret as a separate connector instance (multi-instance support) - `inst-multi-instance`

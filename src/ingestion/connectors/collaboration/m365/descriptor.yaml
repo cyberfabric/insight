@@ -4,7 +4,7 @@ type: nocode
 
 # Orchestration
 schedule: "0 2 * * *"
-dbt_select: "tag:m365 tag:silver"
+dbt_select: "tag:m365+"
 workflow: sync
 
 # Connection config — streams to sync

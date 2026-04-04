@@ -3,7 +3,7 @@
 
 server:
   extraArgs:
-    - "--auth-mode=server"    # Change to sso/client for production auth
+    - "--auth-mode=client"    # Bearer token auth; get token via: kubectl create token argo-admin -n argo
   serviceType: ClusterIP
   resources:
     requests:

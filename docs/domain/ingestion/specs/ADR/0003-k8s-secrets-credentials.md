@@ -62,7 +62,7 @@ Chosen option: **K8s Secrets with label-based discovery**, because Kubernetes Se
 * Good, because consumers control the full lifecycle of their secrets without modifying Insight code or configuration templates
 * Good, because the solution works with any secret provisioning tool that produces K8s Secrets
 * Good, because local development uses the same label-based discovery as production (kind cluster with locally-created Secrets)
-* Good, because backward compatibility is preserved — connectors without a matching K8s Secret fall back to inline credentials
+* Good, because the credential model is simple and unambiguous — K8s Secrets are the sole source, no fallback logic to debug
 * Bad, because the pod running `apply-connections.sh` requires `kubectl` access and a ServiceAccount with RBAC permissions to read Secrets in the target namespace
 * Bad, because Secret field names must exactly match the connector's `connection_specification` — consumers need per-connector documentation of required fields
 * Follow-up: update existing specs, READMEs, and example configs to use K8s Secrets as the primary approach, deprecating inline credentials
@@ -73,7 +73,7 @@ Confirmed when:
 
 - `apply-connections.sh` discovers K8s Secrets by label and successfully creates Airbyte sources from Secret data
 - A local kind cluster setup guide demonstrates creating Secrets and running the pipeline end-to-end
-- Inline-only tenant configs (no K8s Secrets) continue to work without changes
+- Connectors without a matching K8s Secret are skipped with a clear error message
 - Per-connector Secret field documentation is published
 
 ## Pros and Cons of the Options

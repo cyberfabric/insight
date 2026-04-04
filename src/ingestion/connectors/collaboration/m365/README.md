@@ -46,16 +46,7 @@ These fields are set by `apply-connections.sh` and should NOT be in the Secret:
 | `insight_tenant_id` | `tenant_id` from tenant YAML |
 | `insight_source_id` | `insight.cyberfabric.com/source-id` annotation |
 
-## Tenant Config
-
-Non-credential configuration in `connections/{tenant}.yaml`:
-
-```yaml
-connectors:
-  m365: {}
-```
-
-No additional non-credential fields required for this connector.
+All connector parameters are in the K8s Secret. Tenant YAML contains only `tenant_id`.
 
 ## Multi-Instance
 

@@ -16,8 +16,8 @@ spec:
             default: "tag:silver"
           - name: airbyte_url
             default: "http://airbyte-airbyte-server-svc.airbyte.svc.cluster.local:8001"
-          - name: dbt_project_dir
-            default: "/dbt"
+          - name: airbyte_token
+            default: ""
           - name: clickhouse_host
             default: "clickhouse.data.svc.cluster.local"
           - name: clickhouse_port
@@ -34,6 +34,8 @@ spec:
                   value: "{{inputs.parameters.connection_id}}"
                 - name: airbyte_url
                   value: "{{inputs.parameters.airbyte_url}}"
+                - name: airbyte_token
+                  value: "{{inputs.parameters.airbyte_token}}"
           - name: transform
             depends: sync
             templateRef:
@@ -43,8 +45,6 @@ spec:
               parameters:
                 - name: dbt_select
                   value: "{{inputs.parameters.dbt_select}}"
-                - name: dbt_project_dir
-                  value: "{{inputs.parameters.dbt_project_dir}}"
                 - name: clickhouse_host
                   value: "{{inputs.parameters.clickhouse_host}}"
                 - name: clickhouse_port

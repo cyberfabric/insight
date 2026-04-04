@@ -21,9 +21,16 @@ spec:
       script:
         image: insight-toolbox:local
         command: [bash]
+        env:
+          - name: CLICKHOUSE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: clickhouse-credentials
+                key: password
         source: |
           cd /ingestion/dbt
-          cat > profiles.yml <<'PROFILES'
+          CH_PASS="${CLICKHOUSE_PASSWORD}"
+          cat > profiles.yml <<PROFILES
           ingestion:
             target: k8s
             outputs:
@@ -33,7 +40,7 @@ spec:
                 port: {{inputs.parameters.clickhouse_port}}
                 schema: silver
                 user: default
-                password: "clickhouse"
+                password: "${CH_PASS}"
                 secure: false
           PROFILES
           dbt run --profiles-dir . --select "{{inputs.parameters.dbt_select}}"

@@ -25,6 +25,18 @@ postgresql:
     size: 50Gi
     # storageClassName: gp3  # Uncomment and set for your cloud provider
 
+# Admin credentials from K8s Secret
+# Create Secret before deploying:
+#   kubectl create secret generic airbyte-admin-credentials -n airbyte \
+#     --from-literal=email='admin@example.com' \
+#     --from-literal=password='CHANGE_ME'
+global:
+  auth:
+    instanceAdmin:
+      firstName: Admin
+      lastName: Insight
+    secretName: airbyte-admin-credentials   # Helm reads email + password from this Secret
+
 # Ingress — configure for your environment
 ingress:
   enabled: true

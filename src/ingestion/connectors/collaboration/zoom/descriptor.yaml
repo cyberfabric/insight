@@ -3,7 +3,7 @@ version: "1.0"
 type: nocode
 
 schedule: "0 3 * * *"
-dbt_select: "tag:zoom tag:silver"
+dbt_select: "tag:zoom+"
 workflow: sync
 
 connection:

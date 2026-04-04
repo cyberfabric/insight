@@ -82,14 +82,24 @@ brew install kind kubectl helm
 ## Quick Start
 
 ```bash
-# 1. Copy tenant config and fill in credentials
-cp connections/example-tenant.yaml.example connections/my-tenant.yaml
-# Edit my-tenant.yaml with real API keys
-
-# 2. Start the stack
+# 1. Start the cluster (creates namespaces, deploys Airbyte + Argo)
+#    ClickHouse will be skipped until its Secret exists
 ./up.sh
 
-# 3. Run a sync
+# 2. Create and apply secrets
+cp secrets/clickhouse.yaml.example secrets/clickhouse.yaml
+cp secrets/airbyte.yaml.example secrets/airbyte.yaml
+cp secrets/connectors/m365.yaml.example secrets/connectors/m365.yaml
+# Edit each .yaml with real credentials
+./secrets/apply.sh
+
+# 3. Re-run up.sh — now ClickHouse will deploy
+./up.sh
+
+# 4. Initialize (register connectors, create connections, sync workflows)
+./run-init.sh
+
+# 5. Run a sync
 ./run-sync.sh m365 my-tenant
 ```
 
@@ -99,7 +109,9 @@ cp connections/example-tenant.yaml.example connections/my-tenant.yaml
 
 | Command | Description |
 |---------|-------------|
-| `./up.sh` | Start all services (idempotent, safe to re-run) |
+| `./up.sh` | Create cluster and deploy services (idempotent, safe to re-run) |
+| `./secrets/apply.sh` | Apply K8s Secrets (infra + connectors). Run after `up.sh` |
+| `./run-init.sh` | Initialize: create databases, register connectors, apply connections. Run after secrets |
 | `./down.sh` | Stop all services. **Data preserved** |
 | `./cleanup.sh` | Delete cluster and all data. Asks for confirmation |
 
@@ -143,21 +155,18 @@ After `./up.sh`:
 
 ### ClickHouse Credentials
 
-Credentials are stored in a ConfigMap and referenced by destination configs.
+**Production:** password from K8s Secret `clickhouse-credentials` in namespace `data` (see [Production Deployment](#production-deployment)).
 
-**Local (Kind):** defined in `k8s/clickhouse/configmap.yaml` (`default.xml` → `<users><default><password>`).
+**Local (Kind):** falls back to default password `clickhouse` from `k8s/clickhouse/configmap.yaml` when Secret is absent.
 
-**Any environment:** read from the running cluster:
+**Any environment:**
 
 ```bash
-# From ConfigMap
-kubectl get configmap clickhouse-config -n data -o jsonpath='{.data.default\.xml}' | grep -oP '(?<=<password>).*(?=</password>)'
-
-# From tenant config
-yq '.destination' connections/<tenant>.yaml
+# Read password from Secret (production)
+kubectl get secret clickhouse-credentials -n data -o jsonpath='{.data.password}' | base64 -d
 
 # Quick test
-kubectl exec -n data deploy/clickhouse -- clickhouse-client --password clickhouse --query "SELECT currentUser()"
+kubectl exec -n data deploy/clickhouse -- clickhouse-client --password "$(kubectl get secret clickhouse-credentials -n data -o jsonpath='{.data.password}' | base64 -d 2>/dev/null || echo clickhouse)" --query "SELECT currentUser()"
 ```
 
 ### Airbyte Credentials
@@ -178,15 +187,24 @@ In-cluster API address: `http://airbyte-airbyte-server-svc.airbyte.svc.cluster.l
 
 ### Argo Credentials
 
-**Local (Kind):** UI at `http://localhost:30500`, no authentication.
+**Local (Kind):** UI at `http://localhost:30500`, no authentication (`--auth-mode=server`).
+
+**Production:** UI requires a Bearer token (`--auth-mode=client`):
+
+```bash
+# Create a ServiceAccount for UI access (one-time)
+kubectl create sa argo-admin -n argo
+kubectl create clusterrolebinding argo-admin --clusterrole=admin --serviceaccount=argo:argo-admin
+
+# Get a token (valid 24h)
+kubectl create token argo-admin -n argo --duration=24h
+
+# Paste the token into the Argo UI login page
+```
 
 **Any environment:**
 
 ```bash
-# Port-forward to access Argo UI
-kubectl -n argo port-forward svc/argo-server 2746:2746
-# Then open http://localhost:2746
-
 # List recent workflows
 kubectl get workflows -n argo --sort-by=.metadata.creationTimestamp --no-headers | tail -5
 ```
@@ -197,6 +215,7 @@ kubectl get workflows -n argo --sort-by=.metadata.creationTimestamp --no-headers
 src/ingestion/
 │
 ├── up.sh / down.sh / cleanup.sh    # Cluster lifecycle
+├── run-init.sh                      # Initialize after secrets applied
 ├── run-sync.sh                      # Manual pipeline run
 ├── update-connectors.sh             # Re-upload manifests
 ├── update-connections.sh            # Re-apply connections
@@ -216,6 +235,14 @@ src/ingestion/
 │   ├── example-tenant.yaml.example  #   Template (tracked)
 │   ├── example-tenant.yaml          #   Real credentials (gitignored)
 │   └── .airbyte-state.yaml          #   Airbyte IDs registry (gitignored, auto-generated)
+│
+├── secrets/                         # K8s Secrets (all gitignored, examples tracked)
+│   ├── apply.sh                     #   Apply all secrets (infra + connectors)
+│   ├── clickhouse.yaml.example      #   ClickHouse password
+│   ├── airbyte.yaml.example         #   Airbyte admin credentials
+│   └── connectors/                  #   Per-connector secrets
+│       ├── m365.yaml.example        #     M365 OAuth credentials
+│       └── zoom.yaml.example        #     Zoom OAuth credentials
 │
 ├── dbt/                             # Shared dbt project
 │   ├── dbt_project.yml
@@ -304,12 +331,22 @@ Scripts read/write this state automatically. If state gets out of sync:
        schema.yml              # Source definition + tests
    ```
 
-2. Add credentials to tenant config:
+2. Create K8s Secret with connector credentials:
    ```yaml
-   # connections/my-tenant.yaml
-   connectors:
-     new_connector:
-       api_key: "..."
+   # secrets/connectors/new-connector.yaml
+   apiVersion: v1
+   kind: Secret
+   metadata:
+     name: insight-new-connector-main
+     labels:
+       app.kubernetes.io/part-of: insight
+     annotations:
+       insight.cyberfabric.com/connector: new_connector
+       insight.cyberfabric.com/source-id: new-connector-main
+   type: Opaque
+   stringData:
+     api_key: "..."
+     # All parameters required by connector spec
    ```
 
 3. Deploy:
@@ -321,18 +358,95 @@ Scripts read/write this state automatically. If state gets out of sync:
 
 ## Adding a New Tenant
 
-1. Copy example config:
+1. Create tenant config:
    ```bash
-   cp connections/example-tenant.yaml.example connections/acme.yaml
+   cat > connections/acme.yaml <<EOF
+   tenant_id: acme
+   EOF
    ```
 
-2. Fill in credentials and set `tenant_id: acme`
+2. Create K8s Secrets for each connector (see `secrets/connectors/*.yaml.example`)
 
 3. Deploy:
    ```bash
-   ./update-connections.sh acme
-   ./update-workflows.sh acme
+   ./secrets/apply.sh --connectors-only
+   ./run-init.sh
    ```
+
+## Production Deployment
+
+### Prerequisites
+
+A running K8s cluster with `kubectl` access. Set environment:
+
+```bash
+export ENV=production
+export KUBECONFIG=/path/to/your/kubeconfig
+```
+
+### Step 1: Deploy Services
+
+```bash
+./up.sh   # Uses ENV=production, applies production Helm values
+```
+
+### Step 2: Create and Apply Secrets
+
+All credentials are stored in K8s Secrets. Example templates live in `secrets/`:
+
+```bash
+# Copy example templates and fill in real credentials
+cp secrets/clickhouse.yaml.example secrets/clickhouse.yaml
+cp secrets/airbyte.yaml.example secrets/airbyte.yaml
+cp secrets/connectors/m365.yaml.example secrets/connectors/m365.yaml
+cp secrets/connectors/zoom.yaml.example secrets/connectors/zoom.yaml
+# Edit each .yaml file with real credentials
+```
+
+Apply all secrets at once:
+
+```bash
+./secrets/apply.sh                    # All (infra + connectors)
+./secrets/apply.sh --infra-only       # Only infrastructure secrets
+./secrets/apply.sh --connectors-only  # Only connector secrets
+```
+
+### Step 3: Initialize
+
+```bash
+./run-init.sh   # Creates databases, registers connectors, applies connections, syncs workflows
+```
+
+### Required Secrets Summary
+
+| Secret | Namespace | Keys | Required |
+|--------|-----------|------|----------|
+| `clickhouse-credentials` | `data` + `argo` | `password` | Yes |
+| `airbyte-admin-credentials` | `airbyte` | `email`, `password` | Yes |
+| `insight-{connector}-{source-id}` | `data` | Connector-specific | Per connector |
+
+### Password Rotation
+
+To change ClickHouse password:
+
+```bash
+# 1. Update Secret file
+vim secrets/clickhouse.yaml   # set new password
+
+# 2. Apply to cluster (both data and argo namespaces)
+./secrets/apply.sh --infra-only
+
+# 3. Restart ClickHouse to pick up new password
+kubectl rollout restart deployment/clickhouse -n data
+kubectl rollout status deployment/clickhouse -n data
+
+# 4. Update Airbyte destination + connections with new password
+./scripts/apply-connections.sh example-tenant
+```
+
+ClickHouse uses `strategy: Recreate` — the old pod is terminated before the new one starts. This avoids PVC conflicts (ReadWriteOnce) and ensures the new password takes effect immediately.
+
+`apply-connections.sh` always updates the destination password from K8s Secret on every run. Existing connections are reused (they reference the destination by ID).
 
 ## Environment
 

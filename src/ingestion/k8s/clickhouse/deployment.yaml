@@ -7,6 +7,8 @@ metadata:
     app: clickhouse
 spec:
   replicas: 1
+  strategy:
+    type: Recreate   # PVC is ReadWriteOnce — cannot have two pods simultaneously
   selector:
     matchLabels:
       app: clickhouse
@@ -25,6 +27,12 @@ spec:
             - name: native
               containerPort: 9000
               protocol: TCP
+          env:
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: clickhouse-credentials
+                  key: password
           volumeMounts:
             - name: data
               mountPath: /var/lib/clickhouse
@@ -39,22 +47,18 @@ spec:
           readinessProbe:
             exec:
               command:
-                - clickhouse-client
-                - --password
-                - clickhouse
-                - --query
-                - "SELECT 1"
+                - bash
+                - -c
+                - "clickhouse-client --password \"${CLICKHOUSE_PASSWORD}\" --query 'SELECT 1'"
             initialDelaySeconds: 10
             periodSeconds: 5
             timeoutSeconds: 3
           livenessProbe:
             exec:
               command:
-                - clickhouse-client
-                - --password
-                - clickhouse
-                - --query
-                - "SELECT 1"
+                - bash
+                - -c
+                - "clickhouse-client --password \"${CLICKHOUSE_PASSWORD}\" --query 'SELECT 1'"
             initialDelaySeconds: 30
             periodSeconds: 10
             timeoutSeconds: 3

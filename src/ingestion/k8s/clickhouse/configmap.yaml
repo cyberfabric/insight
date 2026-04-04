@@ -29,7 +29,7 @@ data:
     <clickhouse>
         <users>
             <default>
-                <password>clickhouse</password>
+                <password replace="1" from_env="CLICKHOUSE_PASSWORD"/>
                 <networks>
                     <ip>::/0</ip>
                 </networks>

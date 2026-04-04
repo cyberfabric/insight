@@ -14,6 +14,8 @@ spec:
           - name: connection_id
           - name: airbyte_url
             default: "http://airbyte-airbyte-server-svc.airbyte.svc.cluster.local:8001"
+          - name: airbyte_token
+            default: ""
       steps:
         - - name: trigger
             template: trigger-sync
@@ -23,6 +25,8 @@ spec:
                   value: "{{inputs.parameters.connection_id}}"
                 - name: airbyte_url
                   value: "{{inputs.parameters.airbyte_url}}"
+                - name: airbyte_token
+                  value: "{{inputs.parameters.airbyte_token}}"
         - - name: poll
             template: poll-job
             arguments:
@@ -31,22 +35,33 @@ spec:
                   value: "{{steps.trigger.outputs.result}}"
                 - name: airbyte_url
                   value: "{{inputs.parameters.airbyte_url}}"
+                - name: airbyte_token
+                  value: "{{inputs.parameters.airbyte_token}}"
 
     - name: trigger-sync
       inputs:
         parameters:
           - name: connection_id
           - name: airbyte_url
+          - name: airbyte_token
       script:
         image: python:3.12-alpine
         command: [python3]
         source: |
-          import urllib.request, json
-          req = urllib.request.Request(
-              "{{inputs.parameters.airbyte_url}}/api/v1/connections/sync",
-              data=json.dumps({"connectionId": "{{inputs.parameters.connection_id}}"}).encode(),
-              headers={"Content-Type": "application/json"})
-          resp = json.load(urllib.request.urlopen(req))
+          import urllib.request, json, sys
+          url = "{{inputs.parameters.airbyte_url}}/api/v1/connections/sync"
+          headers = {"Content-Type": "application/json"}
+          token = "{{inputs.parameters.airbyte_token}}"
+          if token:
+              headers["Authorization"] = f"Bearer {token}"
+          data = json.dumps({"connectionId": "{{inputs.parameters.connection_id}}"}).encode()
+          req = urllib.request.Request(url, data=data, headers=headers)
+          try:
+              resp = json.load(urllib.request.urlopen(req))
+          except urllib.error.HTTPError as e:
+              body = e.read().decode()
+              print(f"Airbyte API error {e.code}: {body}", file=sys.stderr)
+              sys.exit(1)
           job_id = resp["job"]["id"]
           print(job_id)
 
@@ -55,17 +70,22 @@ spec:
         parameters:
           - name: job_id
           - name: airbyte_url
+          - name: airbyte_token
       activeDeadlineSeconds: 3600
       script:
         image: python:3.12-alpine
         command: [python3]
         source: |
           import urllib.request, json, time, sys
+          token = "{{inputs.parameters.airbyte_token}}"
           while True:
+              headers = {"Content-Type": "application/json"}
+              if token:
+                  headers["Authorization"] = f"Bearer {token}"
               req = urllib.request.Request(
                   "{{inputs.parameters.airbyte_url}}/api/v1/jobs/get",
                   data=json.dumps({"id": int("{{inputs.parameters.job_id}}")}).encode(),
-                  headers={"Content-Type": "application/json"})
+                  headers=headers)
               resp = json.load(urllib.request.urlopen(req))
               status = resp["job"]["status"]
               print(f"Job {{inputs.parameters.job_id}} status: {status}", flush=True)
