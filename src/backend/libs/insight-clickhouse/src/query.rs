@@ -48,7 +48,18 @@ enum BindValue {
 }
 
 impl QueryBuilder {
+    /// # Panics
+    ///
+    /// Panics if `table` contains characters other than alphanumeric, `_`, or `.`.
     pub(crate) fn new(client: Client, table: &str, tenant_id: Uuid) -> Self {
+        assert!(
+            !table.is_empty()
+                && table
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.'),
+            "table name must be non-empty and contain only alphanumeric, '_', or '.' characters, \
+             got: {table}"
+        );
         Self {
             client,
             table: table.to_owned(),
@@ -62,38 +73,60 @@ impl QueryBuilder {
         }
     }
 
-    /// Adds a UUID filter condition. The condition **must** use `?` for values.
+    /// Adds a UUID filter condition. The condition **must** contain exactly one `?` placeholder.
     ///
     /// Appended as `AND ({condition})` after the automatic `tenant_id` filter.
     /// Parentheses prevent SQL precedence from bypassing tenant isolation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `condition` does not contain exactly one `?` placeholder.
     #[must_use]
-    pub fn filter_uuid(mut self, condition: &str, value: Uuid) -> Self {
-        self.filters.push(format!("({condition})"));
-        self.bind_values.push(BindValue::Uuid(value));
-        self
+    pub fn filter_uuid(self, condition: &str, value: Uuid) -> Self {
+        self.push_filter(condition, BindValue::Uuid(value))
     }
 
-    /// Adds a string filter condition. Wrapped in parentheses for safety.
+    /// Adds a string filter condition. Must contain exactly one `?`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `condition` does not contain exactly one `?` placeholder.
     #[must_use]
-    pub fn filter_str(mut self, condition: &str, value: impl Into<String>) -> Self {
-        self.filters.push(format!("({condition})"));
-        self.bind_values.push(BindValue::String(value.into()));
-        self
+    pub fn filter_str(self, condition: &str, value: impl Into<String>) -> Self {
+        self.push_filter(condition, BindValue::String(value.into()))
     }
 
-    /// Adds an integer filter condition. Wrapped in parentheses for safety.
+    /// Adds an integer filter condition. Must contain exactly one `?`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `condition` does not contain exactly one `?` placeholder.
     #[must_use]
-    pub fn filter_i64(mut self, condition: &str, value: i64) -> Self {
-        self.filters.push(format!("({condition})"));
-        self.bind_values.push(BindValue::I64(value));
-        self
+    pub fn filter_i64(self, condition: &str, value: i64) -> Self {
+        self.push_filter(condition, BindValue::I64(value))
     }
 
-    /// Adds a float filter condition. Wrapped in parentheses for safety.
+    /// Adds a float filter condition. Must contain exactly one `?`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `condition` does not contain exactly one `?` placeholder.
     #[must_use]
-    pub fn filter_f64(mut self, condition: &str, value: f64) -> Self {
+    pub fn filter_f64(self, condition: &str, value: f64) -> Self {
+        self.push_filter(condition, BindValue::F64(value))
+    }
+
+    /// Validates that the condition has exactly one `?`, wraps in parentheses,
+    /// and pushes the filter + bind value.
+    fn push_filter(mut self, condition: &str, value: BindValue) -> Self {
+        let placeholder_count = condition.matches('?').count();
+        assert!(
+            placeholder_count == 1,
+            "filter condition must contain exactly one '?' placeholder, \
+             got {placeholder_count} in: {condition}"
+        );
         self.filters.push(format!("({condition})"));
-        self.bind_values.push(BindValue::F64(value));
+        self.bind_values.push(value);
         self
     }
 
@@ -371,5 +404,60 @@ mod tests {
         assert!(sql_silver.contains("silver.class_commits"));
         assert!(sql_gold.contains("gold.pr_cycle_time"));
         assert_ne!(sql_silver, sql_gold);
+    }
+
+    #[test]
+    #[should_panic(expected = "exactly one '?' placeholder, got 0")]
+    fn filter_with_no_placeholder_panics() {
+        test_client()
+            .tenant_query("gold.metrics", test_tenant_id())
+            .filter_str("status = 'active'", "unused");
+    }
+
+    #[test]
+    #[should_panic(expected = "exactly one '?' placeholder, got 2")]
+    fn filter_with_two_placeholders_panics() {
+        test_client()
+            .tenant_query("gold.metrics", test_tenant_id())
+            .filter_str("value BETWEEN ? AND ?", "unused");
+    }
+
+    #[test]
+    #[should_panic(expected = "alphanumeric")]
+    fn table_with_semicolon_panics() {
+        test_client()
+            .tenant_query("gold.metrics; DROP TABLE --", test_tenant_id());
+    }
+
+    #[test]
+    #[should_panic(expected = "alphanumeric")]
+    fn table_with_spaces_panics() {
+        test_client()
+            .tenant_query("gold.metrics WHERE 1=1", test_tenant_id());
+    }
+
+    #[test]
+    #[should_panic(expected = "non-empty")]
+    fn empty_table_panics() {
+        test_client().tenant_query("", test_tenant_id());
+    }
+
+    #[test]
+    fn valid_dotted_table_name() {
+        let sql = test_client()
+            .tenant_query("silver.class_commits", test_tenant_id())
+            .to_sql();
+        assert!(sql.contains("FROM silver.class_commits"));
+    }
+
+    #[test]
+    fn filter_with_one_placeholder_ok() {
+        // Should not panic
+        let sql = test_client()
+            .tenant_query("gold.metrics", test_tenant_id())
+            .filter_str("status = ?", "active")
+            .to_sql();
+
+        assert!(sql.contains("(status = ?)"));
     }
 }
