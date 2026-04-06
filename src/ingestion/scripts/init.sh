@@ -12,7 +12,12 @@ source ./scripts/resolve-airbyte-env.sh
 export AIRBYTE_TOKEN AIRBYTE_CLIENT_ID AIRBYTE_CLIENT_SECRET WORKSPACE_ID
 
 echo "=== Resolving ClickHouse credentials ==="
-CH_PASS="${CLICKHOUSE_PASSWORD:-$(kubectl get secret clickhouse-credentials -n data -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo 'clickhouse')}"
+CH_PASS="${CLICKHOUSE_PASSWORD:-$(kubectl get secret clickhouse-credentials -n data -o jsonpath='{.data.password}' | base64 -d)}"
+if [[ -z "$CH_PASS" ]]; then
+  echo "ERROR: clickhouse-credentials Secret not found or empty in namespace 'data'" >&2
+  echo "  Run: ./secrets/apply.sh --infra-only" >&2
+  exit 1
+fi
 export CLICKHOUSE_PASSWORD="$CH_PASS"
 
 echo "=== Creating dbt databases ==="

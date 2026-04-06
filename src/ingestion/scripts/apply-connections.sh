@@ -119,21 +119,20 @@ def discover_secrets():
     return secrets
 
 def resolve_clickhouse_password():
-    """Read password from env var, then K8s Secret."""
+    """Read password from env var, then K8s Secret. Fails if neither available."""
     env_pass = os.environ.get("CLICKHOUSE_PASSWORD")
     if env_pass:
         return env_pass
-    try:
-        result = subprocess.run(
-            ["kubectl", "get", "secret", "clickhouse-credentials", "-n", "data",
-             "-o", "jsonpath={.data.password}"],
-            capture_output=True, text=True, timeout=10
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return base64.b64decode(result.stdout.strip()).decode()
-    except Exception:
-        pass
-    return dest_config.get("password", "clickhouse")
+    result = subprocess.run(
+        ["kubectl", "get", "secret", "clickhouse-credentials", "-n", "data",
+         "-o", "jsonpath={.data.password}"],
+        capture_output=True, text=True, timeout=10
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        print("ERROR: clickhouse-credentials Secret not found in namespace 'data'", file=sys.stderr)
+        print("  Run: ./secrets/apply.sh --infra-only", file=sys.stderr)
+        sys.exit(1)
+    return base64.b64decode(result.stdout.strip()).decode()
 
 ch_password = resolve_clickhouse_password()
 

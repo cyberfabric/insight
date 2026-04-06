@@ -661,14 +661,13 @@ Key deployment decisions:
 
 #### 4.1.1 Infrastructure Secrets
 
-All infrastructure and connector credentials are stored in Kubernetes Secrets. No credentials are hardcoded in production manifests. Local development uses defaults that are overridden by Secrets when present.
+All infrastructure and connector credentials are stored in Kubernetes Secrets. No credentials are hardcoded in production manifests.
 
-| Secret | Namespace | Purpose | Required Keys |
-|--------|-----------|---------|---------------|
-| `clickhouse-credentials` | `data` + `argo` | ClickHouse `default` user password | `password` |
-| `airbyte-admin-credentials` | `airbyte` | Airbyte admin login | `email`, `password` |
-| `airbyte-auth-secrets` | `airbyte` | Airbyte internal auth (auto-created by Helm) | `instance-admin-client-id`, `instance-admin-client-secret`, `jwt-signature-secret` |
-| `insight-{connector}-{source-id}` | `data` | Per-connector credentials (see [ADR-0003](ADR/0003-k8s-secrets-credentials.md)) | Connector-specific (e.g. `azure_client_id`, `azure_client_secret`) |
+| Secret | Namespace | Purpose | Required Keys | Created by |
+|--------|-----------|---------|---------------|------------|
+| `clickhouse-credentials` | `data` + `argo` | ClickHouse `default` user password | `username`, `password` | `secrets/apply.sh` |
+| `airbyte-auth-secrets` | `airbyte` | Airbyte internal auth | `instance-admin-password`, `instance-admin-client-id`, `instance-admin-client-secret`, `jwt-signature-secret` | Helm chart (auto) |
+| `insight-{connector}-{source-id}` | `data` | Per-connector credentials (see [ADR-0003](ADR/0003-k8s-secrets-credentials.md)) | Connector-specific (e.g. `azure_client_id`, `azure_client_secret`) | `secrets/apply.sh` |
 
 Argo UI uses `--auth-mode=client` in production — authentication via K8s ServiceAccount Bearer tokens, no Secret required.
 

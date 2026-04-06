@@ -33,16 +33,14 @@ spec:
                 secretKeyRef:
                   name: clickhouse-credentials
                   key: password
+            - name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT
+              value: "1"
           volumeMounts:
             - name: data
               mountPath: /var/lib/clickhouse
             - name: config
               mountPath: /etc/clickhouse-server/config.d/cluster.xml
               subPath: cluster.xml
-              readOnly: true
-            - name: config
-              mountPath: /etc/clickhouse-server/users.d/default.xml
-              subPath: default.xml
               readOnly: true
           readinessProbe:
             exec:

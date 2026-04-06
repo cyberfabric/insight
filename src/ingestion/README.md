@@ -430,11 +430,11 @@ Apply all secrets at once:
 
 ### Required Secrets Summary
 
-| Secret | Namespace | Keys | Required |
-|--------|-----------|------|----------|
-| `clickhouse-credentials` | `data` + `argo` | `password` | Yes |
-| `airbyte-admin-credentials` | `airbyte` | `email`, `password` | Yes |
-| `insight-{connector}-{source-id}` | `data` | Connector-specific | Per connector |
+| Secret | Namespace | Keys | Created by |
+|--------|-----------|------|------------|
+| `clickhouse-credentials` | `data` + `argo` | `username`, `password` | `secrets/apply.sh` |
+| `airbyte-auth-secrets` | `airbyte` | `instance-admin-password`, ... | Helm chart (auto) |
+| `insight-{connector}-{source-id}` | `data` | Connector-specific | `secrets/apply.sh` |
 
 ### Password Rotation
 

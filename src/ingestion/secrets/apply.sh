@@ -31,12 +31,8 @@ apply_file() {
     return
   fi
 
-  # Airbyte credentials → airbyte namespace
-  if [[ "$name" == "airbyte.yaml" ]]; then
-    echo "[$label] $name → airbyte"
-    kubectl apply -f "$f" -n airbyte
-    return
-  fi
+  # Airbyte credentials managed by Helm chart (global.auth.enabled: true)
+  # No custom Secret needed — Helm generates airbyte-auth-secrets automatically
 
   # Argo credentials → argo namespace
   if [[ "$name" == argo-*.yaml ]]; then
