@@ -49,9 +49,9 @@ The Salesforce Connector extracts contact records, account (company) data, oppor
 
 Salesforce is the most widely deployed enterprise CRM platform. Insight already supports HubSpot as a CRM source, but many organizations — especially enterprise customers — use Salesforce as their primary sales system. To deliver unified CRM analytics across the organization, Insight must ingest Salesforce data into the same Bronze-to-Silver pipeline that already serves HubSpot.
 
-The Salesforce REST API provides rich data via SOQL (Salesforce Object Query Language) across standard objects: Contacts, Accounts, Opportunities, Tasks, Events, and Users. The connector must handle the differences between Salesforce and HubSpot data models — most notably that Salesforce stores Tasks and Events as separate objects (unlike HubSpot's unified Engagements), uses 18-character Salesforce IDs instead of numeric IDs, and names companies "Accounts" instead of "Companies". All Salesforce API fields use PascalCase (e.g., `OwnerId`, `AccountId`) and must be normalized to snake_case at Bronze level.
+The Salesforce REST API provides rich data via SOQL (Salesforce Object Query Language) across standard objects: Contacts, Accounts, Opportunities, Tasks, Events, and Users. The connector must handle the differences between Salesforce and HubSpot data models — most notably that Salesforce stores Tasks and Events as separate objects (unlike HubSpot's unified Engagements), uses 18-character Salesforce IDs instead of numeric IDs, and names companies "Accounts" instead of "Companies". Field names are preserved in source-native form at Bronze; normalization happens at Silver.
 
-Salesforce customers heavily customize their schemas with custom fields (`__c` suffix). These fields — such as `Customer_Segment__c` or `Contract_Value__c` — carry business-critical data that standard field extraction misses. The connector must collect whitelisted custom fields as key-value pairs without requiring schema changes per customer.
+Salesforce customers heavily customize their schemas with custom fields (`__c` suffix). These fields — such as `Customer_Segment__c` or `Contract_Value__c` — carry business-critical data that standard field extraction misses. The connector must capture custom fields alongside standard fields without requiring schema changes per customer.
 
 **Target Users**:
 
@@ -78,10 +78,10 @@ Salesforce customers heavily customize their schemas with custom fields (`__c` s
 **Capabilities**:
 
 - Extract Salesforce contacts, accounts, opportunities, activities (Tasks and Events), and user directory
-- Extract custom field values (`__c` fields) for Opportunities and Contacts as key-value pairs
-- Incremental extraction using `LastModifiedDate` as cursor for all entity streams
-- Identity resolution via `email` from Salesforce user directory, with `user_id` (18-char Salesforce ID) as internal join key
-- Support for OAuth 2.0 (Connected App) and username/password + security token authentication
+- Capture custom field values (`__c` fields) alongside standard fields
+- Incremental extraction for all entity streams
+- Identity resolution via `email` from Salesforce user directory
+- OAuth 2.0 Client Credentials Flow authentication
 
 ### 1.4 Glossary
 
@@ -101,7 +101,7 @@ Salesforce customers heavily customize their schemas with custom fields (`__c` s
 | Compound Field | A Salesforce field type (Address, Name, Geolocation) that returns a structured JSON object rather than a scalar value. Cannot be used in SOQL WHERE clauses. |
 | OpportunityFieldHistory | A Salesforce system object that records changes to tracked fields on Opportunity. Requires Field History Tracking to be enabled in Salesforce Setup. |
 | Bulk API 2.0 | Salesforce's batch data API for large-volume operations, returning data in batches up to 150MB. Consumes fewer API calls than REST+SOQL for large datasets. |
-| Bronze Table | Raw data table in the destination, preserving source-native field names (normalized to snake_case) and types without transformation. |
+| Bronze Table | Raw data table in the destination, preserving source-native field names and types without transformation. |
 
 ## 2. Actors
 
@@ -111,7 +111,7 @@ Salesforce customers heavily customize their schemas with custom fields (`__c` s
 
 **ID**: `cpt-insightspec-actor-sf-operator`
 
-**Role**: Configures Salesforce instance credentials (OAuth 2.0 Connected App or username/password + security token), selects object scope, and monitors extraction runs.
+**Role**: Configures Salesforce instance credentials (OAuth 2.0 Client Credentials), selects object scope, and monitors extraction runs.
 **Needs**: Ability to configure the connector with Salesforce credentials, filter by object scope, and verify that data is flowing correctly for all streams.
 
 #### Data Analyst
@@ -127,7 +127,7 @@ Salesforce customers heavily customize their schemas with custom fields (`__c` s
 
 **ID**: `cpt-insightspec-actor-sf-api`
 
-**Role**: External REST API providing SOQL-based access to Contacts, Accounts, Opportunities, Tasks, Events, Users, and custom field metadata. Enforces API call limits per 24-hour rolling window and requires OAuth 2.0 or session-based authentication.
+**Role**: External REST API providing access to Contacts, Accounts, Opportunities, Tasks, Events, Users, and custom field metadata. Enforces API call limits per 24-hour rolling window.
 
 #### Identity Manager
 
@@ -139,12 +139,11 @@ Salesforce customers heavily customize their schemas with custom fields (`__c` s
 
 ### 3.1 Module-Specific Environment Constraints
 
-- Requires a Salesforce account with API access enabled and sufficient permissions to query Contacts, Accounts, Opportunities, Tasks, Events, and Users via SOQL
-- Authentication via OAuth 2.0 (Connected App with `client_id`, `client_secret`, `refresh_token`) or legacy username/password + security token
-- The connector operates as a batch collector using incremental sync based on `LastModifiedDate`
+- Requires a Salesforce account with API access enabled and sufficient permissions to query Contacts, Accounts, Opportunities, Tasks, Events, and Users
+- Authentication via OAuth 2.0 Client Credentials Flow (External Client App)
+- The connector operates as a batch collector with incremental sync
 - The connector **SHOULD** run at least daily to maintain timely opportunity stage and activity data
-- Salesforce enforces API call limits per 24-hour rolling window (varies by edition: 15,000 for Enterprise, 5,000 for Professional); the connector must track API call consumption and handle limit errors gracefully
-- PascalCase API field names (e.g., `OwnerId`, `AccountId`) are normalized to snake_case at Bronze level
+- Salesforce enforces API call limits per 24-hour rolling window (varies by edition); the connector must handle limit errors gracefully
 
 ## 4. Scope
 
@@ -153,17 +152,17 @@ Salesforce customers heavily customize their schemas with custom fields (`__c` s
 - Extraction of Salesforce contacts with core fields and account association
 - Extraction of accounts (companies) with hierarchy support (`parent_account_id`)
 - Extraction of opportunities (deals) with stage, amount, probability, and close date
-- Extraction of activities as separate Bronze streams: `salesforce_tasks` and `salesforce_events` (merged into `class_crm_activities` at Silver)
-- Extraction of custom field values (`__c` fields) for Opportunities and Contacts as key-value pairs
+- Extraction of activities as separate Task and Event streams (merged at Silver)
+- Capture of custom field values (`__c` fields) on all entity streams without per-customer schema changes
 - Extraction of Opportunity stage history (`OpportunityFieldHistory` for `StageName` and `Amount` fields)
-- Extraction of Salesforce user directory for identity resolution with SCD Type 2 history
-- Soft-delete detection via `salesforce_deleted_records` stream (`queryAll` with `IsDeleted = true`)
-- Connector execution monitoring via collection runs stream
-- Incremental sync using `LastModifiedDate` as cursor for all entity streams
+- Extraction of Salesforce user directory for identity resolution (full refresh; SCD Type 2 history handled at Silver)
+- Soft-delete detection with deletion flag on all entity records
+- Connector execution monitoring
+- Incremental sync for all entity streams
 - Identity resolution via `email` from user directory
-- OAuth 2.0 (Connected App) and username/password + security token authentication
+- OAuth 2.0 Client Credentials Flow authentication
 - All timestamps normalized to UTC
-- `source_instance_id`, `tenant_id`, and `data_source = 'insight_salesforce'` stamped on every record
+- `insight_source_id`, `tenant_id`, and `data_source = 'insight_salesforce'` stamped on every record
 - Sandbox vs. production org detection during connection configuration
 
 ### 4.2 Out of Scope
@@ -219,9 +218,9 @@ The connector **MUST** extract Salesforce Opportunity records with core fields i
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-sf-task-extraction`
 
-The connector **MUST** extract Salesforce Task records into a dedicated `salesforce_tasks` Bronze stream via `SELECT ... FROM Task`. Core fields include: task ID, subject, owner ID, who ID (contact/lead reference), who type (`Contact` or `Lead`), what ID (related object reference), what type (`Account` / `Opportunity` / `Campaign` / `Case` / etc.), activity date, status, call type (call-logged tasks only), call duration seconds (call-logged tasks only), creation timestamp, and last modified timestamp.
+The connector **MUST** extract Salesforce Task records into a dedicated Bronze stream. Core fields include: task ID, subject, owner ID, who ID (contact/lead reference), who type, what ID (related object reference), what type, activity date, status, call type (call-logged tasks only), call duration seconds (call-logged tasks only), creation timestamp, and last modified timestamp.
 
-**Rationale**: Tasks represent to-do items, call logs, and follow-ups — a core salesperson activity signal. Keeping Tasks as a separate Bronze stream preserves the source-native 1:1 mapping (one Salesforce object = one Bronze table), avoids nullable fields from Event-specific columns, and enables a simple single-cursor incremental sync per stream. The Silver layer merges Tasks and Events into `class_crm_activities` via dbt.
+**Rationale**: Tasks represent to-do items, call logs, and follow-ups — a core salesperson activity signal. Tasks and Events are kept as separate streams to preserve the source-native 1:1 mapping and are merged at Silver.
 
 **Actors**: `cpt-insightspec-actor-sf-api`, `cpt-insightspec-actor-sf-analyst`
 
@@ -229,9 +228,9 @@ The connector **MUST** extract Salesforce Task records into a dedicated `salesfo
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-sf-event-extraction`
 
-The connector **MUST** extract Salesforce Event records into a dedicated `salesforce_events` Bronze stream via `SELECT ... FROM Event`. Core fields include: event ID, subject, owner ID, who ID (contact/lead reference), who type (`Contact` or `Lead`), what ID (related object reference), what type (`Account` / `Opportunity` / `Campaign` / `Case` / etc.), start datetime, end datetime, duration in minutes, creation timestamp, and last modified timestamp.
+The connector **MUST** extract Salesforce Event records into a dedicated Bronze stream. Core fields include: event ID, subject, owner ID, who ID (contact/lead reference), who type, what ID (related object reference), what type, start datetime, end datetime, duration in minutes, creation timestamp, and last modified timestamp.
 
-**Rationale**: Events represent calendar meetings and scheduled activities. Keeping Events as a separate Bronze stream follows the same architecture principles as Tasks: source-native schema, single cursor, no nullable cross-type fields. The Silver layer merges with Tasks into `class_crm_activities`.
+**Rationale**: Events represent calendar meetings and scheduled activities. Kept as a separate stream from Tasks to preserve source-native schema; merged at Silver.
 
 **Actors**: `cpt-insightspec-actor-sf-api`, `cpt-insightspec-actor-sf-analyst`
 
@@ -239,9 +238,9 @@ The connector **MUST** extract Salesforce Event records into a dedicated `salesf
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-sf-polymorphic-resolution`
 
-Both `salesforce_tasks` and `salesforce_events` streams **MUST** include `who_type` and `what_type` discriminator fields populated by resolving the Salesforce polymorphic `WhoId` and `WhatId` references. The connector **MUST** derive the object type from the Salesforce ID prefix (first 3 characters encode the object type via the `KeyPrefix` in the Describe API) or by using SOQL `TYPEOF` / `Name.Type` relationship queries. The connector **MUST NOT** leave `who_type` or `what_type` as null when the corresponding ID field is non-null.
+Task and Event streams extract raw `WhoId` and `WhatId` polymorphic references at Bronze. Polymorphic resolution to specific object types (Contact, Lead, Account, Opportunity) is performed at Silver using Salesforce ID key prefixes (e.g., `003` = Contact, `006` = Opportunity, `001` = Account). The Silver transformation **MUST** derive `contact_id`, `deal_id`, and `account_id` from `WhoId`/`WhatId` based on these prefixes.
 
-**Rationale**: `WhoId` can reference a Contact or Lead; `WhatId` can reference an Account, Opportunity, Campaign, Case, or custom object. Without type discriminators, downstream analytics require trial-and-error JOINs across all possible target tables.
+**Rationale**: Salesforce ID key prefixes are stable and well-documented. Resolving at Silver (dbt) avoids adding custom Python logic to the declarative connector while still providing unambiguous entity references for downstream analytics.
 
 **Actors**: `cpt-insightspec-actor-sf-api`, `cpt-insightspec-actor-sf-analyst`
 
@@ -267,13 +266,11 @@ The connector **MUST** extract the Salesforce user directory, including: user ID
 
 #### Preserve User Directory History (SCD Type 2)
 
-- [ ] `p1` - **ID**: `cpt-insightspec-fr-sf-user-scd`
+- [ ] `p2` - **ID**: `cpt-insightspec-fr-sf-user-scd`
 
-The `salesforce_users` table **MUST** preserve historical state changes using the SCD Type 2 pattern. Each user record **MUST** include `valid_from` (timestamp when this state became effective) and `valid_to` (timestamp when this state was superseded, or `null` for the current record). When the connector detects a change in a user's attributes (email, title, department, profile, active status) between the current full refresh response and the most recent stored record, it **MUST** close the previous record (set `valid_to = collected_at`) and insert a new record with `valid_from = collected_at`.
+The `users` stream extracts the current-state user directory via full refresh. SCD Type 2 history tracking (detecting changes in email, title, department, active status between syncs and maintaining `valid_from`/`valid_to` temporal bounds) is a **Silver-layer responsibility**, not a connector concern. The connector emits the current snapshot on each run; the Silver dbt model compares against the previous snapshot to detect changes and maintain the historical record.
 
-The Airbyte sync mode for `salesforce_users` **MUST** be **Full Refresh | Append** (not overwrite), so that each run appends the current snapshot. SCD Type 2 versioning **MUST** be applied so that superseded records are closed and new records are opened. The implementation approach (destination-level MERGE logic vs. connector-level change detection) is deferred to DESIGN.
-
-**Rationale**: The Salesforce User API returns current state only. Without SCD Type 2, an email change (e.g., name change after marriage), title change (promotion), or deactivation (departure) silently overwrites history. Historical analytics ("which email was this salesperson using when they closed that deal?", "when was this user deactivated?") require point-in-time user state. Additionally, email reuse on deactivated accounts (departed employee's email reassigned to new hire) creates identity resolution collisions — SCD Type 2 with temporal bounds allows the Identity Manager to disambiguate.
+**Rationale**: The Salesforce User API returns current state only. SCD Type 2 is needed for historical analytics and identity resolution disambiguation (e.g., email reuse on deactivated accounts). However, change detection logic belongs at the transformation layer (Silver/dbt), not in the extraction connector. The connector's role is to deliver the full current snapshot reliably; the Silver layer owns the semantic interpretation of what changed. This keeps the connector simple (declarative YAML, full refresh) and avoids duplicating change-detection logic that dbt handles natively via snapshot models.
 
 **Actors**: `cpt-insightspec-actor-sf-analyst`, `cpt-insightspec-actor-identity-manager`
 
@@ -291,29 +288,13 @@ At the start of each sync run, the connector **SHOULD** re-validate FLS coverage
 
 ### 5.2 Custom Field Extraction
 
-#### Extract Opportunity Custom Fields
+#### Capture Custom Fields via `raw_data` JSON Column
 
-- [ ] `p2` - **ID**: `cpt-insightspec-fr-sf-opportunity-custom-fields`
+- [ ] `p1` - **ID**: `cpt-insightspec-fr-sf-custom-fields`
 
-The connector **MUST** extract custom field values (`__c` suffix) for Opportunity records as key-value pairs, including: parent opportunity ID, field API name, field label, field value (as string), value type hint, and collection timestamp. Custom field metadata **MUST** be discovered via the Describe API (`GET /services/data/v{version}/sobjects/Opportunity/describe`). Only fields with non-null values are written as rows.
+All entity streams **MUST** capture custom fields (`__c` suffix) alongside standard fields without requiring per-customer schema changes. The full API response payload — including both standard and custom fields — **MUST** be preserved for each record so that Silver-layer transformations can extract and promote selected custom fields.
 
-**Architectural constraint**: The Airbyte Declarative Connector framework (YAML) does not natively support dynamic unnest — taking a variable-length dictionary of `__c` fields from a JSON response and expanding it into separate key-value rows. This transformation requires a custom Python component (Custom Record Extractor or Python CDK migration). The DESIGN **MUST** specify whether custom field extraction is implemented as: (1) a custom `RecordExtractor` within the Declarative manifest, (2) a hybrid manifest with Python components, or (3) a full Python CDK connector. Pure Declarative YAML is insufficient for this requirement.
-
-**Compound field handling**: Salesforce supports compound field types (Address, Name, Geolocation) that return structured JSON objects instead of scalar values. Custom compound fields (`__c` of type Address or Geolocation) **MUST** be serialized as JSON strings with `value_type = 'json'`. The SOQL character limit (100,000 characters) **MUST** be respected — if the SELECT clause for all `__c` fields approaches this limit, the connector **MUST** split the query into multiple SOQL requests with subsets of custom fields.
-
-**Rationale**: Organization-specific opportunity fields (customer segment, product line, region) are essential for pipeline filtering and segmentation analytics. A key-value model avoids schema changes when customers add new custom fields.
-
-**Actors**: `cpt-insightspec-actor-sf-api`, `cpt-insightspec-actor-sf-analyst`
-
-#### Extract Contact Custom Fields
-
-- [ ] `p2` - **ID**: `cpt-insightspec-fr-sf-contact-custom-fields`
-
-The connector **MUST** extract custom field values (`__c` suffix) for Contact records as key-value pairs, including: parent contact ID, field API name, field label, field value (as string), value type hint, and collection timestamp. Custom field metadata **MUST** be discovered via the Describe API (`GET /services/data/v{version}/sobjects/Contact/describe`). Only fields with non-null values are written as rows.
-
-**Architectural constraint**: Same as `cpt-insightspec-fr-sf-opportunity-custom-fields` — dynamic unnest of `__c` fields requires a custom Python component beyond pure Declarative YAML.
-
-**Rationale**: Customer-specific contact fields (tier, preferred language, contract reference) enable richer contact segmentation and portfolio analysis.
+**Rationale**: Organization-specific custom fields (customer segment, product line, region) are essential for pipeline filtering and segmentation analytics. Capturing them generically avoids schema changes when customers add new `__c` fields and preserves source-native types.
 
 **Actors**: `cpt-insightspec-actor-sf-api`, `cpt-insightspec-actor-sf-analyst`
 
@@ -323,9 +304,7 @@ The connector **MUST** extract custom field values (`__c` suffix) for Contact re
 
 - [ ] `p2` - **ID**: `cpt-insightspec-fr-sf-collection-runs`
 
-The connector **MUST** produce a collection run log entry for each execution, recording: run ID, start/end time, status, per-stream record counts (contacts, accounts, opportunities, opportunity history, activities, users), API call count, API budget remaining (parsed from the final `Sforce-Limit-Info: api-usage=N/M` response header), error count, FLS-hidden field count, and collection settings (instance URL, org type, object types, lookback configuration).
-
-**Rationale**: Operational visibility into connector health. Enables alerting on failed runs, tracking data completeness, and monitoring API call consumption against Salesforce edition limits. The `Sforce-Limit-Info` value is returned on every successful API response and provides the only way to trend API budget consumption without waiting for a 403 failure.
+Collection run metadata (run ID, start/end time, status, per-stream record counts, error counts) **SHOULD** be available for operational monitoring. API budget consumption **SHOULD** be trackable to enable operators to monitor usage trends against Salesforce edition limits.
 
 **Actors**: `cpt-insightspec-actor-sf-operator`
 
@@ -351,9 +330,9 @@ The Airbyte sync mode for all entity streams (contacts, accounts, opportunities,
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-sf-incremental-sync`
 
-The connector **MUST** support incremental collection using the `LastModifiedDate` field as cursor for all entity streams, so that ongoing runs process only newly created or modified records without requiring full reloads. SOQL queries **MUST** filter by `LastModifiedDate > {cursor}` with `ORDER BY LastModifiedDate ASC`.
+The connector **MUST** support incremental collection for all entity streams, so that ongoing runs process only newly created or modified records without requiring full reloads.
 
-**Known limitation**: Incremental sync by `LastModifiedDate` is blind to hard-deleted records (permanently purged from Recycle Bin). Soft-deleted records (in the Recycle Bin) are captured by the `salesforce_deleted_records` stream (see `cpt-insightspec-fr-sf-deleted-records`). Permanently purged records are invisible to all API endpoints. The connector **SHOULD** support a periodic full reconciliation run to detect permanently purged records that no longer exist in the source.
+**Known limitation**: Incremental sync is blind to hard-deleted records (permanently purged from Recycle Bin). Soft-deleted records are captured via the deletion detection mechanism (see `cpt-insightspec-fr-sf-deleted-records`). Permanently purged records are invisible to all API endpoints. The connector **SHOULD** support periodic full reconciliation to detect permanently purged records.
 
 **Rationale**: Full reloads are impractical for large Salesforce instances with millions of records across objects. Incremental sync is required for sustainable daily operation.
 
@@ -363,11 +342,9 @@ The connector **MUST** support incremental collection using the `LastModifiedDat
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-sf-deleted-records`
 
-The connector **MUST** provide a `salesforce_deleted_records` stream that uses the Salesforce `queryAll` endpoint with `WHERE IsDeleted = true AND SystemModstamp > {cursor}` to capture soft-deleted records (those in the Salesforce Recycle Bin). Each record **MUST** include: object type (`Contact` / `Account` / `Opportunity` / `Task` / `Event`), record ID, deletion timestamp (`SystemModstamp`), `source_instance_id`, and `tenant_id`.
+All entity streams **MUST** capture soft-deleted records (those in the Salesforce Recycle Bin) alongside active records, with a deletion flag (`IsDeleted`) on every record. Deleted records must be included in the normal extraction flow — no separate deleted-records stream is required.
 
-The downstream Silver pipeline uses this stream to mark corresponding Bronze records as deleted (soft-delete flag or tombstone) rather than leaving stale "active" records in analytics.
-
-**Rationale**: For CRM analytics, stale opportunities inflating the pipeline is a data quality problem. If a salesperson deletes a lost Opportunity, the Bronze layer must reflect that deletion within the same day's sync. Salesforce retains soft-deleted records in the Recycle Bin for 15 days (default) before permanent purge, so `queryAll` with `IsDeleted = true` captures the vast majority of deletions in day-to-day operation. This is materially better than relying solely on periodic full reconciliation, which would leave the pipeline inflated for up to a week.
+**Rationale**: For CRM analytics, stale opportunities inflating the pipeline is a data quality problem. If a salesperson deletes a lost Opportunity, the Bronze layer must reflect that deletion within the same day's sync. Salesforce retains soft-deleted records in the Recycle Bin for 15 days (default) before permanent purge. Permanently purged records are invisible to all API endpoints and require periodic full reconciliation to detect.
 
 **Actors**: `cpt-insightspec-actor-sf-api`, `cpt-insightspec-actor-sf-analyst`
 
@@ -375,16 +352,11 @@ The downstream Silver pipeline uses this stream to mark corresponding Bronze rec
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-sf-api-limits`
 
-The connector **MUST** handle Salesforce API limit errors (HTTP 403 with `REQUEST_LIMIT_EXCEEDED`) via the Airbyte framework's standard error handling: exponential backoff retries followed by sync failure if the limit persists.
+The connector **MUST** handle Salesforce API limit errors gracefully with retry and backoff. If the limit persists, the sync should fail cleanly with cursor state preserved for resumption on the next run.
 
-**Architectural constraint**: The Airbyte Declarative framework does not support proactive API quota inspection (reading `Sforce-Limit-Info` response headers to anticipate exhaustion and stop gracefully). When `REQUEST_LIMIT_EXCEEDED` is returned, the framework retries with backoff and eventually fails the sync. The cursor state is preserved only for pages already committed to the destination via Airbyte's state checkpointing mechanism — records fetched but not yet flushed are lost and will be re-fetched on the next run. The connector **MUST NOT** assume mid-page graceful shutdown capability.
+The connector **SHOULD** be scheduled during off-peak hours to minimize contention with other org integrations.
 
-To mitigate shared API budget exhaustion:
-1. The connector **SHOULD** be scheduled during off-peak hours to minimize contention with other org integrations.
-2. The collection run log **MUST** record API call count per run to enable operators to monitor consumption trends.
-3. If proactive budget management is required (e.g., stopping after N API calls), the DESIGN **MUST** specify a Python CDK migration path that reads `Sforce-Limit-Info` headers and implements soft shutdown before the limit is hit.
-
-**Rationale**: Salesforce API call limits are shared across all integrations in the org. Exhausting the daily budget blocks other business-critical integrations (e.g., marketing automation, customer support tools). The connector must be a responsible consumer of the shared API budget, but the PRD must reflect realistic Airbyte framework capabilities rather than assuming proactive budget control.
+**Rationale**: Salesforce API call limits are shared across all integrations in the org. Exhausting the daily budget blocks other business-critical integrations (e.g., marketing automation, customer support tools). The connector must be a responsible consumer of the shared API budget.
 
 **Actors**: `cpt-insightspec-actor-sf-api`, `cpt-insightspec-actor-sf-operator`
 
@@ -394,7 +366,7 @@ To mitigate shared API budget exhaustion:
 
 All Salesforce API fields **MUST** be preserved in their source-native PascalCase form at Bronze level (e.g., `OwnerId`, `AccountId`, `LastModifiedDate`). Field name normalization to snake_case is a Silver-layer responsibility, handled by dbt transformations alongside cross-source schema unification.
 
-**Rationale**: The platform's architecture principle is that Bronze preserves source-native schema (Connector Framework DESIGN §1.3, Connector Framework PRD §1.4 Glossary, Ingestion Layer DESIGN §1.3). Normalizing at Bronze would mean the Bronze layer no longer matches the Salesforce API response, complicating debugging and violating the "raw archive" contract. All other connectors (HubSpot, Jira, GitHub) preserve source-native field names at Bronze.
+**Rationale**: The platform's architecture principle is that Bronze preserves source-native schema. Normalizing at Bronze would mean the Bronze layer no longer matches the API response, complicating debugging and violating the "raw archive" contract.
 
 **Actors**: `cpt-insightspec-actor-sf-api`
 
@@ -418,9 +390,9 @@ The Identity Manager (Silver step 2) resolves identity as follows:
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-sf-instance-context`
 
-Every record emitted by the connector **MUST** include `source_instance_id` (identifying the specific Salesforce org), `tenant_id` (identifying the Insight tenant), and `data_source` (set to `insight_salesforce` for all records). These fields are required for multi-instance disambiguation, tenant isolation, and source identification when Salesforce data merges with HubSpot data in unified `class_crm_*` Silver tables.
+Every record emitted by the connector **MUST** include `insight_source_id` (identifying the specific Salesforce org), `tenant_id` (identifying the Insight tenant), and `data_source` (set to `insight_salesforce` for all records). These fields are required for multi-instance disambiguation, tenant isolation, and source identification when Salesforce data merges with HubSpot data in unified `class_crm_*` Silver tables.
 
-**Rationale**: Multiple Salesforce orgs (production, sandbox, acquired companies) may feed into the same Bronze store. Without `source_instance_id`, Salesforce 18-char IDs could collide across orgs. The `data_source` field enables the Silver pipeline to distinguish Salesforce-originated records from HubSpot-originated records in the unified CRM schema, matching the pattern established by the Slack connector (`data_source = 'insight_slack'`).
+**Rationale**: Multiple Salesforce orgs (production, sandbox, acquired companies) may feed into the same Bronze store. Without `insight_source_id`, Salesforce 18-char IDs could collide across orgs. The `data_source` field enables the Silver pipeline to distinguish Salesforce-originated records from HubSpot-originated records in the unified CRM schema, matching the pattern established by the Slack connector (`data_source = 'insight_slack'`).
 
 **Actors**: `cpt-insightspec-actor-sf-operator`
 
@@ -484,7 +456,19 @@ All timestamps persisted in the Bronze layer **MUST** be stored in UTC (ISO 8601
 
 **Stability**: stable
 
-**Description**: Twelve Bronze streams — `salesforce_contacts`, `salesforce_accounts`, `salesforce_opportunities`, `salesforce_opportunity_history`, `salesforce_tasks`, `salesforce_events`, `salesforce_users`, `salesforce_opportunity_ext`, `salesforce_contact_ext`, `salesforce_deleted_records`, `salesforce_collection_runs`. Tasks and Events are separate streams (one Salesforce object = one Bronze table), merged at Silver into `class_crm_activities`. All user-attributed streams reference `OwnerId` (source-native PascalCase) as the user key. Entity streams use `LastModifiedDate` as the cursor field, with URN-based surrogate primary keys. Field names are preserved in source-native PascalCase at Bronze; snake_case normalization happens at Silver. All records include `data_source = 'insight_salesforce'`.
+**Description**: Seven Bronze streams:
+
+| Stream | Salesforce Object | Sync Mode | Description |
+|--------|------------------|-----------|-------------|
+| `accounts` | Account | Incremental | Companies and organizations |
+| `contacts` | Contact | Incremental | External people at accounts |
+| `opportunities` | Opportunity | Incremental | Deals in the pipeline |
+| `opportunity_history` | OpportunityFieldHistory | Incremental | Stage and amount change history |
+| `tasks` | Task | Incremental | To-dos, call logs, follow-ups |
+| `events` | Event | Incremental | Calendar meetings, scheduled activities |
+| `users` | User | Full refresh | Internal salesperson directory |
+
+Tasks and Events are separate streams, merged at Silver. All entity streams include soft-deleted records with `IsDeleted` flag. Field names are preserved in source-native PascalCase. All records include `data_source`, `tenant_id`, `source_instance_id`, and URN-based `pk`.
 
 **Field-level schemas**: Defined in [`salesforce.md`](../salesforce.md) (Bronze table definitions with column types, descriptions, and API field mappings).
 
@@ -500,23 +484,19 @@ All timestamps persisted in the Bronze layer **MUST** be stored in UTC (ISO 8601
 
 **Protocol/Format**: REST / JSON (SOQL queries)
 
-| Stream | Endpoint / SOQL | Method |
-|--------|----------------|--------|
-| `salesforce_contacts` | `SELECT ... FROM Contact WHERE LastModifiedDate > {cursor}` | SOQL — incremental |
-| `salesforce_accounts` | `SELECT ... FROM Account WHERE LastModifiedDate > {cursor}` | SOQL — incremental |
-| `salesforce_opportunities` | `SELECT ... FROM Opportunity WHERE LastModifiedDate > {cursor}` | SOQL — incremental |
-| `salesforce_tasks` | `SELECT ... FROM Task WHERE LastModifiedDate > {cursor}` | SOQL — incremental |
-| `salesforce_events` | `SELECT ... FROM Event WHERE LastModifiedDate > {cursor}` | SOQL — incremental |
-| `salesforce_opportunity_history` | `SELECT ... FROM OpportunityFieldHistory WHERE Field IN ('StageName','Amount')` | SOQL — incremental |
-| `salesforce_users` | `SELECT ..., Profile.Name FROM User` | SOQL — full refresh (SCD Type 2) |
-| `salesforce_opportunity_ext` | Custom fields from Opportunity SOQL response | Extracted from entity payload |
-| `salesforce_contact_ext` | Custom fields from Contact SOQL response | Extracted from entity payload |
-| `salesforce_deleted_records` | `queryAll` with `WHERE IsDeleted = true AND SystemModstamp > {cursor}` per object type | SOQL (`queryAll`) — incremental |
-| Custom field metadata | `GET /services/data/v{version}/sobjects/{Object}/describe` | REST — configuration |
+| Stream | Salesforce Object | Sync |
+|--------|------------------|------|
+| `contacts` | Contact | Incremental |
+| `accounts` | Account | Incremental |
+| `opportunities` | Opportunity | Incremental |
+| `tasks` | Task | Incremental |
+| `events` | Event | Incremental |
+| `opportunity_history` | OpportunityFieldHistory | Incremental |
+| `users` | User | Full refresh |
 
-**Authentication**: OAuth 2.0 (Connected App — `client_id`, `client_secret`, `refresh_token`) or username/password + security token
+**Authentication**: OAuth 2.0 Client Credentials Flow (External Client App)
 
-**Compatibility**: Salesforce REST API v59.0+. Response format is JSON with cursor-based pagination (`nextRecordsUrl` from `queryMore`). Field additions are non-breaking.
+**Compatibility**: Salesforce REST API v66.0. Response format is JSON with cursor-based pagination. Field additions are non-breaking.
 
 ## 8. Use Cases
 
@@ -529,16 +509,14 @@ All timestamps persisted in the Bronze layer **MUST** be stored in UTC (ISO 8601
 **Preconditions**:
 
 - Salesforce org with API access enabled
-- Connected App created (for OAuth) or user credentials with API permission available
+- External Client App created in Salesforce with Client Credentials Flow enabled
 
 **Main Flow**:
 
-1. Operator selects authentication method (OAuth 2.0 or username/password)
-2. For OAuth: operator provides `client_id`, `client_secret`, and completes the OAuth flow to obtain `refresh_token`
-3. For username/password: operator provides username, password, and security token
-4. System validates credentials against the Salesforce API (`/services/data/`)
-5. System discovers the Salesforce org instance URL, API version, and org type (production vs. sandbox) from the OAuth token response or instance URL pattern
-6. If sandbox detected: system displays a warning that sandbox data may duplicate production records and labels the connection as `sandbox` in `source_instance_id` metadata
+1. Operator provides `instance_url`, `client_id`, `client_secret`, `tenant_id`, and `source_instance_id`
+2. System validates credentials against the Salesforce API
+3. System discovers the org type (production vs. sandbox) from the instance URL
+4. If sandbox detected: system displays a warning that sandbox data may duplicate production records and labels the connection as `sandbox` in `source_instance_id` metadata
 7. System queries the Describe API for each target object and validates Field-Level Security (FLS) coverage — reports any schema-defined fields that are not visible to the authenticated user
 8. System presents available objects and custom field metadata
 9. Operator confirms object scope (default: all standard objects + all `__c` fields on Opportunity and Contact)
@@ -557,7 +535,7 @@ All timestamps persisted in the Bronze layer **MUST** be stored in UTC (ISO 8601
 - **Insufficient API permissions**: System reports which objects are inaccessible; operator adjusts user profile permissions
 - **FLS-hidden fields**: System reports which schema-defined fields are not visible due to FLS; operator adjusts field-level permissions or acknowledges gaps
 - **API not enabled**: System detects API access is disabled for the org/user; operator enables API access in Salesforce Setup
-- **Connected App not authorized**: OAuth flow returns `invalid_grant`; operator re-authorizes the Connected App
+- **App not authorized**: OAuth returns `invalid_app_access`; operator assigns profile/permission set to the External Client App
 - **Sandbox org detected**: System warns about sandbox data duplication risk; operator confirms or cancels
 
 ### UC-002 Incremental Sync Run
@@ -574,25 +552,24 @@ All timestamps persisted in the Bronze layer **MUST** be stored in UTC (ISO 8601
 **Main Flow**:
 
 1. Orchestrator triggers the connector with current state
-2. Connector queries each entity stream via SOQL with `LastModifiedDate > {cursor}` filter
-3. For Contacts and Opportunities: extract core fields and collect `__c` custom field values into ext tables
-4. For Tasks and Events: query each as a separate Bronze stream (`salesforce_tasks`, `salesforce_events`) with independent cursors
-5. Connector refreshes user directory (full refresh with `Profile.Name` relationship query)
+2. Connector queries each entity stream incrementally (only records modified since last cursor)
+3. All fields — standard and custom (`__c`) — are captured for each record
+4. Tasks and Events are extracted as separate streams with independent cursors
+5. User directory is refreshed via full refresh
 6. Updated cursor position captured after successful write
-7. Collection run log entry written with per-stream record counts and API call consumption
 
 **Postconditions**:
 
 - Bronze tables contain new and updated records
-- State updated with latest `LastModifiedDate` per stream
-- Collection run log records success/failure and per-stream counts
+- State updated with latest cursor per stream
+- Sync logs record success/failure and per-stream counts
 
 **Alternative Flows**:
 
 - **First run**: Connector extracts all records matching the object scope (full initial load)
-- **API limit exhausted (HTTP 403)**: Airbyte retries with backoff; if limit persists, sync fails. State checkpointing preserves cursor for committed pages; uncommitted pages are re-fetched on next run
-- **Pagination**: Large result sets use `queryMore` endpoint for continuation; no truncated results
-- **Profile.Name unavailable**: If user lacks permission to query Profile, connector logs a warning and emits `null` for the profile field
+- **API limit exhausted**: Connector retries with backoff; if limit persists, sync fails. Cursor state is preserved for resumption
+- **Pagination**: Large result sets are paginated automatically; no truncated results
+- **Permission gaps**: If the user lacks permission for certain fields, connector emits `null` and logs a warning
 
 ## 9. Acceptance Criteria
 
@@ -600,80 +577,63 @@ All timestamps persisted in the Bronze layer **MUST** be stored in UTC (ISO 8601
 - [ ] Opportunity stage history (`StageName`, `Amount`) extracted from `OpportunityFieldHistory`
 - [ ] Tasks and Events extracted as separate Bronze streams (`salesforce_tasks`, `salesforce_events`) with independent cursors; `who_type` and `what_type` polymorphic discriminators populated on both
 - [ ] User directory extracted with email, title, department, profile, and active status; SCD Type 2 preserves historical state
-- [ ] Custom field values (`__c`) extracted for Opportunities and Contacts as key-value pairs; compound fields serialized as JSON
+- [ ] Custom fields (`__c`) captured alongside standard fields on all entity streams
 - [ ] Incremental sync on second run extracts only newly modified records (no full reload)
 - [ ] `owner_id` joins to `salesforce_users.user_id` in all user-attributed records
 - [ ] URN-based surrogate primary keys (`urn:salesforce:{tenant_id}:{source_instance_id}:{record_id}`) on all entity streams
 - [ ] `source_instance_id`, `tenant_id`, and `data_source = 'insight_salesforce'` present in all records
 - [ ] All timestamps stored in UTC
-- [ ] Source-native PascalCase field names preserved in all Bronze tables (snake_case normalization at Silver)
-- [ ] FLS coverage validated at connection configuration; hidden fields logged as warnings
-- [ ] Sandbox vs. production org detected and labeled during connection setup
-- [ ] Collection run log records success, per-stream record counts, API call count, and API budget remaining (`Sforce-Limit-Info`)
-- [ ] Soft-deleted records detected via `salesforce_deleted_records` stream using `queryAll` with `IsDeleted = true`
-- [ ] API call limit exhaustion (HTTP 403) handled by Airbyte retry/backoff; state checkpointing preserves cursor for committed pages
+- [ ] Source-native field names preserved in all Bronze tables
+- [ ] Soft-deleted records captured with deletion flag, no separate stream
+- [ ] API call limit errors handled gracefully with retry/backoff
 
 ## 10. Dependencies
 
 | Dependency | Description | Criticality |
 |------------|-------------|-------------|
-| Salesforce REST API | SOQL queries for Contacts, Accounts, Opportunities, Tasks, Events, Users, and Describe endpoints for custom field metadata | `p1` |
-| Salesforce credentials | OAuth 2.0 Connected App tokens or username/password + security token | `p1` |
-| Airbyte Connector framework | Execution model for running the connector. Declarative YAML for standard streams; Python CDK or custom `RecordExtractor` components required for custom field unnest and (optionally) proactive API budget management | `p1` |
+| Salesforce REST API | Data extraction for all CRM entities and field metadata | `p1` |
+| Salesforce credentials | OAuth 2.0 Client Credentials Flow via External Client App | `p1` |
+| Airbyte Connector framework | Connector execution and orchestration | `p1` |
 | Identity Manager | Resolves `email` to `person_id` in Silver step 2 | `p2` |
-| Destination store (PostgreSQL / ClickHouse) | Target for Bronze tables | `p1` |
+| ClickHouse | Bronze layer destination store | `p1` |
 
 ## 11. Assumptions
 
 - The Salesforce org has API access enabled and the authenticated user has read permissions across Contacts, Accounts, Opportunities, Tasks, Events, and Users
-- OAuth 2.0 Connected App is the preferred authentication method; username/password + security token is supported as a fallback for orgs without Connected App configuration
-- `LastModifiedDate` is available and reliable as an incremental sync cursor on all standard objects
-- Salesforce returns timestamps in ISO 8601 format, typically in UTC; any timezone offsets are normalized at Bronze level
-- Tasks and Events are separate Salesforce objects extracted as separate Bronze streams (`salesforce_tasks`, `salesforce_events`) with independent `LastModifiedDate` cursors; merged into `class_crm_activities` at Silver via dbt
-- Bronze tables preserve source-native PascalCase field names (e.g., `OwnerId`, `AccountId`, `LastModifiedDate`); snake_case normalization is a Silver-layer responsibility, consistent with the platform's "Bronze = source-native schema" principle
-- Custom fields (`__c` suffix) on Opportunity and Contact objects are discoverable via the Describe API; field metadata (API name, label, type) is stable across sync runs
-- The `Profile.Name` field requires a relationship query (`SELECT Profile.Name FROM User`) and may not be available if the authenticated user lacks the "View Setup and Configuration" permission
-- Salesforce API call limits are shared across all integrations in the org; the connector must monitor and respect the daily budget
-- Soft-deleted records (in the Recycle Bin) are excluded from standard SOQL queries but may be retrieved via `queryAll`; permanently purged records are invisible to the connector
-- `salesforce_contacts.email` represents external customer email and is not resolved to `person_id`; only `salesforce_users.email` (internal salespeople) participates in identity resolution
-- Account hierarchy data (`parent_account_id`) is stored as a flat reference; recursive parent traversal is a Silver/Gold concern
-- The Airbyte Declarative Connector framework (YAML) does not support dynamic field unnest (expanding a variable-length `__c` dictionary into separate rows) or proactive API quota inspection (`Sforce-Limit-Info` header reading). Custom field extraction and (optionally) budget-aware shutdown require Python components — either a custom `RecordExtractor` within the manifest or a full Python CDK connector
-- Salesforce retains soft-deleted records in the Recycle Bin for 15 days by default; the `queryAll` endpoint with `IsDeleted = true` captures these deletions. Permanently purged records (beyond Recycle Bin retention) are invisible to all API endpoints
-- The `salesforce_deleted_records` stream covers Contacts, Accounts, Opportunities, Tasks, and Events; it does not detect deleted Users (Salesforce users are deactivated, not deleted)
-- `WhoId` and `WhatId` on Task and Event objects are polymorphic references; the object type can be derived from the Salesforce ID prefix (first 3 characters = `KeyPrefix` from Describe API) or via SOQL relationship queries
-- `OpportunityFieldHistory` is available when Field History Tracking is enabled for the Opportunity object in Salesforce Setup; if not enabled, the connector emits an empty stream and logs a warning
-- Salesforce API version is pinned per connection (default: latest stable at configuration time); Salesforce retires API versions ~3 years after release. The connector must be updated before the pinned version reaches end-of-life
-- SOQL queries have a 100,000 character limit; custom field SELECT clauses for objects with hundreds of `__c` fields may need to be split into multiple queries
-- Compound custom fields (Address, Geolocation types) return structured JSON objects instead of scalar values; these are serialized as JSON strings with `value_type = 'json'`
-- Multi-currency orgs include `CurrencyIsoCode` on Opportunity and other amount-bearing objects; single-currency orgs return `null` or a uniform value
-- Sandbox orgs have different login URLs (`test.salesforce.com`), lower API limits (typically 50% of production), and may contain stale copies of production data
-- Field-Level Security (FLS) can make individual fields invisible to the API user without returning an error — the SOQL response simply omits the restricted field. The connector validates FLS coverage via the Describe API at configuration time
-- `RecordTypeId` is available on Contacts, Accounts, and Opportunities; it determines picklist value sets and enables subcategory segmentation (e.g., "New Business" vs "Renewal" Opportunities)
-- Salesforce returns `Sforce-Limit-Info: api-usage=N/M` in response headers on every successful API call; this is the only source of real-time API budget data
+- Authentication uses OAuth 2.0 Client Credentials Flow via External Client App
+- Tasks and Events are separate Salesforce objects, extracted as separate Bronze streams and merged at Silver
+- Bronze tables preserve source-native field names; normalization is a Silver-layer responsibility
+- Custom fields (`__c` suffix) are discoverable via the Describe API and captured alongside standard fields
+- Salesforce API call limits are shared across all integrations in the org
+- Soft-deleted records are in the Recycle Bin for 15 days by default; permanently purged records are invisible to all API endpoints
+- Contact emails represent external customers and are not resolved to `person_id`; only user emails (internal salespeople) participate in identity resolution
+- Account hierarchy (`ParentId`) is stored as a flat reference; tree-building is a Silver/Gold concern
+- `WhoId` and `WhatId` on Task and Event objects are polymorphic references that must be resolved to their object types
+- `OpportunityFieldHistory` requires Field History Tracking to be enabled in Salesforce Setup; if not enabled, the stream is empty
+- `RecordTypeId` and `CurrencyIsoCode` are available on some orgs but not all (Record Types and Multi-Currency must be enabled)
+- Sandbox orgs have different login URLs, lower API limits, and may contain stale copies of production data
+- Field-Level Security (FLS) can silently hide fields from the API response without returning an error
 
 ## 12. Risks
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| API call limit exhaustion | Salesforce API limits are shared across all org integrations; exceeding the daily limit blocks other business-critical tools. Airbyte Declarative framework cannot proactively inspect quota headers — it retries on 403 and eventually fails the sync | Schedule runs during off-peak hours; monitor API call counts in collection run logs; alert operators on consumption trends. For proactive budget control, migrate to Python CDK (reads `Sforce-Limit-Info` headers). State checkpointing preserves cursor for committed pages — uncommitted pages are re-fetched on retry |
-| Custom field schema drift | Customers add, rename, or remove `__c` fields between runs; ext tables may contain stale field references | Re-discover custom field metadata via Describe API at the start of each run; the key-value model is inherently tolerant of schema changes |
-| Large Salesforce orgs (millions of records) | Initial full load may consume significant API calls and take extended time | Paginate with `queryMore`; support object-scoped extraction; implement resumable state for interrupted initial loads |
-| Tasks vs Events Silver merge complexity | Two separate Bronze streams must be unified into `class_crm_activities` at Silver with shared semantics | Silver dbt model maps Task-specific fields (status, call_type) and Event-specific fields (duration, start_datetime) into a unified schema with `activity_type` discriminator. This is standard cross-source normalization, same as HubSpot engagement types |
-| OAuth token expiration | Connected App refresh tokens can be revoked by admin or expire based on org policy | Implement token refresh with `refresh_token`; alert operator on authentication failures; support re-authorization flow |
-| Profile.Name permission dependency | Relationship query for user profile requires elevated permissions; may fail silently | Emit `null` for profile field when unavailable; log warning; document permission requirements |
-| Multi-org ID collisions | Multiple Salesforce orgs (production + sandbox) may have overlapping 18-char IDs for different records | Require `source_instance_id` in all joins; composite scope ensures unique identification |
-| Soft-deleted records inflating pipeline | Standard SOQL excludes soft-deleted records; without deletion detection, deleted Opportunities remain "active" in Bronze, artificially inflating pipeline value | Dedicated `salesforce_deleted_records` stream via `queryAll` with `IsDeleted = true` captures soft-deletes day-to-day — see FR `cpt-insightspec-fr-sf-deleted-records`. Permanently purged records (after 15-day Recycle Bin retention) require periodic full reconciliation |
-| Custom field unnest requires Python components | Declarative YAML cannot dynamically expand a variable-length `__c` field dictionary into separate key-value rows | DESIGN must specify the implementation path: custom `RecordExtractor`, hybrid manifest with Python components, or full Python CDK migration — see architectural constraints on FR `cpt-insightspec-fr-sf-opportunity-custom-fields` |
-| `owner_id` references inactive users | Deactivated users still own historical records; the user directory must include inactive users | Extract all users regardless of `is_active` status; filter active/inactive at analytics layer |
-| Field-Level Security (FLS) silently hiding fields | FLS-restricted fields are absent from SOQL responses with no error; critical fields like `Amount` or `Email` may be silently missing | Validate FLS coverage via Describe API at connection configuration (UC-001); log hidden fields in collection run log; emit `null` for missing fields — see FR `cpt-insightspec-fr-sf-fls-validation` |
-| Sandbox data pollution | Sandbox orgs connected alongside production produce duplicate or stale records; API limits are lower (often 50% of production) | Detect sandbox vs. production at connection time via OAuth response / instance URL; label connections; warn operators about duplication risk |
-| Bulk API not used for large orgs | REST API with `queryMore` consumes one API call per 2000-record page; initial loads of millions of records consume thousands of API calls | Documented as out of scope for v1.0. DESIGN should evaluate Bulk API 2.0 as an optimization for initial loads and large incremental deltas exceeding a configurable threshold |
-| Email reuse on deactivated accounts | Departed employee deactivated → email reassigned to new hire → two `salesforce_users` records share the same email → Identity Manager merges them into one `person_id` | SCD Type 2 with `valid_from`/`valid_to` enables temporal disambiguation — see FR `cpt-insightspec-fr-sf-user-scd`. Identity Manager must use temporal bounds when resolving email-based identity |
-| SOQL query character limit (100K chars) | Orgs with hundreds of custom fields on a single object may produce SELECT clauses approaching the 100K character limit | Split custom field SOQL queries into batches when the SELECT clause exceeds a safe threshold (e.g., 80K chars) — deferred to DESIGN |
-| Polymorphic references (`WhoId`/`WhatId`) | Activity records reference Contacts, Leads, Accounts, Opportunities via polymorphic fields; without type discriminators, downstream joins require trial-and-error across all target tables | `who_type` and `what_type` discriminator fields derived from Salesforce ID prefix or relationship queries — see FR `cpt-insightspec-fr-sf-polymorphic-resolution` |
-| Multi-currency amount aggregation | Orgs with Multi-Currency enabled store amounts in different currencies per Opportunity; summing amounts without `CurrencyIsoCode` produces incorrect pipeline totals | `currency_iso_code` collected on Opportunity records; Silver/Gold pipeline must normalize to a common currency before aggregation |
-| API version deprecation | Salesforce retires API versions ~3 years after release; the connector pins a version at configuration time | Monitor Salesforce release calendar; update connector before pinned version reaches end-of-life; Describe API returns `deprecatedAndHidden` flags for sunset fields |
-| OpportunityFieldHistory not enabled | Field History Tracking must be explicitly enabled per field in Salesforce Setup; if not enabled for `StageName`/`Amount`, the history stream is empty | Validate at configuration time (UC-001) via Describe API; warn operator if history tracking is disabled; log empty stream in collection run |
+| API call limit exhaustion | Salesforce API limits are shared across all org integrations; exceeding the daily limit blocks other business-critical tools | Schedule runs during off-peak hours; retry with backoff on limit errors; preserve cursor state for resumption |
+| Custom field schema drift | Customers add, rename, or remove `__c` fields between runs | Custom fields are captured generically — new fields appear automatically, removed fields stop appearing. No schema migration needed |
+| Large Salesforce orgs | Initial full load may consume significant API calls and take extended time | Paginate results; support resumable state for interrupted initial loads |
+| Tasks vs Events merge at Silver | Two separate Bronze streams must be unified at Silver with shared semantics | Standard cross-source normalization pattern, same as HubSpot engagement types |
+| OAuth token expiration | Client credentials tokens expire; admin can revoke Connected App access | Re-authenticate on token expiry; alert operator on authentication failures |
+| Multi-org ID collisions | Multiple Salesforce orgs may have overlapping 18-char IDs | URN-based primary keys and `source_instance_id` ensure unique identification |
+| Soft-deleted records inflating pipeline | Without deletion detection, deleted Opportunities remain "active" in analytics | Soft-deleted records captured with `IsDeleted` flag — see FR `cpt-insightspec-fr-sf-deleted-records`. Permanently purged records require periodic full reconciliation |
+| Custom field capture | Custom `__c` fields must be accessible without per-deployment schema changes | Full API response captured per record — see FR `cpt-insightspec-fr-sf-custom-fields` |
+| Inactive user ownership | Deactivated users still own historical records | Extract all users regardless of active status; filter at analytics layer |
+| Field-Level Security (FLS) | FLS-restricted fields are silently absent from API responses | Validate FLS coverage at configuration; log hidden fields; emit `null` for missing fields — see FR `cpt-insightspec-fr-sf-fls-validation` |
+| Sandbox data pollution | Sandbox orgs connected alongside production produce duplicate or stale records | Detect sandbox vs. production at connection time; label connections; warn operators |
+| Email reuse on deactivated accounts | Email reassigned to new hire creates identity resolution collisions | SCD Type 2 at Silver maintains temporal bounds for disambiguation — see FR `cpt-insightspec-fr-sf-user-scd` |
+| Polymorphic references | Activity `WhoId`/`WhatId` reference multiple object types; without type discriminators, joins are ambiguous | Resolved at Silver via Salesforce ID key prefixes (`003`=Contact, `006`=Opportunity, `001`=Account) — see FR `cpt-insightspec-fr-sf-polymorphic-resolution` |
+| Multi-currency amounts | Orgs with Multi-Currency store amounts in different currencies per Opportunity | `CurrencyIsoCode` collected where available; Silver normalizes to common currency |
+| API version deprecation | Salesforce retires API versions ~3 years after release | Monitor release calendar; update connector before version reaches end-of-life |
+| OpportunityFieldHistory not enabled | Field History Tracking must be explicitly enabled in Salesforce Setup | Warn operator if history tracking is disabled; empty stream is expected |
 
 ## 13. Resolved Questions
 
@@ -681,8 +641,8 @@ All open questions from the connector specification (`salesforce.md`) have been 
 
 | ID | Summary | Resolution | Incorporated In |
 |----|---------|------------|-----------------|
-| OQ-SF-1 | Tasks vs Events — unified or separate Bronze tables | Separate Bronze streams: `salesforce_tasks` and `salesforce_events`. Each stream has its own schema (no nullable cross-type fields), its own `LastModifiedDate` cursor, and works natively in Airbyte Declarative YAML (one stream = one cursor). Tasks and Events are merged into `class_crm_activities` at the Silver layer via dbt. This follows the source-native 1:1 mapping principle (one Salesforce object = one Bronze table) and aligns with HubSpot's pattern (separate calls, meetings, tasks, emails streams). | FR `cpt-insightspec-fr-sf-task-extraction`, FR `cpt-insightspec-fr-sf-event-extraction` |
-| OQ-SF-2 | Custom `__c` fields — collection scope | Whitelisted custom fields on Opportunity and Contact objects collected as key-value pairs in `salesforce_opportunity_ext` and `salesforce_contact_ext` tables. Field metadata discovered via Describe API. Only non-null values stored. Key-value model avoids schema changes per customer. | FR `cpt-insightspec-fr-sf-opportunity-custom-fields`, FR `cpt-insightspec-fr-sf-contact-custom-fields` |
+| OQ-SF-1 | Tasks vs Events — unified or separate Bronze tables | Separate Bronze streams. Each stream has its own schema and cursor. Merged at Silver. Follows the source-native 1:1 mapping principle (one Salesforce object = one Bronze table). | FR `cpt-insightspec-fr-sf-task-extraction`, FR `cpt-insightspec-fr-sf-event-extraction` |
+| OQ-SF-2 | Custom `__c` fields — collection scope | All custom fields captured automatically alongside standard fields on every entity stream. No separate `_ext` tables needed. Silver extracts and promotes selected custom fields. | FR `cpt-insightspec-fr-sf-custom-fields` |
 
 ## 14. Non-Applicable Requirements
 
@@ -696,5 +656,5 @@ The following checklist domains have been evaluated and determined not applicabl
 | **Reliability (REL)** | Idempotent extraction via deduplication keys (Salesforce 18-char IDs). No distributed state, no transactions. Recovery is handled by re-running the sync (Airbyte framework manages state). |
 | **Usability (UX)** | No user-facing interface. Configuration is a credential form and object scope selection in the Airbyte UI. No accessibility, internationalization, or inclusivity requirements apply. |
 | **Compliance (COMPL)** | Salesforce user emails and contact emails are personal data under GDPR. Retention, deletion, and data subject rights are delegated to the Airbyte platform and destination operator. The connector must not store credentials outside the platform's secret management. |
-| **Maintainability (MAINT)** | Initial implementation uses a hybrid approach: Declarative YAML for standard entity streams, with custom Python components (Record Extractor or Python CDK) for custom field unnest. Schema changes to standard streams are handled by updating field definitions in the manifest. Custom field collection uses the key-value pattern which is inherently extensible without manifest changes. |
+| **Maintainability (MAINT)** | Declarative connector manifest. Schema changes are handled by updating field definitions in the manifest. Custom field capture is generic and requires no per-customer changes. |
 | **Testing (TEST)** | Connector behavior must satisfy PRD acceptance criteria (Section 9). Validation includes: Airbyte framework connection check, schema validation, and connector-specific acceptance tests. No custom unit tests required — the declarative manifest is validated by the framework. |

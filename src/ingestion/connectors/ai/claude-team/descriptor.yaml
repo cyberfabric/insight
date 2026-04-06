@@ -35,6 +35,8 @@ streams:
     primary_key: [id]
     cursor_field: null                # Full refresh
 
+  # Framework-injected monitoring stream (not defined in connector.yaml;
+  # owned by Airbyte platform per DESIGN.md §4 Collection Runs Monitoring)
   - name: claude_team_collection_runs
     bronze_table: claude_team_collection_runs
     primary_key: [run_id]

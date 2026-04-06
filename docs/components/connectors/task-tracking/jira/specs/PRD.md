@@ -367,11 +367,11 @@ The Identity Manager (Silver step 2) resolves identity as follows:
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-jira-instance-context`
 
-Every record emitted by the connector **MUST** include `source_instance_id` (identifying the specific Jira instance) and `tenant_id` (identifying the Insight tenant). These fields are required for multi-instance disambiguation and tenant isolation.
+Every record emitted by the connector **MUST** include `insight_source_id` (identifying the specific Jira instance) and `tenant_id` (identifying the Insight tenant). These fields are required for multi-instance disambiguation and tenant isolation.
 
-The connector **MUST** generate a surrogate URN-based primary key for issue records in the format `urn:jira:{tenant_id}:{source_instance_id}:{issue_key}`. The original `source_instance_id`, `tenant_id`, and `issue_key` fields **MUST** be preserved as separate columns for filtering and joins. The URN key eliminates the need for composite key joins in downstream analytics, reducing the risk of join errors in dashboards.
+The connector **MUST** generate a surrogate URN-based primary key for issue records in the format `urn:jira:{tenant_id}:{insight_source_id}:{issue_key}`. The original `insight_source_id`, `tenant_id`, and `issue_key` fields **MUST** be preserved as separate columns for filtering and joins. The URN key eliminates the need for composite key joins in downstream analytics, reducing the risk of join errors in dashboards.
 
-**Rationale**: Multiple Jira instances may feed into the same Bronze store. Without `source_instance_id`, issue keys like `PROJ-123` collide across instances. Forcing analysts to write composite-key JOINs on every query is error-prone. A single URN-based surrogate key provides unambiguous identity while keeping the component fields available for filtering.
+**Rationale**: Multiple Jira instances may feed into the same Bronze store. Without `insight_source_id`, issue keys like `PROJ-123` collide across instances. Forcing analysts to write composite-key JOINs on every query is error-prone. A single URN-based surrogate key provides unambiguous identity while keeping the component fields available for filtering.
 
 **Actors**: `cpt-insightspec-actor-jira-operator`
 
@@ -425,7 +425,7 @@ All timestamps persisted in the Bronze layer **MUST** be stored in UTC (ISO 8601
 
 **Stability**: stable
 
-**Description**: Ten Bronze streams with defined schemas — `jira_issue`, `jira_issue_history`, `jira_issue_ext`, `jira_worklogs`, `jira_comments`, `jira_projects`, `jira_issue_links`, `jira_sprints`, `jira_user`, `jira_collection_runs`. All user-attributed streams reference `user_id` as the user key (`accountId` on Cloud, `key` on Server/DC). Issues use `updated` as the cursor field. The URN-based primary key for issue records follows the format `urn:jira:{tenant_id}:{source_instance_id}:{issue_key}` (see FR `cpt-insightspec-fr-jira-instance-context`).
+**Description**: Ten Bronze streams with defined schemas — `jira_issue`, `jira_issue_history`, `jira_issue_ext`, `jira_worklogs`, `jira_comments`, `jira_projects`, `jira_issue_links`, `jira_sprints`, `jira_user`, `jira_collection_runs`. All user-attributed streams reference `user_id` as the user key (`accountId` on Cloud, `key` on Server/DC). Issues use `updated` as the cursor field. The URN-based primary key for issue records follows the format `urn:jira:{tenant_id}:{insight_source_id}:{issue_key}` (see FR `cpt-insightspec-fr-jira-instance-context`).
 
 **Field-level schemas**: Defined in [`jira.md`](../jira.md) (Bronze table definitions with column types, descriptions, and API field mappings).
 
@@ -537,7 +537,7 @@ All timestamps persisted in the Bronze layer **MUST** be stored in UTC (ISO 8601
 - [ ] Custom field values extracted as key-value pairs
 - [ ] Incremental sync on second run extracts only newly updated issues (no full reload)
 - [ ] `user_id` is present and non-null in all user-attributed records
-- [ ] `source_instance_id` is present in all records for multi-instance support
+- [ ] `insight_source_id` is present in all records for multi-instance support
 - [ ] Collection run log records success, record counts, and timing for each run
 
 ## 10. Dependencies
@@ -578,7 +578,7 @@ All timestamps persisted in the Bronze layer **MUST** be stored in UTC (ISO 8601
 | Timezone inconsistencies in source timestamps | Jira returns timestamps with server/user locale offsets; distributed teams across timezones will produce incorrect cycle time if not normalized | Normalize all timestamps to UTC at Bronze level — see NFR `cpt-insightspec-nfr-jira-utc-timestamps` |
 | Jira Server/Data Center API differences | Some endpoints or fields differ from Cloud v3 | Maintain API version detection; document known differences; test against both environments |
 | Sprint API requires board enumeration | Must list all boards to discover sprints; board count can be large | Cache board list; refresh boards less frequently than issues |
-| Multi-instance `id_readable` collisions | Issue keys like `PROJ-123` can collide across Jira instances | Require `source_instance_id` in all joins; composite primary key includes instance scope |
+| Multi-instance `id_readable` collisions | Issue keys like `PROJ-123` can collide across Jira instances | Require `insight_source_id` in all joins; composite primary key includes instance scope |
 | Comment body content may contain sensitive information | Extracted comments may include customer names, internal discussions, or code snippets | Data access controls and retention policies are platform responsibilities; document that comment body is extracted for collaboration analytics, not content archiving |
 
 ## 13. Resolved Questions
@@ -588,7 +588,7 @@ All open questions from the initial draft have been resolved and incorporated in
 | ID | Summary | Resolution | Incorporated In |
 |----|---------|------------|-----------------|
 | OQ-JIRA-1 | `account_id` vs email as primary identity key | Environment-specific `user_id` is the identity anchor: `accountId` on Cloud, `key` on Server/DC. Email resolved when available; unavailable users stored as isolated nodes with deferred retroactive merge. | FR `cpt-insightspec-fr-jira-identity-key` |
-| OQ-JIRA-2 | Multi-instance collision prevention | URN-based surrogate key `urn:jira:{tenant_id}:{source_instance_id}:{issue_key}` as PK. Original fields preserved as separate columns for filtering. | FR `cpt-insightspec-fr-jira-instance-context` |
+| OQ-JIRA-2 | Multi-instance collision prevention | URN-based surrogate key `urn:jira:{tenant_id}:{insight_source_id}:{issue_key}` as PK. Original fields preserved as separate columns for filtering. | FR `cpt-insightspec-fr-jira-instance-context` |
 | OQ-JIRA-3 | Story points field detection | Hybrid strategy: Next-gen → `customfield_10016`; Classic → auto-detect via field metadata API; ambiguous → operator selects during configuration. | FR `cpt-insightspec-fr-jira-story-points-detection` |
 | OQ-JIRA-4 | Sprint-issue membership history | Full historical: all sprint assignment changes captured via changelog (`field_name = "Sprint"`). Current-only assignment rejected — carry-over analysis requires the complete transition history. | FR `cpt-insightspec-fr-jira-sprint-history` |
 

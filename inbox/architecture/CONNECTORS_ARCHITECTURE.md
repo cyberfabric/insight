@@ -508,7 +508,7 @@ All data must pass through the Silver layer before reaching Gold. This is a hard
 - Workspace isolation (`workspace_id`) is guaranteed only at Silver and above
 - Gold queries exclusively read from Silver `class_*` tables
 
-For data that cannot be attributed to an individual person (e.g. org-level aggregates, anonymous usage counters), a Silver stream still exists — it is keyed by `(workspace_id, date)` or `(workspace_id, source_instance_id, date)` without `person_id`. The `class_ai_org_usage` table is the canonical example of this pattern: org-level GitHub Copilot usage aggregates are promoted to Silver so Gold can apply workspace isolation and query them through the standard Silver interface.
+For data that cannot be attributed to an individual person (e.g. org-level aggregates, anonymous usage counters), a Silver stream still exists — it is keyed by `(workspace_id, date)` or `(workspace_id, insight_source_id, date)` without `person_id`. The `class_ai_org_usage` table is the canonical example of this pattern: org-level GitHub Copilot usage aggregates are promoted to Silver so Gold can apply workspace isolation and query them through the standard Silver interface.
 
 ### 3. Adding a New Connector
 
@@ -629,7 +629,7 @@ Every connector that ingests objects with custom fields MUST produce a companion
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier |
+| `insight_source_id` | String | Connector instance identifier |
 | `entity_id` | String | Parent entity key (e.g. `id_readable`, `employee_id`, `ticket_id`) |
 | `field_id` | String | Custom field machine ID or API key |
 | `field_name` | String | Custom field display name (e.g. `Team`, `Squad`, `Customer`, `Division`) |

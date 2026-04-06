@@ -8,12 +8,19 @@ sources:
       - name: teams_activity
 
 models:
-  - name: to_comms_events
-    description: "M365 communication events → class_comms_events"
+  - name: m365__comms_events
+    description: "M365 communication events → staging, feeds class_comms_events"
     columns:
       - name: tenant_id
         tests:
           - not_null
+      - name: source_id
+        tests:
+          - not_null
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
       - name: user_email
         description: "User principal name from M365"
       - name: activity_date

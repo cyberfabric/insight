@@ -1,19 +1,17 @@
 -- Bronze → Silver step 1: Claude API messages usage → class_ai_api_usage
--- Joins with cost_report for cost enrichment and keys/workspaces for dimension names.
+-- Joins with keys and workspaces for dimension name enrichment.
 {{ config(materialized='incremental', unique_key='unique_id') }}
 
 WITH usage AS (
     SELECT
         tenant_id,
-        source_instance_id,
+        insight_source_id,
         date                                        AS report_date,
         model,
         api_key_id,
         workspace_id,
         service_tier,
         context_window,
-        inference_geo,
-        speed,
         uncached_input_tokens,
         cache_read_tokens,
         cache_creation_5m_tokens,
@@ -40,22 +38,22 @@ WITH usage AS (
 ),
 
 keys AS (
-    SELECT DISTINCT id, name AS key_name
+    SELECT DISTINCT tenant_id, id, name AS key_name
     FROM {{ source('bronze', 'claude_api_keys') }}
 ),
 
 workspaces AS (
-    SELECT DISTINCT id, display_name AS workspace_name
+    SELECT DISTINCT tenant_id, id, display_name AS workspace_name
     FROM {{ source('bronze', 'claude_api_workspaces') }}
 )
 
 SELECT
     u.tenant_id,
-    u.source_instance_id,
+    u.insight_source_id,
     -- composite unique id for incremental
     concat(u.report_date, '|', u.model, '|', u.api_key_id, '|',
-           u.workspace_id, '|', u.service_tier, '|', u.context_window,
-           '|', u.inference_geo, '|', u.speed)     AS unique_id,
+           u.workspace_id, '|', u.service_tier, '|',
+           u.context_window)                        AS unique_id,
     u.report_date,
     u.model,
     u.api_key_id,
@@ -64,12 +62,12 @@ SELECT
     w.workspace_name,
     u.service_tier,
     u.context_window,
-    u.inference_geo,
-    u.speed,
     u.uncached_input_tokens,
     u.cache_read_tokens,
     u.cache_creation_5m_tokens,
     u.cache_creation_1h_tokens,
+    u.cache_creation_5m_tokens
+        + u.cache_creation_1h_tokens                AS cache_creation_tokens,
     u.output_tokens,
     u.total_input_tokens,
     u.total_tokens,
@@ -80,5 +78,5 @@ SELECT
     u.data_source,
     u.collected_at
 FROM usage u
-LEFT JOIN keys k ON u.api_key_id = k.id
-LEFT JOIN workspaces w ON u.workspace_id = w.id
+LEFT JOIN keys k ON u.tenant_id = k.tenant_id AND u.api_key_id = k.id
+LEFT JOIN workspaces w ON u.tenant_id = w.tenant_id AND u.workspace_id = w.id

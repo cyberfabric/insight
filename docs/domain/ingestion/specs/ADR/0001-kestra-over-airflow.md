@@ -1,6 +1,7 @@
 ---
-status: proposed
+status: superseded
 date: 2026-03-23
+superseded_by: cpt-insightspec-adr-argo-over-kestra
 ---
 
 # ADR-0001: Use Kestra over Airflow for Pipeline Orchestration

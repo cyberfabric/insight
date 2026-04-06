@@ -1,0 +1,26 @@
+FROM python:3.12-slim
+
+# System tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl gettext-base jq gnupg lsb-release && \
+    rm -rf /var/lib/apt/lists/*
+
+# Node.js (for JWT token generation)
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
+# yq (YAML processor)
+RUN curl -fsSL "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)" \
+    -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq
+
+# kubectl
+RUN curl -fsSL "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/$(dpkg --print-architecture)/kubectl" \
+    -o /usr/local/bin/kubectl && chmod +x /usr/local/bin/kubectl
+
+# dbt-clickhouse
+RUN pip install --no-cache-dir dbt-clickhouse
+
+# Copy entire ingestion project
+COPY . /ingestion
+WORKDIR /ingestion

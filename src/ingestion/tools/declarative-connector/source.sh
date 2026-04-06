@@ -8,14 +8,14 @@ set -euo pipefail
 # Airbyte platform. Useful for rapid manifest development and validation.
 #
 # Usage:
-#   ./source.sh check   <class>/<connector>
-#   ./source.sh discover <class>/<connector>
-#   ./source.sh read     <class>/<connector> <connection>
+#   ./source.sh check   <class>/<connector> <tenant>
+#   ./source.sh discover <class>/<connector> <tenant>
+#   ./source.sh read     <class>/<connector> <tenant>
 #
 # Example:
-#   ./source.sh check   collaboration/m365
-#   ./source.sh discover collaboration/m365
-#   ./source.sh read     collaboration/m365 dev
+#   ./source.sh check   collaboration/m365 example-tenant
+#   ./source.sh discover collaboration/m365 example-tenant
+#   ./source.sh read     collaboration/m365 example-tenant
 # ---------------------------------------------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -48,16 +48,13 @@ Commands:
 
 Arguments:
   <class>/<connector>  Path relative to connectors/ (e.g. collaboration/m365)
-  <connection>         Connection profile name (subdirectory of connections/)
-
-Environment:
-  Connector credentials must be in connectors/<class>/<connector>/.env.local
-  as AIRBYTE_CONFIG='{"tenant_id":"...","client_id":"...",...}'
+  <tenant>             Tenant name (reads credentials from connections/<tenant>.yaml)
 
 Examples:
-  $0 check   collaboration/m365
-  $0 discover collaboration/m365
-  $0 read     collaboration/m365 dev
+  $0 validate collaboration/m365
+  $0 check   collaboration/m365 example-tenant
+  $0 discover collaboration/m365 example-tenant
+  $0 read     collaboration/m365 example-tenant
 EOF
 }
 
@@ -72,7 +69,10 @@ fi
 
 connector_dir="${CONNECTORS_DIR}/${connector}"
 manifest_path="${connector_dir}/connector.yaml"
-env_file="${connector_dir}/.env.local"
+CONNECTIONS_DIR="${SCRIPT_DIR}/../../connections"
+
+# Extract connector short name (last path component)
+connector_name="$(basename "${connector}")"
 
 # --- Validate inputs ---
 if [[ ! -d "${connector_dir}" ]]; then
@@ -88,24 +88,46 @@ if [[ ! -f "${manifest_path}" ]]; then
   exit 1
 fi
 
-# --- Load credentials (skip for validate) ---
+# --- Load credentials from tenant yaml (skip for validate) ---
 if [[ "${command}" != "validate" ]]; then
-  if [[ ! -f "${env_file}" ]]; then
-    echo "ERROR: Credentials file not found: ${env_file}" >&2
-    if [[ -f "${connector_dir}/example.env.local" ]]; then
-      echo "  Copy the template: cp ${connector_dir}/example.env.local ${env_file}" >&2
-    else
-      echo "  Create ${env_file} with: AIRBYTE_CONFIG='{\"tenant_id\":\"...\"}'" >&2
+  tenant="${3:-}"
+  if [[ -z "${tenant}" ]]; then
+    # Auto-detect: use first tenant yaml that has this connector
+    for f in "${CONNECTIONS_DIR}"/*.yaml; do
+      [[ -f "$f" ]] || continue
+      if yq -e ".connectors.${connector_name}" "$f" >/dev/null 2>&1; then
+        tenant="$(basename "$f" .yaml)"
+        echo "INFO: Auto-detected tenant: ${tenant}" >&2
+        break
+      fi
+    done
+    if [[ -z "${tenant}" ]]; then
+      echo "ERROR: No tenant specified and none found with ${connector_name} credentials" >&2
+      echo "  Usage: $0 ${command} ${connector} <tenant>" >&2
+      exit 1
     fi
+  fi
+
+  tenant_file="${CONNECTIONS_DIR}/${tenant}.yaml"
+  if [[ ! -f "${tenant_file}" ]]; then
+    echo "ERROR: Tenant config not found: ${tenant_file}" >&2
     exit 1
   fi
-  AIRBYTE_CONFIG=$(grep '^AIRBYTE_CONFIG=' "${env_file}" | head -1 | sed "s/^AIRBYTE_CONFIG=//; s/^'//; s/'$//")
-  if [[ -z "${AIRBYTE_CONFIG:-}" ]]; then
-    echo "ERROR: AIRBYTE_CONFIG is not set in ${env_file}" >&2
-    exit 1
-  fi
-  if ! echo "${AIRBYTE_CONFIG}" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
-    echo "ERROR: AIRBYTE_CONFIG is not valid JSON" >&2
+
+  # Build AIRBYTE_CONFIG JSON from tenant yaml
+  tenant_id=$(yq -r '.tenant_id' "${tenant_file}")
+  AIRBYTE_CONFIG=$(yq -r ".connectors.${connector_name}" "${tenant_file}" | python3 -c "
+import sys, json, yaml
+data = yaml.safe_load(sys.stdin)
+if isinstance(data, list):
+    data = data[0]  # Use first instance for local debugging
+data['insight_tenant_id'] = '${tenant_id}'
+if 'insight_source_id' not in data:
+    data['insight_source_id'] = '${connector_name}-default'
+print(json.dumps(data))
+")
+  if [[ -z "${AIRBYTE_CONFIG:-}" || "${AIRBYTE_CONFIG}" == "null" ]]; then
+    echo "ERROR: No credentials for '${connector_name}' in ${tenant_file}" >&2
     exit 1
   fi
 fi
@@ -153,6 +175,7 @@ case "${command}" in
 
   check|discover)
     shift 2
+    [[ -n "${tenant:-}" ]] && shift  # remove tenant arg
     docker run --rm \
       -e "AIRBYTE_CONFIG=${AIRBYTE_CONFIG}" \
       -e "AIRBYTE_COMMAND=${COMMAND_NAME}" \
@@ -165,19 +188,12 @@ case "${command}" in
     ;;
 
   read)
-    connection="${3:-}"
-    if [[ -z "${connection}" ]]; then
-      echo "ERROR: read command requires a <connection> argument" >&2
-      usage
-      exit 1
-    fi
-
-    connection_dir="${connector_dir}/connections/${connection}"
-    configured_catalog="${connection_dir}/configured_catalog.json"
-    state_path="${connection_dir}/state.json"
+    configured_catalog="${connector_dir}/configured_catalog.json"
+    state_path="${connector_dir}/state.json"
 
     if [[ ! -f "${configured_catalog}" ]]; then
       echo "ERROR: Missing configured catalog: ${configured_catalog}" >&2
+      echo "  Generate with: ./scripts/generate-catalog.sh ${connector_name}" >&2
       exit 1
     fi
 
@@ -187,7 +203,7 @@ case "${command}" in
       echo "INFO: Created empty state file: ${state_path}" >&2
     fi
 
-    shift 3
+    shift 3 2>/dev/null || shift 2
     docker run --rm \
       -e "AIRBYTE_CONFIG=${AIRBYTE_CONFIG}" \
       -e "AIRBYTE_COMMAND=${COMMAND_NAME}" \
@@ -195,9 +211,9 @@ case "${command}" in
       -v "${connector_dir}:/input:ro" \
       "${IMAGE}" read \
         --config /secrets/config.json \
-        --catalog "/input/connections/${connection}/configured_catalog.json" \
+        --catalog "/input/configured_catalog.json" \
         --manifest-path /input/connector.yaml \
-        --state "/input/connections/${connection}/state.json" \
+        --state "/input/state.json" \
         "$@"
     ;;
 

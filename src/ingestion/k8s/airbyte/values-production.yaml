@@ -1,0 +1,38 @@
+# Airbyte Helm values — production K8s cluster
+# Adjust resources, storage, and ingress for your environment
+
+connectorBuilderServer:
+  enabled: true
+
+server:
+  resources:
+    requests:
+      memory: 1Gi
+      cpu: 500m
+
+worker:
+  resources:
+    requests:
+      memory: 2Gi
+      cpu: 1000m
+
+postgresql:
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 250m
+  persistence:
+    size: 50Gi
+    # storageClassName: gp3  # Uncomment and set for your cloud provider
+
+# Ingress — configure for your environment
+ingress:
+  enabled: true
+  # className: nginx
+  # annotations:
+  #   kubernetes.io/ingress.class: nginx
+  # hosts:
+  #   - host: airbyte.internal.example.com
+  #     paths:
+  #       - path: /
+  #         pathType: Prefix

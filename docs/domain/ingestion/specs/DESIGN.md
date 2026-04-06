@@ -25,13 +25,13 @@ date: 2026-03-23
   - [3.8 Connector Package Structure](#38-connector-package-structure)
 - [4. Deployment](#4-deployment)
   - [4.1 Production (Kubernetes + Helm)](#41-production-kubernetes--helm)
-  - [4.2 Local Development (Docker Compose)](#42-local-development-docker-compose)
+  - [4.2 Local Development (Kind K8s Cluster)](#42-local-development-kind-k8s-cluster)
   - [4.3 Ultra-Light Connector Debugging](#43-ultra-light-connector-debugging)
 - [5. Additional Context](#5-additional-context)
   - [5.1 Superseded Components](#51-superseded-components)
 - [6. Open Questions](#6-open-questions)
   - [OQ-ING-01: ClickHouse Destination Normalization Mode](#oq-ing-01-clickhouse-destination-normalization-mode)
-  - [OQ-ING-02: Kestra Flow Granularity](#oq-ing-02-kestra-flow-granularity)
+  - [OQ-ING-02: ~~Kestra Flow Granularity~~ (RESOLVED)](#oq-ing-02-kestra-flow-granularity-resolved)
   - [OQ-ING-03: MariaDB Destination Use Cases](#oq-ing-03-mariadb-destination-use-cases)
   - [OQ-ING-04: Gold Layer Ownership](#oq-ing-04-gold-layer-ownership)
   - [OQ-ING-05: Connector Package Versioning](#oq-ing-05-connector-package-versioning)
@@ -45,7 +45,7 @@ date: 2026-03-23
 
 ### 1.1 Architectural Vision
 
-The Ingestion Layer provides the complete data pipeline from external source APIs to unified Silver step 1 tables, built on industry-standard open-source tools. Airbyte handles data extraction through both nocode declarative manifests and Python CDK connectors. Kestra orchestrates the pipeline lifecycle -- scheduling syncs, managing dependencies between extraction and transformation, and handling retries. dbt-clickhouse transforms raw Bronze data into unified Silver schemas. Terraform manages Airbyte connection configuration as code.
+The Ingestion Layer provides the complete data pipeline from external source APIs to unified Silver step 1 tables, built on industry-standard open-source tools. Airbyte handles data extraction through both nocode declarative manifests and Python CDK connectors. Argo Workflows orchestrates the pipeline lifecycle -- scheduling syncs via CronWorkflows, managing dependencies between extraction and transformation via DAG templates, and handling retries with configurable retry strategies. dbt-clickhouse transforms raw Bronze data into unified Silver schemas. Terraform manages Airbyte connection configuration as code.
 
 This layer replaces the previously designed custom Orchestrator and custom Connector Framework with a simpler, more maintainable stack that requires no custom runtime code.
 
@@ -60,8 +60,8 @@ This layer replaces the previously designed custom Orchestrator and custom Conne
 | `cpt-insightspec-fr-ing-cdk-connector` | Airbyte Python CDK with custom Docker images |
 | `cpt-insightspec-fr-ing-tenant-id` | `AddFields` transformation in manifests; explicit injection in CDK `read_records()` |
 | `cpt-insightspec-fr-ing-incremental-sync` | Airbyte cursor-based incremental sync with persisted state |
-| `cpt-insightspec-fr-ing-kestra-scheduling` | Kestra flows with cron triggers and event-driven execution |
-| `cpt-insightspec-fr-ing-kestra-dependency` | Kestra DAG task ordering: sync -> dbt |
+| `cpt-insightspec-fr-ing-kestra-scheduling` | Argo CronWorkflows with cron triggers for scheduled execution |
+| `cpt-insightspec-fr-ing-kestra-dependency` | Argo DAG templates with explicit task dependencies: sync -> dbt |
 | `cpt-insightspec-fr-ing-bronze-storage` | ClickHouse `ReplacingMergeTree` with Airbyte stream name as table name |
 | `cpt-insightspec-fr-ing-dbt-bronze-to-silver` | Per-package dbt models producing `class_{domain}` tables |
 | `cpt-insightspec-fr-ing-terraform-connections` | Airbyte Terraform provider for connection management |
@@ -72,15 +72,16 @@ This layer replaces the previously designed custom Orchestrator and custom Conne
 | NFR | Component | Verification |
 |-----|-----------|-------------|
 | `cpt-insightspec-nfr-ing-idempotency` | ClickHouse ReplacingMergeTree | Re-run sync; verify no duplicates after OPTIMIZE TABLE FINAL |
-| `cpt-insightspec-nfr-ing-error-isolation` | Kestra per-task execution | Fail one connector; verify others succeed |
+| `cpt-insightspec-nfr-ing-error-isolation` | Argo per-task execution in DAG | Fail one connector; verify others succeed |
 | `cpt-insightspec-nfr-ing-tenant-isolation` | Connector-level tenant_id injection | Query tables; verify no missing/incorrect tenant_id |
-| `cpt-insightspec-nfr-ing-observability` | Kestra UI + Airbyte UI | Verify executions visible within 1 minute |
+| `cpt-insightspec-nfr-ing-observability` | Argo UI + Airbyte UI | Verify executions visible within 1 minute |
 
 #### Architecture Decision Records
 
 | ADR | Decision |
 |-----|----------|
-| [ADR-0001](ADR/0001-kestra-over-airflow.md) `cpt-insightspec-adr-ing-kestra-over-airflow` | Use Kestra over Airflow — YAML-first, no Python dependency |
+| [ADR-0001](ADR/0001-kestra-over-airflow.md) `cpt-insightspec-adr-ing-kestra-over-airflow` | Use Kestra over Airflow — YAML-first, no Python dependency (superseded) |
+| [ADR-0002](ADR/0002-argo-over-kestra.md) `cpt-insightspec-adr-argo-over-kestra` | Use Argo Workflows over Kestra — K8s-native, no external DB dependency |
 
 ### 1.3 Architecture Layers
 
@@ -122,10 +123,10 @@ This layer replaces the previously designed custom Orchestrator and custom Conne
 │  source-native user IDs intact (person_id added in step 2)      │
 └──────────────────────────────────────────────────────────────────┘
 
-                    ORCHESTRATION (KESTRA)
+                  ORCHESTRATION (ARGO WORKFLOWS)
         ┌──────────────────────────────────────┐
-        │  Schedule → Airbyte Sync → dbt Run   │
-        │  Retry · Dependency · Observability   │
+        │  CronWorkflow → Airbyte Sync → dbt   │
+        │  DAG · Retry · Observability          │
         └──────────────────────────────────────┘
 
                 INFRASTRUCTURE AS CODE (TERRAFORM)
@@ -150,7 +151,7 @@ Each connector package contains everything needed for its pipeline: connector de
 
 - [ ] `p1` - **ID**: `cpt-insightspec-principle-ing-no-custom-runtime`
 
-Use Airbyte's connector runtime for extraction and Kestra's execution engine for orchestration. No custom runner, subprocess management, or message protocol.
+Use Airbyte's connector runtime for extraction and Argo Workflows' execution engine for orchestration. No custom runner, subprocess management, or message protocol.
 
 **Why**: Reduces maintenance burden; leverages battle-tested runtimes with community support.
 
@@ -254,11 +255,11 @@ classDiagram
         +ConfiguredCatalog catalog
         +String tenant_id
     }
-    class KestraFlow {
-        +String id
+    class ArgoWorkflow {
+        +String name
         +String namespace
-        +Trigger[] triggers
-        +Task[] tasks
+        +String schedule
+        +DAGTemplate dag
     }
     class BronzeTable {
         +String name [stream_name]
@@ -277,8 +278,8 @@ classDiagram
     ConnectorDefinition <|-- CdkConnector
     Descriptor *-- StreamDef
     AirbyteConnection --> ConnectorPackage : uses
-    KestraFlow --> AirbyteConnection : triggers sync
-    KestraFlow --> DbtModels : triggers run
+    ArgoWorkflow --> AirbyteConnection : triggers sync
+    ArgoWorkflow --> DbtModels : triggers run
     AirbyteConnection --> BronzeTable : writes to
     DbtModels --> BronzeTable : reads from
     DbtModels --> SilverTable : writes to
@@ -306,32 +307,32 @@ Handles all data extraction from external sources, providing connector runtime, 
 ##### Responsibility boundaries
 
 - Does NOT perform data transformation (that is dbt's responsibility)
-- Does NOT schedule or orchestrate pipelines (that is Kestra's responsibility)
+- Does NOT schedule or orchestrate pipelines (that is Argo Workflows' responsibility)
 - Does NOT manage its own connection configurations in version control (that is Terraform's responsibility)
 
 ##### Related components (by ID)
 
-- `cpt-insightspec-component-ing-kestra` -- Kestra triggers Airbyte syncs via API
+- `cpt-insightspec-component-ing-argo` -- Argo Workflows triggers Airbyte syncs via HTTP
 - `cpt-insightspec-component-ing-terraform` -- Terraform manages Airbyte connections
 - `cpt-insightspec-component-ing-clickhouse` -- ClickHouse is the sync destination
 
-#### Kestra Orchestrator
+#### Argo Workflows Orchestrator
 
-- [ ] `p1` - **ID**: `cpt-insightspec-component-ing-kestra`
+- [ ] `p1` - **ID**: `cpt-insightspec-component-ing-argo`
 
 ##### Why this component exists
 
-Provides pipeline scheduling, task dependency management, retry handling, and execution observability. Selected over Airflow for YAML-first approach (see [ADR-0001](ADR/0001-kestra-over-airflow.md)).
+Provides pipeline scheduling, task dependency management, retry handling, and execution observability. Selected over Kestra to eliminate PostgreSQL dependency — Argo stores state in K8s etcd (see [ADR-0002](ADR/0002-argo-over-kestra.md)).
 
 ##### Responsibility scope
 
-- Schedule pipeline flows with cron expressions or event triggers
-- Trigger Airbyte syncs via Airbyte API plugin
-- Wait for sync completion and check status
-- Trigger dbt runs via dbt CLI plugin
-- Enforce task ordering (sync before transform)
-- Retry failed tasks with configurable backoff
-- Provide UI for monitoring and manual execution
+- Schedule pipeline CronWorkflows with cron expressions
+- Trigger Airbyte syncs via HTTP POST to Airbyte API
+- Poll for sync completion and check status
+- Trigger dbt runs via container steps (`ghcr.io/dbt-labs/dbt-clickhouse`)
+- Enforce task ordering via DAG templates (sync before transform)
+- Retry failed tasks with configurable backoff (`retryStrategy`)
+- Provide Argo UI for monitoring and manual execution
 
 ##### Responsibility boundaries
 
@@ -363,12 +364,12 @@ Transforms raw Bronze data into unified Silver step 1 tables using SQL. Each con
 ##### Responsibility boundaries
 
 - Does NOT extract data from external sources (Airbyte does)
-- Does NOT schedule its own execution (Kestra does)
+- Does NOT schedule its own execution (Argo Workflows does)
 - Does NOT perform identity resolution (separate domain)
 
 ##### Related components (by ID)
 
-- `cpt-insightspec-component-ing-kestra` -- Kestra triggers dbt runs
+- `cpt-insightspec-component-ing-argo` -- Argo Workflows triggers dbt runs
 - `cpt-insightspec-component-ing-clickhouse` -- dbt reads from and writes to ClickHouse
 
 #### ClickHouse Cluster
@@ -414,7 +415,7 @@ Manages Airbyte connection configurations as code, enabling version control, PR 
 ##### Responsibility boundaries
 
 - Does NOT register custom connectors (Airbyte API handles registration)
-- Does NOT manage Kestra flow definitions (stored as YAML in Git)
+- Does NOT manage Argo WorkflowTemplate definitions (stored as YAML in Git)
 - Does NOT manage ClickHouse cluster infrastructure
 
 ##### Related components (by ID)
@@ -433,26 +434,38 @@ Airbyte Protocol v2 defines structured JSON messages between connectors and the 
 - `CATALOG` -- stream schema discovery results
 - `SPEC` -- connector specification (configuration schema)
 
-#### Kestra Flow YAML
+#### Argo WorkflowTemplate / CronWorkflow YAML
 
-Kestra flows are defined in YAML:
+Argo Workflows uses Kubernetes CRDs for workflow definitions:
 ```yaml
-id: ingest-ms365
-namespace: ingestion
-triggers:
-  - id: schedule
-    type: io.kestra.plugin.core.trigger.Schedule
-    cron: "0 2 * * *"
-tasks:
-  - id: airbyte-sync
-    type: io.kestra.plugin.airbyte.connections.Sync
-    connectionId: "{{ vars.connection_id }}"
-  - id: dbt-run
-    type: io.kestra.plugin.dbt.cli.DbtCLI
-    commands:
-      - dbt run --select connectors.ms365
-    dependsOn:
-      - airbyte-sync
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: m365-sync
+  namespace: argo
+spec:
+  schedule: "0 2 * * *"
+  timezone: UTC
+  concurrencyPolicy: Replace
+  workflowSpec:
+    entrypoint: pipeline
+    arguments:
+      parameters:
+        - name: connection_id
+          value: "CONNECTION_ID"
+    templates:
+      - name: pipeline
+        dag:
+          tasks:
+            - name: sync
+              templateRef:
+                name: airbyte-sync
+                template: sync
+            - name: transform
+              depends: sync
+              templateRef:
+                name: dbt-run
+                template: run
 ```
 
 #### Descriptor YAML Schema
@@ -500,8 +513,8 @@ resource "airbyte_connection" "ms365_to_clickhouse" {
 
 | From | To | Mechanism |
 |------|----|-----------|
-| Kestra | Airbyte | REST API (trigger sync, poll status) |
-| Kestra | dbt | CLI execution (dbt run) |
+| Argo Workflows | Airbyte | HTTP POST (trigger sync, poll job status) |
+| Argo Workflows | dbt | Container step (dbt-clickhouse image) |
 | Airbyte | ClickHouse | Airbyte ClickHouse destination (JDBC) |
 | dbt | ClickHouse | dbt-clickhouse adapter (native protocol) |
 | Terraform | Airbyte | Airbyte Terraform provider (REST API) |
@@ -511,7 +524,7 @@ resource "airbyte_connection" "ms365_to_clickhouse" {
 | Dependency | Version Constraint | Purpose |
 |-----------|-------------------|---------|
 | Airbyte Platform | Self-managed, latest stable | Connector runtime and connection management |
-| Kestra | Latest stable, Apache 2.0 | Pipeline orchestration |
+| Argo Workflows | v3.6.x, Apache 2.0 (CNCF) | Pipeline orchestration (K8s-native, state in etcd) |
 | dbt-clickhouse | Latest stable adapter | SQL transformations on ClickHouse |
 | Terraform + airbytehq/airbyte provider | Provider >= 1.0 | Connection configuration as code |
 | ClickHouse | Cluster deployment | Analytical storage |
@@ -524,23 +537,24 @@ resource "airbyte_connection" "ms365_to_clickhouse" {
 
 ```mermaid
 sequenceDiagram
-    participant K as Kestra
+    participant Argo as Argo Workflows
     participant A as Airbyte
     participant S as Source API
     participant CH as ClickHouse
-    participant D as dbt
+    participant D as dbt (container)
 
-    K->>A: POST /connections/{id}/sync (trigger)
+    Argo->>A: POST /api/v1/jobs (trigger sync)
     A->>S: HTTP requests (with tenant_id in config)
     S-->>A: API responses (records)
     A->>A: Add tenant_id to each record
     A->>CH: Write RECORD messages to Bronze tables
-    A-->>K: Sync complete (status: succeeded)
-    K->>D: dbt run --select connectors.{source}
+    Argo->>A: GET /api/v1/jobs/{id} (poll status)
+    A-->>Argo: Sync complete (status: succeeded)
+    Argo->>D: Run dbt container (dbt run --select tag:silver)
     D->>CH: SELECT from Bronze tables
     D->>CH: INSERT INTO Silver class_{domain} tables
-    D-->>K: dbt run complete
-    K->>K: Mark flow execution successful
+    D-->>Argo: Container exit 0
+    Argo->>Argo: Mark workflow succeeded
 ```
 
 #### Terraform Connection Management
@@ -610,7 +624,7 @@ src/ingestion/connectors/
       schema.yml               # Column docs + tests
 ```
 
-See [Airbyte Connector DESIGN](../../airbyte-connector/specs/DESIGN.md) for detailed connector development guide.
+See [Airbyte Connector DESIGN](../../connector/specs/DESIGN.md) for detailed connector development guide.
 
 ## 4. Deployment
 
@@ -618,37 +632,42 @@ See [Airbyte Connector DESIGN](../../airbyte-connector/specs/DESIGN.md) for deta
 
 ```
 K8s Cluster
-├── namespace: airbyte
+├── namespace: airbyte-abctl
 │   ├── Airbyte Server (API + UI)
 │   ├── Airbyte Workers (connector execution)
 │   └── Temporal (internal orchestration)
-├── namespace: kestra
-│   ├── Kestra Server (API + UI + Scheduler)
-│   └── Kestra Workers (task execution)
-└── namespace: data (existing)
-    └── ClickHouse Cluster (shards + replicas)
+├── namespace: argo
+│   ├── Argo Server (API + UI)
+│   └── Argo Controller (workflow execution)
+└── namespace: data
+    └── ClickHouse (single-node or cluster)
 ```
 
 Key deployment decisions:
-- Airbyte and Kestra in **separate namespaces** for independent lifecycle management
-- External database for Kestra metadata (ClickHouse or MariaDB supported)
-- External database for Airbyte metadata (PostgreSQL required by Airbyte)
-- Helm charts: `airbyte/airbyte` and `kestra/kestra`
-- Secrets managed via Kubernetes Secrets or external secret manager (Vault)
-- Ingress for Airbyte and Kestra UIs (internal access only)
+- Airbyte and Argo in **separate namespaces** for independent lifecycle management
+- Argo Workflows stores state in K8s etcd — no external database required
+- External database for Airbyte metadata (PostgreSQL required by Airbyte, managed internally by abctl)
+- Helm charts: Airbyte via `abctl`, Argo via `argo/argo-workflows`
+- ClickHouse deployed via K8s manifests (`src/ingestion/k8s/clickhouse/`)
+- Secrets managed via Kubernetes Secrets
+- Service access via NodePort: Airbyte (8000), Argo UI (30500), ClickHouse (30123)
 
-### 4.2 Local Development (Docker Compose)
+### 4.2 Local Development (Kind K8s Cluster)
 
-Docker Compose for full-stack local development:
-- Airbyte (server + worker + temporal + postgres)
-- Kestra (server + worker)
-- ClickHouse (single node)
-- dbt runner (container with dbt-clickhouse)
+All services run inside a Kind K8s cluster (`airbyte-abctl`):
+- Airbyte installed via `abctl local install`
+- Argo Workflows installed via Helm chart
+- ClickHouse deployed via K8s manifests (Deployment + Service + PVC + ConfigMap)
+- dbt runs as Argo container steps (`ghcr.io/dbt-labs/dbt-clickhouse`)
+
+KUBECONFIG: `~/.kube/kind-ingestion`
+
+Startup: `./up.sh` — installs Airbyte, deploys ClickHouse, installs Argo, applies WorkflowTemplates, initializes connections.
 
 This enables:
 - Testing connector registration and sync execution
-- Running full extract -> transform pipeline
-- Debugging Kestra flows
+- Running full extract -> transform pipeline via Argo DAG workflows
+- Monitoring workflows via Argo UI
 - Validating dbt models against real data
 
 ### 4.3 Ultra-Light Connector Debugging
@@ -658,7 +677,7 @@ For rapid nocode connector iteration without the full Airbyte platform:
 - Commands: `check`, `discover`, `read`
 - Mount custom manifest, pipe output to local destination
 
-See [Airbyte Connector DESIGN](../../airbyte-connector/specs/DESIGN.md) for detailed debugging workflows.
+See [Airbyte Connector DESIGN](../../connector/specs/DESIGN.md) for detailed debugging workflows.
 
 ## 5. Additional Context
 
@@ -668,7 +687,7 @@ This design supersedes:
 
 | Component | Document | Reason |
 |-----------|----------|--------|
-| Custom Orchestrator | [Orchestrator PRD](../../../components/orchestrator/specs/PRD.md) | Replaced by Kestra -- see [ADR-0001](ADR/0001-kestra-over-airflow.md) |
+| Custom Orchestrator | [Orchestrator PRD](../../../components/orchestrator/specs/PRD.md) | Replaced by Argo Workflows -- see [ADR-0002](ADR/0002-argo-over-kestra.md) |
 | Custom Connector Framework | [Connector Framework DESIGN](../../connector/specs/DESIGN.md) | Replaced by Airbyte connector runtime |
 | Stdout JSON Protocol | [ADR-0001](../../connector/specs/ADR/0001-connector-integration-protocol.md) | Replaced by Airbyte Protocol |
 
@@ -680,9 +699,9 @@ These documents remain as historical reference. The ingestion layer is the curre
 
 Airbyte's ClickHouse destination supports different normalization modes (raw, basic, etc.). Which mode should be used for Bronze table creation? Does the destination correctly handle `ReplacingMergeTree` with version columns?
 
-### OQ-ING-02: Kestra Flow Granularity
+### OQ-ING-02: ~~Kestra Flow Granularity~~ (RESOLVED)
 
-Should Kestra define one flow per connector, one flow per tenant, or one flow per (connector, tenant) pair? Trade-off between flow management overhead and execution granularity.
+Resolved by migration to Argo Workflows. Granularity: one CronWorkflow per (connector, tenant) pair. Reusable WorkflowTemplates (`airbyte-sync`, `dbt-run`, `ingestion-pipeline`) are shared across all tenants; tenant-specific CronWorkflows reside in `src/ingestion/workflows/{tenant_id}/`.
 
 ### OQ-ING-03: MariaDB Destination Use Cases
 
@@ -701,7 +720,7 @@ How are connector packages versioned within the monorepo? Is there a version fie
 | Design Element | PRD Requirement |
 |---------------|----------------|
 | `cpt-insightspec-component-ing-airbyte` | `cpt-insightspec-fr-ing-airbyte-extract`, `cpt-insightspec-fr-ing-nocode-connector`, `cpt-insightspec-fr-ing-cdk-connector` |
-| `cpt-insightspec-component-ing-kestra` | `cpt-insightspec-fr-ing-kestra-scheduling`, `cpt-insightspec-fr-ing-kestra-dependency`, `cpt-insightspec-fr-ing-kestra-retry` |
+| `cpt-insightspec-component-ing-argo` | `cpt-insightspec-fr-ing-kestra-scheduling`, `cpt-insightspec-fr-ing-kestra-dependency`, `cpt-insightspec-fr-ing-kestra-retry` |
 | `cpt-insightspec-component-ing-dbt` | `cpt-insightspec-fr-ing-dbt-bronze-to-silver`, `cpt-insightspec-fr-ing-dbt-clickhouse`, `cpt-insightspec-fr-ing-silver-unified-schema` |
 | `cpt-insightspec-component-ing-clickhouse` | `cpt-insightspec-fr-ing-bronze-storage`, `cpt-insightspec-fr-ing-clickhouse-destination` |
 | `cpt-insightspec-component-ing-terraform` | `cpt-insightspec-fr-ing-terraform-connections` |
@@ -710,6 +729,7 @@ How are connector packages versioned within the monorepo? Is there a version fie
 | `cpt-insightspec-constraint-ing-terraform-connections` | `cpt-insightspec-fr-ing-terraform-connections`, `cpt-insightspec-fr-ing-airbyte-api-custom` |
 
 - **PRD**: [PRD.md](PRD.md)
-- **ADR-0001**: [ADR/0001-kestra-over-airflow.md](ADR/0001-kestra-over-airflow.md)
-- **Airbyte Connector DESIGN**: [../../airbyte-connector/specs/DESIGN.md](../../airbyte-connector/specs/DESIGN.md)
+- **ADR-0001**: [ADR/0001-kestra-over-airflow.md](ADR/0001-kestra-over-airflow.md) (superseded)
+- **ADR-0002**: [ADR/0002-argo-over-kestra.md](ADR/0002-argo-over-kestra.md)
+- **Airbyte Connector DESIGN**: [../../connector/specs/DESIGN.md](../../connector/specs/DESIGN.md)
 - **Identity Resolution DESIGN**: [../../identity-resolution/specs/DESIGN.md](../../identity-resolution/specs/DESIGN.md) -- downstream consumer

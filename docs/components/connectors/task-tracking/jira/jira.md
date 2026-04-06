@@ -57,7 +57,7 @@ Standalone specification for the Jira (Task Tracking) connector.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier, e.g. `jira-team-alpha` |
+| `insight_source_id` | String | Connector instance identifier, e.g. `jira-team-alpha` |
 | `jira_id` | String | Jira internal numeric ID, e.g. `10001` |
 | `id_readable` | String | Human-readable key, e.g. `PROJ-123` — joins to `jira_issue_history.id_readable` |
 | `project_key` | String | Project key, e.g. `PROJ` — from `fields.project.key` |
@@ -79,7 +79,7 @@ Every state transition, reassignment, and field update is a separate row. Collec
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier — scopes all IDs |
+| `insight_source_id` | String | Connector instance identifier — scopes all IDs |
 | `id_readable` | String | Human-readable issue key — joins to `jira_issue.id_readable` |
 | `issue_jira_id` | String | Parent issue's internal numeric ID |
 | `author_account_id` | String | Atlassian account ID of who made the change — joins to `jira_user.account_id` |
@@ -102,7 +102,7 @@ Stores per-issue custom field values that don't fit the core schema. Follows the
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier |
+| `insight_source_id` | String | Connector instance identifier |
 | `id_readable` | String | Issue key — joins to `jira_issue.id_readable` |
 | `field_id` | String | Custom field ID, e.g. `customfield_10050` |
 | `field_name` | String | Custom field display name, e.g. `Team`, `Squad`, `Customer` |
@@ -120,7 +120,7 @@ Collected from `GET /rest/api/3/issue/{key}/worklog`.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier |
+| `insight_source_id` | String | Connector instance identifier |
 | `worklog_id` | String | Worklog entry ID |
 | `id_readable` | String | Parent issue key — joins to `jira_issue.id_readable` |
 | `author_account_id` | String | Who logged the time — joins to `jira_user.account_id` |
@@ -139,7 +139,7 @@ Collected from `GET /rest/api/3/issue/{key}/comment`.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier |
+| `insight_source_id` | String | Connector instance identifier |
 | `comment_id` | String | Comment ID |
 | `id_readable` | String | Parent issue key — joins to `jira_issue.id_readable` |
 | `author_account_id` | String | Comment author — joins to `jira_user.account_id` |
@@ -157,7 +157,7 @@ Collected from `GET /rest/api/3/project`.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier |
+| `insight_source_id` | String | Connector instance identifier |
 | `project_id` | String | Jira internal project ID |
 | `project_key` | String | Project key, e.g. `PROJ` — joins to `jira_issue.project_key` |
 | `name` | String | Project name |
@@ -177,7 +177,7 @@ Collected from `fields.issuelinks` in issue response.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier |
+| `insight_source_id` | String | Connector instance identifier |
 | `source_issue` | String | Source issue key |
 | `target_issue` | String | Target issue key |
 | `link_type` | String | Link type name, e.g. `blocks` / `is blocked by` / `duplicates` / `relates to` / `is subtask of` |
@@ -193,7 +193,7 @@ Collected from `GET /rest/agile/1.0/board/{boardId}/sprint`. Board list from `GE
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier |
+| `insight_source_id` | String | Connector instance identifier |
 | `sprint_id` | Float64 | Sprint ID |
 | `board_id` | Float64 | Agile board ID |
 | `board_name` | String | Agile board name |
@@ -213,7 +213,7 @@ Collected from `GET /rest/agile/1.0/board/{boardId}/sprint`. Board list from `GE
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier |
+| `insight_source_id` | String | Connector instance identifier |
 | `account_id` | String | Atlassian account ID — joins to `author_account_id` / `reporter_id` / `lead_account_id` |
 | `email` | String | Email — primary key for cross-system identity resolution; **nullable** — may be suppressed by Atlassian privacy controls |
 | `display_name` | String | Display name |
@@ -254,7 +254,7 @@ Same chain applies to `jira_worklogs.author_account_id`, `jira_comments.author_a
 
 `account_id` is Atlassian-platform-specific and shared across Jira, Confluence, and Bitbucket on the same tenant — useful for cross-tool resolution within the Atlassian ecosystem. Email remains the canonical cross-system key for Insight's Identity Manager.
 
-`source_instance_id` must be included in all joins — `id_readable` values like `PROJ-123` can collide across instances.
+`insight_source_id` must be included in all joins — `id_readable` values like `PROJ-123` can collide across instances.
 
 ---
 
@@ -291,7 +291,7 @@ Jira Cloud may suppress `emailAddress` for some users via Atlassian privacy cont
 
 ### OQ-JIRA-2: Multi-instance deployments
 
-`(source_instance_id, id_readable)` is the unique composite key for issues. Confirm that `task_id` in `class_task_tracker` includes the instance prefix to prevent collisions.
+`(insight_source_id, id_readable)` is the unique composite key for issues. Confirm that `task_id` in `class_task_tracker` includes the instance prefix to prevent collisions.
 
 ### OQ-JIRA-3: `story_points` field ID per instance
 

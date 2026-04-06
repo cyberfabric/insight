@@ -63,7 +63,7 @@ Populated from `POST /collections.list`.
 
 | Field | Type | Outline API field | Notes |
 |-------|------|------------------|-------|
-| `source_instance_id` | String | connector config | e.g. `outline-main` |
+| `insight_source_id` | String | connector config | e.g. `outline-main` |
 | `space_id` | String | `data[].id` | Outline collection UUID |
 | `name` | String | `data[].name` | Collection name |
 | `description` | String | `data[].description` | Optional description |
@@ -83,7 +83,7 @@ Populated from `POST /documents.list` (paginated). Upserted on each run.
 
 | Field | Type | Outline API field | Notes |
 |-------|------|------------------|-------|
-| `source_instance_id` | String | connector config | |
+| `insight_source_id` | String | connector config | |
 | `page_id` | String | `data[].id` | Outline document UUID |
 | `space_id` | String | `data[].collectionId` | Parent collection UUID |
 | `title` | String | `data[].title` | Document title |
@@ -126,7 +126,7 @@ Two activity sub-types collected separately:
 
 | Field | Type | Outline API field | Notes |
 |-------|------|------------------|-------|
-| `source_instance_id` | String | connector config | |
+| `insight_source_id` | String | connector config | |
 | `page_id` | String | `data[].documentId` | |
 | `user_id` | String | `data[].createdBy.id` | Outline user UUID of revision author |
 | `user_email` | String | `data[].createdBy.email` | Available directly in revision response |
@@ -141,7 +141,7 @@ Two activity sub-types collected separately:
 
 | Field | Type | Outline API field | Notes |
 |-------|------|------------------|-------|
-| `source_instance_id` | String | connector config | |
+| `insight_source_id` | String | connector config | |
 | `page_id` | String | `data[].documentId` | |
 | `user_id` | String | NULL | `views.list` returns aggregate only — no per-user breakdown |
 | `user_email` | String | NULL | Not available |
@@ -162,7 +162,7 @@ Populated from `POST /users.list`.
 
 | Field | Type | Outline API field | Notes |
 |-------|------|------------------|-------|
-| `source_instance_id` | String | connector config | |
+| `insight_source_id` | String | connector config | |
 | `user_id` | String | `data[].id` | Outline user UUID |
 | `email` | String | `data[].email` | Available directly — no enrichment step needed |
 | `display_name` | String | `data[].name` | |

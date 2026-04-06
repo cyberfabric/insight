@@ -74,7 +74,7 @@ Data-source agnostic specification for Version Control connectors. Defines unifi
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
 | `tenant_id` | UUID | REQUIRED | Tenant identifier — injected by framework; partitions all data by customer |
-| `source_instance_id` | String | REQUIRED | Source instance identifier (e.g. `github-acme-prod`) |
+| `insight_source_id` | String | REQUIRED | Source instance identifier (e.g. `github-acme-prod`) |
 | `id` | Int64 | PRIMARY KEY | Auto-generated unique identifier |
 | `project_key` | String | REQUIRED | Organization/workspace/project key |
 | `repo_slug` | String | REQUIRED | Repository name/slug |
@@ -117,7 +117,7 @@ Data-source agnostic specification for Version Control connectors. Defines unifi
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
 | `tenant_id` | UUID | REQUIRED | Tenant identifier — injected by framework |
-| `source_instance_id` | String | REQUIRED | Source instance identifier (e.g. `github-acme-prod`) |
+| `insight_source_id` | String | REQUIRED | Source instance identifier (e.g. `github-acme-prod`) |
 | `id` | Int64 | PRIMARY KEY | Auto-generated unique identifier |
 | `project_key` | String | REQUIRED | Repository owner — joins to `git_repositories.project_key` |
 | `repo_slug` | String | REQUIRED | Repository name — joins to `git_repositories.repo_slug` |
@@ -133,7 +133,7 @@ Data-source agnostic specification for Version Control connectors. Defines unifi
 **Value column rules**: at least one of `field_value_str`, `field_value_int`, `field_value_float` must be non-NULL. Integer-valued properties (counts, flags) use `field_value_int`; fractional values use `field_value_float`; string, JSON, and enum values use `field_value_str`. Boolean flags use `field_value_int` with values `0` / `1`.
 
 **Indexes**:
-- `idx_repo_ext_lookup`: `(tenant_id, source_instance_id, project_key, repo_slug, field_id, data_source)`
+- `idx_repo_ext_lookup`: `(tenant_id, insight_source_id, project_key, repo_slug, field_id, data_source)`
 - `idx_repo_field_id`: `(field_id)`
 
 **Purpose**: Flexible key-value table for storing extended repository properties without modifying the core `git_repositories` schema. Enables addition of aggregated statistics, analysis results, and health metrics computed from commit/PR history without schema migrations.
@@ -250,7 +250,7 @@ GROUP BY r.repo_slug;
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
 | `tenant_id` | UUID | REQUIRED | Tenant identifier — injected by framework |
-| `source_instance_id` | String | REQUIRED | Source instance identifier (e.g. `bitbucket-acme-prod`) |
+| `insight_source_id` | String | REQUIRED | Source instance identifier (e.g. `bitbucket-acme-prod`) |
 | `id` | Int64 | PRIMARY KEY | Auto-generated unique identifier |
 | `project_key` | String | REQUIRED | Repository owner |
 | `repo_slug` | String | REQUIRED | Repository name |
@@ -275,7 +275,7 @@ GROUP BY r.repo_slug;
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
 | `tenant_id` | UUID | REQUIRED | Tenant identifier — injected by framework |
-| `source_instance_id` | String | REQUIRED | Source instance identifier (e.g. `github-acme-prod`) |
+| `insight_source_id` | String | REQUIRED | Source instance identifier (e.g. `github-acme-prod`) |
 | `id` | Int64 | PRIMARY KEY | Auto-generated unique identifier |
 | `project_key` | String | REQUIRED | Repository owner |
 | `repo_slug` | String | REQUIRED | Repository name |
@@ -312,7 +312,7 @@ GROUP BY r.repo_slug;
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
 | `tenant_id` | UUID | REQUIRED | Tenant identifier — injected by framework |
-| `source_instance_id` | String | REQUIRED | Source instance identifier |
+| `insight_source_id` | String | REQUIRED | Source instance identifier |
 | `id` | Int64 | PRIMARY KEY | Auto-generated unique identifier |
 | `project_key` | String | REQUIRED | Repository owner — joins to `git_commits.project_key` |
 | `repo_slug` | String | REQUIRED | Repository name — joins to `git_commits.repo_slug` |
@@ -329,7 +329,7 @@ GROUP BY r.repo_slug;
 **Value column rules**: at least one of `field_value_str`, `field_value_int`, `field_value_float` must be non-NULL. Boolean flags use `field_value_int` (`0`/`1`); fractional scores use `field_value_float`; JSON and string values use `field_value_str`.
 
 **Indexes**:
-- `idx_commit_ext_lookup`: `(tenant_id, source_instance_id, project_key, repo_slug, commit_hash, field_id, data_source)`
+- `idx_commit_ext_lookup`: `(tenant_id, insight_source_id, project_key, repo_slug, commit_hash, field_id, data_source)`
 - `idx_commit_ext_field_id`: `(field_id)`
 
 **Purpose**: Flexible key-value table for storing extended commit properties without modifying the core `git_commits` schema. Enables addition of new analysis results (AI detection, license scanning, security analysis, code quality metrics) without schema migrations.
@@ -388,7 +388,7 @@ WHERE tenant_id = '...'
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
 | `tenant_id` | UUID | REQUIRED | Tenant identifier — injected by framework |
-| `source_instance_id` | String | REQUIRED | Source instance identifier |
+| `insight_source_id` | String | REQUIRED | Source instance identifier |
 | `id` | Int64 | PRIMARY KEY | Auto-generated unique identifier |
 | `project_key` | String | REQUIRED | Repository owner |
 | `repo_slug` | String | REQUIRED | Repository name |
@@ -416,7 +416,7 @@ WHERE tenant_id = '...'
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
 | `tenant_id` | UUID | REQUIRED | Tenant identifier — injected by framework |
-| `source_instance_id` | String | REQUIRED | Source instance identifier |
+| `insight_source_id` | String | REQUIRED | Source instance identifier |
 | `id` | Int64 | PRIMARY KEY | Auto-generated unique identifier |
 | `project_key` | String | REQUIRED | Repository owner — joins to `git_commit_files.project_key` |
 | `repo_slug` | String | REQUIRED | Repository name — joins to `git_commit_files.repo_slug` |
@@ -434,7 +434,7 @@ WHERE tenant_id = '...'
 **Value column rules**: at least one of `field_value_str`, `field_value_int`, `field_value_float` must be non-NULL. Boolean flags use `field_value_int` (`0`/`1`); JSON results use `field_value_str`.
 
 **Indexes**:
-- `idx_commit_file_ext_lookup`: `(tenant_id, source_instance_id, project_key, repo_slug, commit_hash, file_path, field_id, data_source)`
+- `idx_commit_file_ext_lookup`: `(tenant_id, insight_source_id, project_key, repo_slug, commit_hash, file_path, field_id, data_source)`
 - `idx_file_ext_field_id`: `(field_id)`
 
 **Purpose**: Flexible key-value table for storing extended per-file properties without modifying the core `git_commit_files` schema. Enables addition of new file-level analysis results (AI detection, license scanning, security analysis) without schema migrations.
@@ -486,7 +486,7 @@ WHERE commit_hash = 'abc123...'
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
 | `tenant_id` | UUID | REQUIRED | Tenant identifier — injected by framework |
-| `source_instance_id` | String | REQUIRED | Source instance identifier |
+| `insight_source_id` | String | REQUIRED | Source instance identifier |
 | `id` | Int64 | PRIMARY KEY | Auto-generated unique identifier |
 | `project_key` | String | REQUIRED | Repository owner |
 | `repo_slug` | String | REQUIRED | Repository name |
@@ -535,7 +535,7 @@ WHERE commit_hash = 'abc123...'
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
 | `tenant_id` | UUID | REQUIRED | Tenant identifier — injected by framework |
-| `source_instance_id` | String | REQUIRED | Source instance identifier |
+| `insight_source_id` | String | REQUIRED | Source instance identifier |
 | `id` | Int64 | PRIMARY KEY | Auto-generated unique identifier |
 | `project_key` | String | REQUIRED | Repository owner — joins to `git_pull_requests.project_key` |
 | `repo_slug` | String | REQUIRED | Repository name — joins to `git_pull_requests.repo_slug` |
@@ -552,7 +552,7 @@ WHERE commit_hash = 'abc123...'
 **Value column rules**: at least one of `field_value_str`, `field_value_int`, `field_value_float` must be non-NULL. Boolean flags use `field_value_int` (`0`/`1`); duration/score values use `field_value_float`; JSON results use `field_value_str`.
 
 **Indexes**:
-- `idx_pr_ext_lookup`: `(tenant_id, source_instance_id, project_key, repo_slug, pr_id, field_id, data_source)`
+- `idx_pr_ext_lookup`: `(tenant_id, insight_source_id, project_key, repo_slug, pr_id, field_id, data_source)`
 - `idx_pr_ext_field_id`: `(field_id)`
 
 **Purpose**: Flexible key-value table for storing extended PR properties without modifying the core `git_pull_requests` schema. Enables addition of new analysis results (review quality metrics, AI-assisted PR detection, security analysis, complexity scores) without schema migrations.
@@ -636,7 +636,7 @@ WHERE pr.tenant_id = '...'
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
 | `tenant_id` | UUID | REQUIRED | Tenant identifier — injected by framework |
-| `source_instance_id` | String | REQUIRED | Source instance identifier |
+| `insight_source_id` | String | REQUIRED | Source instance identifier |
 | `id` | Int64 | PRIMARY KEY | Auto-generated unique identifier |
 | `project_key` | String | REQUIRED | Repository owner |
 | `repo_slug` | String | REQUIRED | Repository name |
@@ -670,7 +670,7 @@ WHERE pr.tenant_id = '...'
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
 | `tenant_id` | UUID | REQUIRED | Tenant identifier — injected by framework |
-| `source_instance_id` | String | REQUIRED | Source instance identifier |
+| `insight_source_id` | String | REQUIRED | Source instance identifier |
 | `id` | Int64 | PRIMARY KEY | Auto-generated unique identifier |
 | `project_key` | String | REQUIRED | Repository owner |
 | `repo_slug` | String | REQUIRED | Repository name |
@@ -706,7 +706,7 @@ WHERE pr.tenant_id = '...'
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
 | `tenant_id` | UUID | REQUIRED | Tenant identifier — injected by framework |
-| `source_instance_id` | String | REQUIRED | Source instance identifier |
+| `insight_source_id` | String | REQUIRED | Source instance identifier |
 | `id` | Int64 | PRIMARY KEY | Auto-generated unique identifier |
 | `project_key` | String | REQUIRED | Repository owner |
 | `repo_slug` | String | REQUIRED | Repository name |
@@ -729,7 +729,7 @@ WHERE pr.tenant_id = '...'
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
 | `tenant_id` | UUID | REQUIRED | Tenant identifier — injected by framework |
-| `source_instance_id` | String | REQUIRED | Source instance identifier |
+| `insight_source_id` | String | REQUIRED | Source instance identifier |
 | `id` | Int64 | PRIMARY KEY | Auto-generated unique identifier |
 | `external_ticket_id` | String | REQUIRED | Ticket ID extracted from text, e.g. `PROJ-123`, `#456` |
 | `project_key` | String | REQUIRED | Repository owner |
@@ -755,7 +755,7 @@ WHERE pr.tenant_id = '...'
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
 | `tenant_id` | UUID | REQUIRED | Tenant identifier — injected by framework |
-| `source_instance_id` | String | REQUIRED | Source instance identifier |
+| `insight_source_id` | String | REQUIRED | Source instance identifier |
 | `id` | Int64 | PRIMARY KEY | Auto-generated unique identifier |
 | `run_id` | String | REQUIRED | Unique run identifier (UUID) |
 | `started_at` | DateTime64(3) | REQUIRED | Run start timestamp |

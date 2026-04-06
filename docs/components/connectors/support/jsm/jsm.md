@@ -41,7 +41,7 @@ Standalone specification for the Jira Service Management (ITSM / Service Desk) c
 
 **Identity**: `support_agents.email` — resolved to canonical `person_id` via Identity Manager. JSM distinguishes two user classes: **agents** (`accountType = "atlassian"`) who work issues, and **customers** (`accountType = "customer"`) who raise them. Only agents are resolved to `person_id`; customers are tracked by `requester_id` for volume analytics but are **not** linked to the internal HR roster.
 
-**`source_instance_id`**: set to the Atlassian domain slug, e.g. `jsm-acme-prod`. Required to disambiguate multiple JSM instances in the same Bronze store.
+**`insight_source_id`**: set to the Atlassian domain slug, e.g. `jsm-acme-prod`. Required to disambiguate multiple JSM instances in the same Bronze store.
 
 **Design principle**: `support_tickets` stores the current ticket state (snapshot) — updated on each collection run. `support_ticket_events` is the append-only event log built from the Jira changelog and comments APIs — source of truth for MTTR, SLA compliance, and first-response time. `support_sla` is a JSM-specific table capturing SLA policy breach status per ticket at collection time (Zendesk has no equivalent Bronze SLA table; JSM's explicit SLA policies warrant dedicated capture).
 
@@ -79,7 +79,7 @@ Maps to the unified `support_tickets` table defined in `docs/connectors/support/
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier, e.g. `jsm-acme-prod` |
+| `insight_source_id` | String | Connector instance identifier, e.g. `jsm-acme-prod` |
 | `ticket_id` | String | Jira internal numeric ID (stored as string), e.g. `10042` |
 | `subject` | String | Ticket summary — from `fields.summary` |
 | `status` | String | Normalised status (see mapping below): `new` / `open` / `pending` / `hold` / `solved` / `closed` |
@@ -101,7 +101,7 @@ Maps to the unified `support_tickets` table defined in `docs/connectors/support/
 | `_version` | UInt64 | Collection timestamp in milliseconds — deduplication version |
 
 **Indexes**:
-- `idx_support_ticket_lookup`: `(source_instance_id, ticket_id, data_source)`
+- `idx_support_ticket_lookup`: `(insight_source_id, ticket_id, data_source)`
 - `idx_support_ticket_assignee`: `(assignee_id, data_source)`
 - `idx_support_ticket_updated`: `(updated_at)`
 - `idx_support_ticket_status`: `(status, data_source)`
@@ -131,7 +131,7 @@ Every status transition, reassignment, field change, and public or internal comm
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier |
+| `insight_source_id` | String | Connector instance identifier |
 | `ticket_id` | String | Parent ticket ID — joins to `support_tickets.ticket_id` |
 | `event_id` | String | Composite key: `{changelog_id}_{item_index}` for changelog items; `comment_{comment_id}` for comments — unique per row |
 | `event_type` | String | Normalised type (see mapping below): `status_change` / `assignment` / `comment` / `satisfaction_update` / `sla_breach` / `field_change` |
@@ -146,7 +146,7 @@ Every status transition, reassignment, field change, and public or internal comm
 | `_version` | UInt64 | Collection timestamp in milliseconds |
 
 **Indexes**:
-- `idx_support_event_ticket`: `(source_instance_id, ticket_id, data_source)`
+- `idx_support_event_ticket`: `(insight_source_id, ticket_id, data_source)`
 - `idx_support_event_author`: `(author_id, data_source)`
 - `idx_support_event_created`: `(created_at)`
 - `idx_support_event_type`: `(event_type, data_source)`
@@ -176,7 +176,7 @@ Identity anchor for support analytics. Maps to `person_id` via Identity Manager.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier |
+| `insight_source_id` | String | Connector instance identifier |
 | `agent_id` | String | Atlassian `accountId` — e.g. `5b10a2844c20165700ede21g` |
 | `email` | String | `emailAddress` — primary identity key → `person_id`; may be NULL for accounts with Atlassian privacy controls applied |
 | `display_name` | String | `displayName` |
@@ -189,7 +189,7 @@ Identity anchor for support analytics. Maps to `person_id` via Identity Manager.
 | `_version` | UInt64 | Collection timestamp in milliseconds |
 
 **Indexes**:
-- `idx_support_agent_lookup`: `(source_instance_id, agent_id, data_source)`
+- `idx_support_agent_lookup`: `(insight_source_id, agent_id, data_source)`
 - `idx_support_agent_email`: `(email)`
 
 **Note on `email` suppression**: Atlassian privacy controls may suppress `emailAddress` for customer-type accounts. For `accountType = "atlassian"` (agents), suppression is rare. When email is NULL for an agent, `agent_id` (`accountId`) can serve as a within-Atlassian stable identifier but will not resolve to `person_id` (see OQ-JSM-1).
@@ -208,7 +208,7 @@ JSM-specific table. Captures SLA policy breach and compliance status per ticket 
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier |
+| `insight_source_id` | String | Connector instance identifier |
 | `ticket_id` | String | Ticket ID — joins to `support_tickets.ticket_id` |
 | `sla_name` | String | SLA policy name, e.g. `Time to first response`, `Time to resolution` |
 | `sla_field_id` | String | Jira custom field ID for this SLA, e.g. `customfield_10020` |
@@ -224,7 +224,7 @@ JSM-specific table. Captures SLA policy breach and compliance status per ticket 
 | `_version` | UInt64 | Collection timestamp in milliseconds |
 
 **Indexes**:
-- `idx_support_sla_ticket`: `(source_instance_id, ticket_id, data_source)`
+- `idx_support_sla_ticket`: `(insight_source_id, ticket_id, data_source)`
 - `idx_support_sla_collected`: `(collected_at)`
 - `idx_support_sla_breached`: `(is_breached, data_source)`
 
@@ -238,7 +238,7 @@ JSM tickets inherit Jira's custom field mechanism — custom fields use the `cus
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier, e.g. `jsm-acme-prod` |
+| `insight_source_id` | String | Connector instance identifier, e.g. `jsm-acme-prod` |
 | `ticket_id` | String | Parent ticket ID — joins to `support_tickets.ticket_id` |
 | `field_id` | String | Jira custom field ID, e.g. `customfield_10200` |
 | `field_name` | String | Custom field display name (from `GET /rest/api/3/field`) |
@@ -292,7 +292,7 @@ support_ticket_events.author_id
 
 **`requester_id` in `support_tickets`**: customer (`accountType = "customer"`) Atlassian account IDs — **not** resolved to `person_id`. Used for request volume and routing analysis only.
 
-**`source_instance_id` is required in all joins** — Atlassian `accountId` values and `ticket_id` values are scoped to one Atlassian tenant; they collide across separate JSM instances.
+**`insight_source_id` is required in all joins** — Atlassian `accountId` values and `ticket_id` values are scoped to one Atlassian tenant; they collide across separate JSM instances.
 
 **Atlassian email suppression**: Atlassian privacy controls may suppress `emailAddress` for customer-type accounts. For agents, suppression is rare. When email is NULL for an agent account, `agent_id` (`accountId`) can serve as a stable within-Atlassian identifier but will not map to `person_id` (see OQ-JSM-1).
 
@@ -325,7 +325,7 @@ support_ticket_events.author_id
 |-------|------|-------------|
 | `person_id` | String | Agent assigned at SLA collection time |
 | `ticket_id` | String | Source ticket ID |
-| `source_instance_id` | String | Connector instance identifier |
+| `insight_source_id` | String | Connector instance identifier |
 | `sla_name` | String | SLA policy name |
 | `is_breached` | Int64 | 1 if breached |
 | `goal_seconds` | Int64 | SLA target |

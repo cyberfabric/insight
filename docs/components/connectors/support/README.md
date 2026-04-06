@@ -46,7 +46,7 @@ Data-source agnostic specification for support and helpdesk connectors. Defines 
 
 **Design principle**: `support_tickets` stores the current ticket state (snapshot) — identifiers, metadata, and latest values for status, assignee, and timing fields. `support_ticket_events` is an append-only audit log capturing every status change, reassignment, and comment — the source of truth for MTTR, SLA compliance, and first-response time calculations.
 
-**`source_instance_id`**: present in all tables — required to disambiguate multiple tool instances (e.g. two Zendesk tenants or multiple JSM organizations in the same Bronze store).
+**`insight_source_id`**: present in all tables — required to disambiguate multiple tool instances (e.g. two Zendesk tenants or multiple JSM organizations in the same Bronze store).
 
 **Terminology mapping**:
 
@@ -69,7 +69,7 @@ Current snapshot of each ticket. Updated on every collection run. Identifiers an
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
-| `source_instance_id` | String | REQUIRED | Connector instance identifier, e.g. `zendesk-acme`, `jsm-team-alpha` |
+| `insight_source_id` | String | REQUIRED | Connector instance identifier, e.g. `zendesk-acme`, `jsm-team-alpha` |
 | `ticket_id` | String | REQUIRED | Source-specific ticket ID |
 | `subject` | String | NULLABLE | Ticket title / summary |
 | `status` | String | REQUIRED | Normalised status: `new` / `open` / `pending` / `hold` / `solved` / `closed` |
@@ -93,7 +93,7 @@ Current snapshot of each ticket. Updated on every collection run. Identifiers an
 | `_version` | UInt64 | REQUIRED | Deduplication version (millisecond timestamp) |
 
 **Indexes**:
-- `idx_support_ticket_lookup`: `(source_instance_id, ticket_id, data_source)`
+- `idx_support_ticket_lookup`: `(insight_source_id, ticket_id, data_source)`
 - `idx_support_ticket_assignee`: `(assignee_id, data_source)`
 - `idx_support_ticket_updated`: `(updated_at)`
 - `idx_support_ticket_status`: `(status, data_source)`
@@ -110,7 +110,7 @@ Every status change, reassignment, SLA breach event, and public comment is a sep
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
-| `source_instance_id` | String | REQUIRED | Connector instance identifier |
+| `insight_source_id` | String | REQUIRED | Connector instance identifier |
 | `ticket_id` | String | REQUIRED | Parent ticket ID — joins to `support_tickets.ticket_id` |
 | `event_id` | String | REQUIRED | Source-specific event / audit ID — unique per row |
 | `event_type` | String | REQUIRED | Normalised type: `status_change` / `assignment` / `comment` / `satisfaction_update` / `sla_breach` / `field_change` |
@@ -125,7 +125,7 @@ Every status change, reassignment, SLA breach event, and public comment is a sep
 | `_version` | UInt64 | REQUIRED | Deduplication version |
 
 **Indexes**:
-- `idx_support_event_ticket`: `(source_instance_id, ticket_id, data_source)`
+- `idx_support_event_ticket`: `(insight_source_id, ticket_id, data_source)`
 - `idx_support_event_author`: `(author_id, data_source)`
 - `idx_support_event_created`: `(created_at)`
 - `idx_support_event_type`: `(event_type, data_source)`
@@ -144,7 +144,7 @@ Identity anchor for support analytics. Maps to `person_id` via Identity Manager.
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
-| `source_instance_id` | String | REQUIRED | Connector instance identifier |
+| `insight_source_id` | String | REQUIRED | Connector instance identifier |
 | `agent_id` | String | REQUIRED | Source-specific agent / user ID |
 | `email` | String | REQUIRED | Email — primary identity key → `person_id` |
 | `display_name` | String | NULLABLE | Agent display name |
@@ -157,7 +157,7 @@ Identity anchor for support analytics. Maps to `person_id` via Identity Manager.
 | `_version` | UInt64 | REQUIRED | Deduplication version |
 
 **Indexes**:
-- `idx_support_agent_lookup`: `(source_instance_id, agent_id, data_source)`
+- `idx_support_agent_lookup`: `(insight_source_id, agent_id, data_source)`
 - `idx_support_agent_email`: `(email)`
 
 ---
@@ -218,7 +218,7 @@ JSM exposes explicit SLA policy objects (via `GET /rest/servicedeskapi/request/{
 
 **`data_source`**: `"insight_jsm"`
 
-**`source_instance_id`**: Atlassian domain slug, e.g. `jsm-acme-prod`.
+**`insight_source_id`**: Atlassian domain slug, e.g. `jsm-acme-prod`.
 
 | Unified table | JSM source | Key mapping notes |
 |---------------|-----------|-------------------|
@@ -254,7 +254,7 @@ support_ticket_events.author_id
 
 **`requester_id` in `support_tickets`**: external customers — **not** resolved to `person_id`. Used for volume and routing analysis only.
 
-**`source_instance_id` is required in all joins** — ticket IDs can collide across instances of the same source.
+**`insight_source_id` is required in all joins** — ticket IDs can collide across instances of the same source.
 
 ---
 

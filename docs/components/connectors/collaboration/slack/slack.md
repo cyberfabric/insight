@@ -73,7 +73,7 @@ Daily aggregated message counts per Slack user. Populated from `conversations.hi
 
 | Field | Type | Slack value | Notes |
 |-------|------|-------------|-------|
-| `source_instance_id` | String | connector config | e.g. `slack-acme` |
+| `insight_source_id` | String | connector config | e.g. `slack-acme` |
 | `user_id` | String | `messages[].user` | Slack user ID (e.g. `U0123ABC`) |
 | `email` | String | `users.list[].profile.email` | Joined via `users.list`; primary identity key |
 | `date` | Date | `messages[].ts` (date part) | Bucketed to calendar day UTC |
@@ -100,7 +100,7 @@ Daily aggregated huddle participation per user. Slack huddles are audio/video se
 
 | Field | Type | Slack value | Notes |
 |-------|------|-------------|-------|
-| `source_instance_id` | String | connector config | |
+| `insight_source_id` | String | connector config | |
 | `user_id` | String | huddle participant user ID | |
 | `email` | String | from `users.list` | |
 | `date` | Date | huddle start date (UTC) | |
@@ -129,7 +129,7 @@ Populated from `users.list` endpoint.
 
 | Field | Type | Slack field | Notes |
 |-------|------|------------|-------|
-| `source_instance_id` | String | connector config | |
+| `insight_source_id` | String | connector config | |
 | `user_id` | String | `users[].id` | Slack user ID (e.g. `U0123ABC`) |
 | `email` | String | `users[].profile.email` | Requires `users:read.email` scope |
 | `display_name` | String | `users[].profile.display_name` or `real_name` | |
@@ -225,7 +225,7 @@ When Enterprise Grid mode is detected (configurable or auto-detected via `auth.t
 | Channel message (`public_channel` / `private_channel`) | `channel_posts` | Non-threaded channel posts |
 | Threaded reply | `channel_replies` | Thread replies in channels |
 | Huddle | `collab_meeting_activity` | Audio/video session in channel or DM |
-| Workspace | `source_instance_id` | One connector instance per Slack workspace |
+| Workspace | `insight_source_id` | One connector instance per Slack workspace |
 
 ---
 

@@ -12,8 +12,8 @@ date: 2026-03-24
   - [2.1 Local Infrastructure Stack — HIGH](#21-local-infrastructure-stack--high)
   - [2.2 Local Manifest Debugging — HIGH](#22-local-manifest-debugging--high)
   - [2.3 Manifest Upload Script — HIGH](#23-manifest-upload-script--high)
-  - [2.4 Terraform Connection Management — HIGH](#24-terraform-connection-management--high)
-  - [2.5 Kestra Orchestration — HIGH](#25-kestra-orchestration--high)
+  - [2.4 Connection Management via API — HIGH](#24-connection-management-via-api--high)
+  - [2.5 Argo Workflows Orchestration — HIGH](#25-argo-workflows-orchestration--high)
   - [2.6 dbt Project & Silver Union — HIGH](#26-dbt-project--silver-union--high)
   - [2.7 Reference Connector Package — M365 — MEDIUM](#27-reference-connector-package--m365--medium)
 - [3. Feature Dependencies](#3-feature-dependencies)
@@ -33,11 +33,11 @@ The Ingestion Layer DESIGN is decomposed into seven features organized around de
 
 **Key Architectural Decisions**:
 - Silver layer union via dbt tags: each connector's `to_{domain}.sql` tagged with `silver:class_{domain}`, union models auto-discover by tag
-- Per-tenant Terraform workspaces for connection isolation
-- Per-tenant Kestra flows stored in Git, pushed via API script
-- ClickHouse cluster locally (mirrors production shard-local tables)
-- MariaDB as Kestra metadata backend
-- Auto-initialization on `docker compose up` — no manual setup
+- Connections managed via Airbyte API (`apply-connections.sh`) with tenant YAML configs
+- Per-tenant Argo CronWorkflows generated from connector `descriptor.yaml`
+- Kind K8s cluster for local development (same Helm charts as production)
+- `insight-toolbox` container runs all management scripts inside the cluster
+- Auto-initialization on `./up.sh` — no manual setup
 
 ## 2. Entries
 
@@ -49,14 +49,14 @@ The Ingestion Layer DESIGN is decomposed into seven features organized around de
 
 - [ ] `p1` - **ID**: `cpt-insightspec-feature-local-infra`
 
-- **Purpose**: Provide a fully automated local development environment via Docker Compose that mirrors production topology. Running `docker compose up` creates a working instance with ClickHouse cluster, Airbyte, Kestra, MariaDB, and all initialization — no manual configuration required.
+- **Purpose**: Provide a fully automated local development environment via Kind K8s cluster that mirrors production topology. Running `./up.sh` creates a working instance with ClickHouse, Airbyte, Argo Workflows, and all initialization — no manual configuration required.
 
 - **Depends On**: None
 
 - **Scope**:
-  - Docker Compose with all services: ClickHouse cluster (shard-local capable), Airbyte (server + worker + temporal + postgres), Kestra (server + worker + MariaDB), dbt runner
-  - Init containers that create databases, register connectors, apply Terraform, load Kestra flows
-  - Network configuration, health checks, volume mounts for persistence
+  - Kind K8s cluster with all services: ClickHouse (Deployment + PVC), Airbyte (Helm chart), Argo Workflows (Helm chart)
+  - `insight-toolbox` container that runs init scripts: create databases, register connectors, apply connections, create CronWorkflows
+  - NodePort services for local access, PVC for data persistence
   - Automatic registration of all connector manifests from `src/ingestion/connectors/`
   - Automatic application of all Terraform connection configs from `src/ingestion/connections/`
   - Automatic loading of all Kestra flows
@@ -86,18 +86,18 @@ The Ingestion Layer DESIGN is decomposed into seven features organized around de
 - **Domain Model Entities**:
   - AirbyteConnection
   - BronzeTable
-  - KestraFlow
+  - ArgoWorkflow
 
 - **Design Components**:
 
   - [ ] `p1` - `cpt-insightspec-component-ing-airbyte`
   - [ ] `p1` - `cpt-insightspec-component-ing-clickhouse`
-  - [ ] `p1` - `cpt-insightspec-component-ing-kestra`
+  - [ ] `p1` - `cpt-insightspec-component-ing-argo`
 
 - **API**:
   - Airbyte API (connector registration, connection creation)
-  - Kestra API (flow upload)
-  - Terraform CLI (apply)
+  - Argo Workflows API (CronWorkflow management)
+  - kubectl / helm (cluster management)
 
 - **Sequences**:
 
@@ -186,7 +186,7 @@ The Ingestion Layer DESIGN is decomposed into seven features organized around de
 
 - **Out of scope**:
   - CDK connector registration (Docker image push)
-  - Connection creation (that's Terraform — feature 4)
+  - Connection creation (that's feature 4 — Connection Management via API)
 
 - **Requirements Covered**:
 
@@ -225,26 +225,24 @@ The Ingestion Layer DESIGN is decomposed into seven features organized around de
   (none)
 
 
-### 2.4 [Terraform Connection Management](feature-terraform-connections/) — HIGH
+### 2.4 [Connection Management via API](feature-connection-management/) — HIGH
 
 - [ ] `p1` - **ID**: `cpt-insightspec-feature-terraform-connections`
 
-- **Purpose**: Manage Airbyte connections (source → destination + catalog) as code via Terraform with per-tenant workspace isolation. Applying Terraform creates all necessary connections for a tenant.
+- **Purpose**: Manage Airbyte connections (source → destination + catalog) as code via Airbyte API with tenant YAML configs. Running `./update-connections.sh {tenant}` creates all necessary connections.
 
 - **Depends On**: `cpt-insightspec-feature-manifest-upload`
 
 - **Scope**:
-  - Terraform configuration in `src/ingestion/connections/`
-  - Airbyte Terraform provider (`airbytehq/airbyte`) configuration
-  - Per-tenant Terraform workspaces (`terraform workspace select tenant-{id}`)
-  - Source, destination, and connection resources per tenant
-  - `tenant_id` passed through connection configuration variables
-  - Local state storage (for dev)
-  - Apply script: `./apply-connections.sh {tenant_id}`
+  - Tenant credential files in `connections/{tenant}.yaml` (gitignored)
+  - `credentials.yaml.example` in each connector package (tracked)
+  - `apply-connections.sh` reads tenant YAML + connector `descriptor.yaml`
+  - Creates source + destination + connection via Airbyte API
+  - Connection state persisted as K8s ConfigMaps
+  - Idempotent — safe to re-run
 
 - **Out of scope**:
-  - Remote state backend (production)
-  - Custom connector registration via Terraform (API only)
+  - Custom connector registration (that's feature 3 — Manifest Upload)
   - CI/CD integration
 
 - **Requirements Covered**:
@@ -260,7 +258,7 @@ The Ingestion Layer DESIGN is decomposed into seven features organized around de
 
 - **Design Constraints Covered**:
 
-  - [ ] `p1` - `cpt-insightspec-constraint-ing-terraform-connections`
+  (none specific)
 
 - **Domain Model Entities**:
   - AirbyteConnection
@@ -268,42 +266,40 @@ The Ingestion Layer DESIGN is decomposed into seven features organized around de
 
 - **Design Components**:
 
-  - [ ] `p1` - `cpt-insightspec-component-ing-terraform`
+  - [ ] `p1` - `cpt-insightspec-component-ing-airbyte`
 
 - **API**:
-  - `terraform plan` / `terraform apply`
-  - `./apply-connections.sh {tenant_id}`
+  - Airbyte REST API (sources, destinations, connections)
+  - `./update-connections.sh {tenant_id}`
 
 - **Sequences**:
 
-  - `cpt-insightspec-seq-ing-terraform-apply`
+  - `cpt-insightspec-seq-ing-connection-apply`
 
 - **Data**:
 
-  (none — Terraform state is local)
+  (none — state in K8s ConfigMaps)
 
 
-### 2.5 [Kestra Orchestration](feature-kestra-orchestration/) — HIGH
+### 2.5 [Argo Workflows Orchestration](feature-argo-orchestration/) — HIGH
 
-- [ ] `p1` - **ID**: `cpt-insightspec-feature-kestra-orchestration`
+- [ ] `p1` - **ID**: `cpt-insightspec-feature-argo-orchestration`
 
-- **Purpose**: Configure Kestra to orchestrate the full ingestion pipeline: trigger Airbyte sync → wait for completion → run dbt transformations. Each tenant has its own set of flows. Flows are stored in Git and pushed to Kestra via API script.
+- **Purpose**: Configure Argo Workflows to orchestrate the full ingestion pipeline: trigger Airbyte sync → wait for completion → run dbt transformations. Each connector defines a schedule in `descriptor.yaml`. CronWorkflows are generated from a shared template and applied per tenant.
 
 - **Depends On**: `cpt-insightspec-feature-local-infra`, `cpt-insightspec-feature-terraform-connections`
 
 - **Scope**:
-  - Per-tenant Kestra flow YAML files in `src/ingestion/flows/{tenant_id}/`
-  - Flow template: Airbyte sync task → dbt run task (with dependency)
-  - Kestra Airbyte plugin configuration (connectionId, API token)
-  - Kestra dbt plugin configuration (project path, profiles)
-  - Retry policy (default + per-flow configurable)
-  - Script to push flows to Kestra API: `./sync-flows.sh {tenant_id}` or `./sync-flows.sh --all`
-  - Cron scheduling per flow
+  - Shared WorkflowTemplates: `airbyte-sync`, `dbt-run`, `ingestion-pipeline` (DAG)
+  - Per-tenant CronWorkflows generated from `workflows/schedules/sync.yaml.tpl`
+  - Schedule and `dbt_select` read from connector `descriptor.yaml`
+  - `connection_id` resolved from state (K8s ConfigMap)
+  - Retry policy via Argo `retryStrategy`
+  - Script: `./update-workflows.sh {tenant_id}` or `./update-workflows.sh --all`
 
 - **Out of scope**:
   - Event-driven triggers (webhook-based)
-  - Complex DAG branching (parallel syncs)
-  - Monitoring and alerting
+  - Monitoring and alerting beyond Argo UI
 
 - **Requirements Covered**:
 
@@ -319,18 +315,19 @@ The Ingestion Layer DESIGN is decomposed into seven features organized around de
 
 - **Design Constraints Covered**:
 
-  (none specific — Kestra is a design choice, not a constraint)
+  (none specific — Argo is a design choice per ADR-0002)
 
 - **Domain Model Entities**:
-  - KestraFlow
+  - ArgoWorkflow
+  - CronWorkflow
 
 - **Design Components**:
 
-  - [ ] `p1` - `cpt-insightspec-component-ing-kestra`
+  - [ ] `p1` - `cpt-insightspec-component-ing-argo`
 
 - **API**:
-  - Kestra REST API: POST /flows, PUT /flows/{id}
-  - `./sync-flows.sh {tenant_id}`
+  - Argo Workflows API / kubectl apply
+  - `./update-workflows.sh {tenant_id}`
 
 - **Sequences**:
 
@@ -389,6 +386,12 @@ The Ingestion Layer DESIGN is decomposed into seven features organized around de
   - SilverTable
   - BronzeTable
   - Descriptor
+
+- **Database Tables**:
+
+  - [ ] `p1` - `cpt-insightspec-dbtable-cn-bronze`
+  - [ ] `p1` - `cpt-insightspec-dbtable-cn-staging`
+  - [ ] `p1` - `cpt-insightspec-dbtable-cn-silver`
 
 - **Design Components**:
 
@@ -486,7 +489,7 @@ cpt-insightspec-feature-local-infra
     │       ↓
     │       └─→ cpt-insightspec-feature-terraform-connections
     │               ↓
-    │               └─→ cpt-insightspec-feature-kestra-orchestration
+    │               └─→ cpt-insightspec-feature-argo-orchestration
     ├─→ cpt-insightspec-feature-dbt-silver
     │       ↓
     │       └─→ cpt-insightspec-feature-ref-m365
@@ -501,12 +504,12 @@ cpt-insightspec-feature-local-debug  (independent — no platform dependency)
 
 - `cpt-insightspec-feature-manifest-upload` requires `cpt-insightspec-feature-local-infra`: needs a running Airbyte instance to upload manifests to
 - `cpt-insightspec-feature-terraform-connections` requires `cpt-insightspec-feature-manifest-upload`: connections reference source definitions that must be registered first
-- `cpt-insightspec-feature-kestra-orchestration` requires `cpt-insightspec-feature-local-infra` and `cpt-insightspec-feature-terraform-connections`: flows trigger syncs on existing connections
+- `cpt-insightspec-feature-argo-orchestration` requires `cpt-insightspec-feature-local-infra` and `cpt-insightspec-feature-terraform-connections`: CronWorkflows trigger syncs on existing connections
 - `cpt-insightspec-feature-dbt-silver` requires `cpt-insightspec-feature-local-infra`: dbt needs ClickHouse to be running
 - `cpt-insightspec-feature-ref-m365` requires `cpt-insightspec-feature-local-debug` and `cpt-insightspec-feature-dbt-silver`: reference package needs both debugging tools and dbt project structure
 - `cpt-insightspec-feature-local-debug` is independent — runs standalone Docker containers without the platform
 
 **Parallel tracks**:
-- Track A (platform): local-infra → manifest-upload → terraform-connections → kestra-orchestration
+- Track A (platform): local-infra → manifest-upload → connection-management → argo-orchestration
 - Track B (data): local-infra → dbt-silver → ref-m365
 - Track C (standalone): local-debug → ref-m365

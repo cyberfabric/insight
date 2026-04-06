@@ -22,7 +22,7 @@ models:
         description: "Tenant isolation field — framework-injected"
         tests:
           - not_null
-      - name: source_instance_id
+      - name: insight_source_id
         description: "Connector instance identifier"
       - name: unique_id
         description: "Composite dedup key: date|actor_identifier|terminal_type"

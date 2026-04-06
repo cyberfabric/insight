@@ -435,7 +435,7 @@ sequenceDiagram
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
 | `tenant_id` | UUID | REQUIRED | Tenant identifier — injected by framework |
-| `source_instance_id` | String | REQUIRED | Source instance identifier (e.g. `bitbucket-acme-prod`) |
+| `insight_source_id` | String | REQUIRED | Source instance identifier (e.g. `bitbucket-acme-prod`) |
 | `id` | Int64 | PRIMARY KEY | Auto-generated unique identifier |
 | `project_key` | String | REQUIRED | Repository owner — joins to `git_commit_files.project_key` |
 | `repo_slug` | String | REQUIRED | Repository name — joins to `git_commit_files.repo_slug` |
@@ -456,7 +456,7 @@ sequenceDiagram
 **STATE message format** (emitted after each repository checkpoint):
 
 **Indexes**:
-- `idx_commit_file_ext_lookup`: `(tenant_id, source_instance_id, project_key, repo_slug, commit_hash, file_path, field_id, data_source)`
+- `idx_commit_file_ext_lookup`: `(tenant_id, insight_source_id, project_key, repo_slug, commit_hash, file_path, field_id, data_source)`
 - `idx_file_ext_field_id`: `(field_id)`
 ```json
 {"type": "STATE", "state": {"data": {"commits": {"RUSTLABS/rust-cli-toolkit": {"main": "abc123..."}}, "pull_requests": {"RUSTLABS/rust-cli-toolkit": {"last_updated_date": 1711234567000}}}}}
@@ -566,7 +566,7 @@ def paginate_endpoint(api_client, endpoint, **params):
 ```python
 {
     'tenant_id': config.tenant_id,
-    'source_instance_id': config.source_instance_id,
+    'insight_source_id': config.insight_source_id,
     'instance_name': config.instance_name,               # Connector instance identifier
     'project_key': api_data['project']['key'],
     'repo_slug': api_data['slug'],
@@ -610,7 +610,7 @@ def paginate_endpoint(api_client, endpoint, **params):
 ```python
 {
     'tenant_id': config.tenant_id,
-    'source_instance_id': config.source_instance_id,
+    'insight_source_id': config.insight_source_id,
     'instance_name': config.instance_name,
     'project_key': project_key,
     'repo_slug': repo_slug,
@@ -641,7 +641,7 @@ def paginate_endpoint(api_client, endpoint, **params):
 ```python
 {
     'tenant_id': config.tenant_id,
-    'source_instance_id': config.source_instance_id,
+    'insight_source_id': config.insight_source_id,
     'instance_name': config.instance_name,
     'project_key': project_key,
     'repo_slug': repo_slug,
@@ -675,7 +675,7 @@ def paginate_endpoint(api_client, endpoint, **params):
 ```python
 {
     'tenant_id': config.tenant_id,
-    'source_instance_id': config.source_instance_id,
+    'insight_source_id': config.insight_source_id,
     'instance_name': config.instance_name,
     'project_key': project_key,
     'repo_slug': repo_slug,
@@ -728,7 +728,7 @@ def paginate_endpoint(api_client, endpoint, **params):
 ```python
 {
     'tenant_id': config.tenant_id,
-    'source_instance_id': config.source_instance_id,
+    'insight_source_id': config.insight_source_id,
     'instance_name': config.instance_name,
     'project_key': project_key, 'repo_slug': repo_slug, 'pr_id': pr_id,
     'reviewer_name': user_data['name'],
@@ -751,7 +751,7 @@ def paginate_endpoint(api_client, endpoint, **params):
 ```python
 {
     'tenant_id': config.tenant_id,
-    'source_instance_id': config.source_instance_id,
+    'insight_source_id': config.insight_source_id,
     'instance_name': config.instance_name,
     'project_key': project_key, 'repo_slug': repo_slug, 'pr_id': pr_id,
     'comment_id': comment_data['id'],

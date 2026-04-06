@@ -137,7 +137,7 @@ Slack has no internal email or document collaboration product. The `collab_email
 
 ### 3.1 Module-Specific Environment Constraints
 
-- Requires a Slack app installed to the target workspace with the following OAuth scopes: `channels:history`, `channels:read`, `groups:history`, `im:history`, `mpim:history`, `users:read`, `users:read.email`
+- Requires a Slack app installed to the target workspace with the following OAuth scopes: `channels:history`, `channels:read`, `groups:history`, `groups:read`, `im:history`, `im:read`, `mpim:history`, `mpim:read`, `users:read`, `users:read.email`
 - Enterprise Grid collection additionally requires admin-level token and `admin.analytics:read` scope
 - The connector operates as a batch collector; the recommended run frequency is daily
 - Slack API enforces tiered rate limits: Tier 2 (20 req/min) for user and channel listing, Tier 3 (50 req/min) for message history; the connector must handle HTTP 429 responses with `Retry-After` header
@@ -157,7 +157,7 @@ Slack has no internal email or document collaboration product. The `collab_email
 - Incremental sync using date-based lookback window
 - Identity resolution via `email` from user directory
 - All timestamps normalized to UTC
-- `source_instance_id` and `tenant_id` stamped on every record
+- `insight_source_id` and `tenant_id` stamped on every record
 
 ### 4.2 Out of Scope
 
@@ -300,7 +300,7 @@ The connector **MUST** produce a collection run log entry for each execution, re
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-slack-deduplication`
 
-Each stream **MUST** define a primary key that ensures re-running the connector for an overlapping date range does not produce duplicate records. Chat and meeting activity records use `(source_instance_id, email, date, data_source)` as the composite dedup key.
+Each stream **MUST** define a primary key that ensures re-running the connector for an overlapping date range does not produce duplicate records. Chat and meeting activity records use `(insight_source_id, email, date, data_source)` as the composite dedup key.
 
 The Airbyte sync mode for all activity streams **MUST** be configured as **Incremental | Append + Deduped** (upsert/merge semantics). When the connector re-calculates aggregates for a past date within the lookback window (e.g., because messages were deleted since the last run), the new values **MUST** overwrite the previously stored row for the same dedup key, not append a duplicate.
 
@@ -322,9 +322,9 @@ The connector **MUST** support incremental collection using a configurable date-
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-slack-instance-context`
 
-Every record emitted by the connector **MUST** include `source_instance_id` (identifying the specific Slack workspace) and `tenant_id` (identifying the Insight tenant). The `data_source` field **MUST** be set to `insight_slack` for all records.
+Every record emitted by the connector **MUST** include `insight_source_id` (identifying the specific Slack workspace) and `tenant_id` (identifying the Insight tenant). The `data_source` field **MUST** be set to `insight_slack` for all records.
 
-**Rationale**: Multiple Slack workspaces may feed into the same Bronze store. `source_instance_id` disambiguates workspaces; `tenant_id` is required by the platform's tenant isolation model.
+**Rationale**: Multiple Slack workspaces may feed into the same Bronze store. `insight_source_id` disambiguates workspaces; `tenant_id` is required by the platform's tenant isolation model.
 
 **Actors**: `cpt-insightspec-actor-slack-operator`
 
@@ -460,7 +460,7 @@ The connector **MUST** extract activity for all non-bot users in the workspace o
 - **Invalid token**: System reports authentication failure; operator corrects the token
 - **Missing scopes**: System reports which scopes are missing (e.g., `users:read.email`); operator updates the app permissions
 - **Enterprise Grid without admin token**: System falls back to standard collection strategy with a warning about scale limitations
-- **Enterprise Grid with Deep Channel Analytics**: Operator enables "Deep Channel Analytics" during primary connection setup. System provides instructions to create a second Airbyte connection: (1) use the same Slack connector and credentials, (2) configure as Standard Workspace strategy, (3) set schedule to weekly or on-demand, (4) target the same Bronze tables (upserts per-type breakdown via the same dedup key). System validates that both connections share the same `source_instance_id` for dedup key alignment
+- **Enterprise Grid with Deep Channel Analytics**: Operator enables "Deep Channel Analytics" during primary connection setup. System provides instructions to create a second Airbyte connection: (1) use the same Slack connector and credentials, (2) configure as Standard Workspace strategy, (3) set schedule to weekly or on-demand, (4) target the same Bronze tables (upserts per-type breakdown via the same dedup key). System validates that both connections share the same `insight_source_id` for dedup key alignment
 
 ### UC-002 Incremental Sync Run
 
@@ -517,7 +517,7 @@ The connector **MUST** extract activity for all non-bot users in the workspace o
 - [ ] Bot users excluded from user directory and activity metrics
 - [ ] Incremental sync with lookback window produces no duplicate records on consecutive runs
 - [ ] `email` is present and non-null in every activity record (joined from user directory)
-- [ ] `source_instance_id`, `tenant_id`, and `data_source = 'insight_slack'` present in all records
+- [ ] `insight_source_id`, `tenant_id`, and `data_source = 'insight_slack'` present in all records
 - [ ] All timestamps stored in UTC
 - [ ] Collection run log records success, record counts, channels scanned, and API call count
 

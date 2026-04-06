@@ -39,7 +39,7 @@ Standalone specification for the Zendesk (Support / Helpdesk) connector.
 
 **`data_source`**: `"insight_zendesk"` — used as the source discriminator in all unified Bronze tables.
 
-**`source_instance_id`**: set to the Zendesk subdomain slug, e.g. `zendesk-acme`. Required to disambiguate multiple Zendesk tenants in the same Bronze store.
+**`insight_source_id`**: set to the Zendesk subdomain slug, e.g. `zendesk-acme`. Required to disambiguate multiple Zendesk tenants in the same Bronze store.
 
 **Design principle**: `support_tickets` stores the current ticket state. `support_ticket_events` captures every audit entry from `/api/v2/tickets/{id}/audits` as an append-only event log. This pattern mirrors the task-tracking domain (`task_tracker_issues` + `task_tracker_history`).
 
@@ -57,7 +57,7 @@ Maps to the unified `support_tickets` table defined in `docs/connectors/support/
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier, e.g. `zendesk-acme` |
+| `insight_source_id` | String | Connector instance identifier, e.g. `zendesk-acme` |
 | `ticket_id` | String | Zendesk ticket `id` (numeric, stored as string) |
 | `subject` | String | Ticket `subject` |
 | `status` | String | `status` field — values: `new` / `open` / `pending` / `hold` / `solved` / `closed` — mapped directly |
@@ -79,7 +79,7 @@ Maps to the unified `support_tickets` table defined in `docs/connectors/support/
 | `_version` | UInt64 | Collection timestamp in milliseconds — deduplication version |
 
 **Indexes**:
-- `idx_support_ticket_lookup`: `(source_instance_id, ticket_id, data_source)`
+- `idx_support_ticket_lookup`: `(insight_source_id, ticket_id, data_source)`
 - `idx_support_ticket_assignee`: `(assignee_id, data_source)`
 - `idx_support_ticket_updated`: `(updated_at)`
 - `idx_support_ticket_status`: `(status, data_source)`
@@ -98,7 +98,7 @@ Every audit on every ticket is collected from `GET /api/v2/tickets/{id}/audits`.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier |
+| `insight_source_id` | String | Connector instance identifier |
 | `ticket_id` | String | Zendesk ticket `id` — joins to `support_tickets.ticket_id` |
 | `event_id` | String | Composite key: `{audit.id}_{event_index}` — unique per row (Zendesk audit `id` is unique per audit, not per event within the audit) |
 | `event_type` | String | Normalised event type (see mapping below) |
@@ -113,7 +113,7 @@ Every audit on every ticket is collected from `GET /api/v2/tickets/{id}/audits`.
 | `_version` | UInt64 | Collection timestamp in milliseconds |
 
 **Indexes**:
-- `idx_support_event_ticket`: `(source_instance_id, ticket_id, data_source)`
+- `idx_support_event_ticket`: `(insight_source_id, ticket_id, data_source)`
 - `idx_support_event_author`: `(author_id, data_source)`
 - `idx_support_event_created`: `(created_at)`
 - `idx_support_event_type`: `(event_type, data_source)`
@@ -142,7 +142,7 @@ Identity anchor for support analytics. Maps to `person_id` via Identity Manager.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier |
+| `insight_source_id` | String | Connector instance identifier |
 | `agent_id` | String | Zendesk `user.id` (numeric, stored as string) |
 | `email` | String | `user.email` — primary identity key → `person_id` |
 | `display_name` | String | `user.name` |
@@ -155,7 +155,7 @@ Identity anchor for support analytics. Maps to `person_id` via Identity Manager.
 | `_version` | UInt64 | Collection timestamp in milliseconds |
 
 **Indexes**:
-- `idx_support_agent_lookup`: `(source_instance_id, agent_id, data_source)`
+- `idx_support_agent_lookup`: `(insight_source_id, agent_id, data_source)`
 - `idx_support_agent_email`: `(email)`
 
 **Note on `role`**: Zendesk has three agent-tier roles — `agent` (standard), `admin` (full access), `light_agent` (read-only with comment access). The `GET /api/v2/users?role=agent` endpoint returns all three tiers. Fetch admins separately with `?role=admin` if needed.
@@ -170,7 +170,7 @@ Zendesk tickets support custom fields configured per account via `GET /api/v2/ti
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier, e.g. `zendesk-acme` |
+| `insight_source_id` | String | Connector instance identifier, e.g. `zendesk-acme` |
 | `ticket_id` | String | Parent ticket ID — joins to `support_tickets.ticket_id` |
 | `field_id` | String | Zendesk custom field ID (numeric, stored as string) |
 | `field_title` | String | Custom field display title (from `GET /api/v2/ticket_fields`) |
@@ -223,7 +223,7 @@ support_ticket_events.author_id
 
 **`requester_id` in `support_tickets`**: external customers — **not** resolved to `person_id`. Used for volume analytics and routing only.
 
-**`source_instance_id` is required in all joins** — numeric Zendesk IDs (ticket IDs, user IDs) are scoped to one subdomain; they collide across different Zendesk tenants.
+**`insight_source_id` is required in all joins** — numeric Zendesk IDs (ticket IDs, user IDs) are scoped to one subdomain; they collide across different Zendesk tenants.
 
 ---
 

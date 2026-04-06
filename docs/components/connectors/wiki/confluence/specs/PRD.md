@@ -158,7 +158,7 @@ The wiki data model is document-centric rather than event-centric: Bronze tables
 - Incremental sync using `lastModifiedAfter` cursor for pages and version history
 - Identity resolution via `email` resolved from Atlassian `accountId`
 - All data written to unified `wiki_*` schema with `data_source = 'insight_confluence'`
-- `source_instance_id` and `tenant_id` stamped on every record
+- `insight_source_id` and `tenant_id` stamped on every record
 - All timestamps normalized to UTC
 
 ### 4.2 Out of Scope
@@ -306,10 +306,10 @@ The connector **MUST** produce a collection run log entry for each execution in 
 Each stream **MUST** define a primary key that ensures re-running the connector does not produce duplicate records.
 
 The connector **MUST** generate URN-based surrogate primary keys for entity records:
-- Pages: `urn:confluence:{tenant_id}:{source_instance_id}:{page_id}`
-- Spaces: `urn:confluence:{tenant_id}:{source_instance_id}:{space_id}`
+- Pages: `urn:confluence:{tenant_id}:{insight_source_id}:{page_id}`
+- Spaces: `urn:confluence:{tenant_id}:{insight_source_id}:{space_id}`
 
-Activity records use `(source_instance_id, page_id, user_id, date, data_source)` as the composite dedup key.
+Activity records use `(insight_source_id, page_id, user_id, date, data_source)` as the composite dedup key.
 
 The Airbyte sync mode for `wiki_pages` and `wiki_spaces` **MUST** be **Incremental | Append + Deduped** (upsert semantics). The `wiki_page_activity` stream **MUST** use **Incremental | Append + Deduped** with the composite key. The `wiki_users` stream **MUST** use **Full Refresh | Append** with SCD Type 2 handling.
 
@@ -337,9 +337,9 @@ Spaces and users are collected as full refresh on every run (small cardinality).
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-conf-instance-context`
 
-Every record emitted by the connector **MUST** include `source_instance_id` (identifying the specific Confluence instance) and `data_source` (set to `insight_confluence` for all records). The `tenant_id` (identifying the Insight tenant) **MUST** be present on every record — it is injected by the Airbyte platform or destination layer from the connection configuration, not emitted by the connector manifest itself.
+Every record emitted by the connector **MUST** include `insight_source_id` (identifying the specific Confluence instance) and `data_source` (set to `insight_confluence` for all records). The `tenant_id` (identifying the Insight tenant) **MUST** be present on every record — it is injected by the Airbyte platform or destination layer from the connection configuration, not emitted by the connector manifest itself.
 
-**Note on Bronze schema**: The current `wiki_*` Bronze schemas in `README.md` define `source_instance_id` and `data_source` but do not define a `tenant_id` column. `tenant_id` is a platform-level concern injected at the destination layer (e.g., via Airbyte custom transformation or ClickHouse materialized column). The connector configuration **MUST** include `tenant_id` as a parameter so the platform can inject it. URN-based primary keys reference `{tenant_id}` — the DESIGN must specify the injection mechanism.
+**Note on Bronze schema**: The current `wiki_*` Bronze schemas in `README.md` define `insight_source_id` and `data_source` but do not define a `tenant_id` column. `tenant_id` is a platform-level concern injected at the destination layer (e.g., via Airbyte custom transformation or ClickHouse materialized column). The connector configuration **MUST** include `tenant_id` as a parameter so the platform can inject it. URN-based primary keys reference `{tenant_id}` — the DESIGN must specify the injection mechanism.
 
 **Rationale**: Multiple Confluence instances may feed into the same Bronze store. The `data_source` field enables the Silver pipeline to distinguish Confluence-originated records from Outline-originated records in the unified `wiki_*` schema.
 
@@ -528,7 +528,7 @@ The connector **MUST** extract all pages and versions matching the configured sp
 - [ ] `email` resolved and backfilled into page and activity records; null when unavailable
 - [ ] `_version` (millisecond timestamp) present on all records for deduplication
 - [ ] URN-based surrogate primary keys on entity streams
-- [ ] `source_instance_id` and `data_source = 'insight_confluence'` emitted by connector; `tenant_id` injected by platform
+- [ ] `insight_source_id` and `data_source = 'insight_confluence'` emitted by connector; `tenant_id` injected by platform
 - [ ] All timestamps stored in UTC
 - [ ] Collection run log (`confluence_collection_runs`) records success, per-stream counts, API call count, analytics availability, unresolved email count, spaces visible count, and per-page error count
 - [ ] API throttling (HTTP 429 and 503) handled with exponential backoff

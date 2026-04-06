@@ -338,7 +338,7 @@ sequenceDiagram
 | Column | Type | Description |
 |--------|------|-------------|
 | `tenant_id` | UUID | Tenant identifier — injected by framework; partitions all data by customer |
-| `source_instance_id` | String | Source instance identifier (e.g. `bamboohr-acme`) — injected by connector |
+| `insight_source_id` | String | Source instance identifier (e.g. `bamboohr-acme`) — injected by connector |
 | `id` | String | PK: BambooHR employee ID |
 | `displayName` | String | Full display name |
 | `firstName` | String | First/given name |
@@ -374,7 +374,7 @@ sequenceDiagram
 | Column | Type | Description |
 |--------|------|-------------|
 | `tenant_id` | UUID | Tenant identifier — injected by framework; partitions all data by customer |
-| `source_instance_id` | String | Source instance identifier (e.g. `bamboohr-acme`) — injected by connector |
+| `insight_source_id` | String | Source instance identifier (e.g. `bamboohr-acme`) — injected by connector |
 | `id` | String | PK: BambooHR time-off request ID |
 | `employeeId` | String | BambooHR employee ID — joins to `employees.id` |
 | `name` | String | Employee display name |
@@ -398,7 +398,7 @@ sequenceDiagram
 | Column | Type | Description |
 |--------|------|-------------|
 | `tenant_id` | UUID | Tenant identifier — injected by framework; partitions all data by customer |
-| `source_instance_id` | String | Source instance identifier (e.g. `bamboohr-acme`) — injected by connector |
+| `insight_source_id` | String | Source instance identifier (e.g. `bamboohr-acme`) — injected by connector |
 | `id` | Number | BambooHR field ID (source identifier) |
 | `name` | String | Field display name |
 | `type` | String | Field data type (e.g., `text`, `list`, `date`, `employee`) |

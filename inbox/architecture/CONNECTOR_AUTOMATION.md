@@ -212,7 +212,7 @@ connector:
 
 | Field | Type |
 |-------|------|
-| `source_instance_id` | String |
+| `insight_source_id` | String |
 | `entity_id` | String |
 | `field_id` | String |
 | `field_name` | String |
@@ -232,7 +232,7 @@ Four columns appear in every Bronze table across the entire connector fleet. The
 
 - **`collected_at DateTime64(3)`** — timestamp of the collection run that produced the row. Populated by the base framework at write time.
 - **`data_source String`** — the connector's canonical identifier (e.g. `insight_youtrack`, `insight_hubspot`). Populated from the `connector.id` field in the manifest.
-- **`source_instance_id String`** — the specific instance being collected from (e.g. `youtrack-acme-prod`, `jira-virtuozzo-prod`). Populated from the connector's runtime configuration.
+- **`insight_source_id String`** — the specific instance being collected from (e.g. `youtrack-acme-prod`, `jira-virtuozzo-prod`). Populated from the connector's runtime configuration.
 - **`_version UInt64`** — epoch milliseconds at collection time. Used as the deduplication sort key in ClickHouse ReplacingMergeTree tables.
 
 These columns are structural infrastructure. Any connector that declares them explicitly is doing unnecessary work; the base framework should own them entirely.
@@ -344,7 +344,7 @@ Given a declared field list with names, types, and constraints, the framework ge
 ```sql
 CREATE TABLE IF NOT EXISTS {source}_{entity}
 (
-    source_instance_id  String,
+    insight_source_id  String,
     {field_name}        {ClickHouse_type},
     ...
     collected_at        DateTime64(3),
@@ -352,7 +352,7 @@ CREATE TABLE IF NOT EXISTS {source}_{entity}
     _version            UInt64
 )
 ENGINE = ReplacingMergeTree(_version)
-ORDER BY ({primary_key}, source_instance_id)
+ORDER BY ({primary_key}, insight_source_id)
 SETTINGS index_granularity = 8192;
 ```
 
@@ -461,15 +461,15 @@ No equivalent constraint exists for YouTrack, Jira, HubSpot, or Salesforce — t
 
 ### 4.9 Multi-Instance Disambiguation
 
-The platform supports multiple instances of the same connector type in parallel — five Jenkins instances, two Jira instances, two Zabbix instances, multiple YouTrack deployments across different customer tenants. Every Bronze row carries a `source_instance_id` string that identifies which instance produced it.
+The platform supports multiple instances of the same connector type in parallel — five Jenkins instances, two Jira instances, two Zabbix instances, multiple YouTrack deployments across different customer tenants. Every Bronze row carries a `insight_source_id` string that identifies which instance produced it.
 
-The `source_instance_id` value for each instance must be:
+The `insight_source_id` value for each instance must be:
 - **Human-readable**: `jira-virtuozzo-prod` and `jira-osystems-prod`, not `instance-1` and `instance-2`
-- **Stable**: changing a `source_instance_id` after historical data has been collected breaks all historical joins — every existing row that referenced the old value becomes unresolvable
+- **Stable**: changing a `insight_source_id` after historical data has been collected breaks all historical joins — every existing row that referenced the old value becomes unresolvable
 - **Unique across all instances of the same type**: two Jira instances cannot share an ID, even if they are on different customer tenants
 - **Meaningful in context**: `youtrack-acme-prod` tells an analyst at a glance which system they are querying; a UUID does not
 
-These properties cannot be auto-generated. They require a human to name each instance deliberately, understanding both the system being connected and the historical data implications of the choice. The `source_instance_id` is effectively a stable foreign key in every Bronze table — it has the same stability requirements as a database primary key.
+These properties cannot be auto-generated. They require a human to name each instance deliberately, understanding both the system being connected and the historical data implications of the choice. The `insight_source_id` is effectively a stable foreign key in every Bronze table — it has the same stability requirements as a database primary key.
 
 ---
 
@@ -531,7 +531,7 @@ The line between the two is not the same as the line between framework code and 
 | Identity key candidates | Partial (AI-assisted) | AI flags email-shaped fields and likely external entities; human confirms rules — see §7.2 |
 | Identity resolution rules (fallback strategy) | No | OQ-JIRA-1, OQ-HS-1 — what to do when email is suppressed; internal vs external is policy |
 | Privacy / content collection decisions | No | Zulip message text, M365 email body, M365 meeting content |
-| `source_instance_id` naming | No | Human-assigned, must be stable, must be meaningful |
+| `insight_source_id` naming | No | Human-assigned, must be stable, must be meaningful |
 | Silver semantic mapping (final) | Partial (AI-assisted) | AI drafts field→column mapping via Onboarding UI; human approves — see §7.3 |
 | New Silver class creation | Partial (AI-assisted) | AI drafts schema when no match found; human defines and registers class — see §7.4 |
 | Data retention constraints | No | M365 7–30 day window — documented in vendor docs, not in API schema |
@@ -550,7 +550,7 @@ The 10-step connector checklist from `CONNECTORS_ARCHITECTURE.md` maps onto this
 2. Base class inheritance — the author's connector class extends `BaseConnector`; all protocol mechanics are inherited
 3. `{source}_collection_runs` table — generated from the manifest; the author declares per-entity count field names only
 4. `{source}_{entity}_ext` table — generated on declaration of `has_custom_fields: true` in the endpoint spec
-5. Metadata column injection (`collected_at`, `_version`, `data_source`, `source_instance_id`) — framework-owned, not written by connector authors
+5. Metadata column injection (`collected_at`, `_version`, `data_source`, `insight_source_id`) — framework-owned, not written by connector authors
 6. Bronze DDL generation — generated from the field declaration in the manifest or a companion schema file
 7. AirByte/Dagster orchestration registration — generated from the manifest; the author declares the schedule and retry policy
 
@@ -707,7 +707,7 @@ The Onboarding UI surfaces this explicitly. If the AI cannot map >30% of a Bronz
 
 The operator can then initiate a **new class definition** flow:
 
-1. **AI drafts the schema** — proposes a `class_cicd_runs` table structure based on the Bronze fields, applying platform conventions (standard metadata columns, `source_instance_id`, `person_id` if an identity field is found, `data_source` enum)
+1. **AI drafts the schema** — proposes a `class_cicd_runs` table structure based on the Bronze fields, applying platform conventions (standard metadata columns, `insight_source_id`, `person_id` if an identity field is found, `data_source` enum)
 2. **Operator reviews and edits** — column names, types, which fields are required vs optional, whether a Silver Step 2 (person enrichment) applies
 3. **Schema is registered** — the new `class_*` table definition is added to the platform's Silver schema registry; it becomes available as a mapping target for all future connectors in the same domain
 4. **The onboarding resumes** — now that the class exists, the current connector's Bronze tables can be mapped to it

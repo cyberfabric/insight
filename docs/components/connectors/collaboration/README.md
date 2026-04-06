@@ -74,7 +74,7 @@ Daily aggregated message counts per user. Covers direct messages, group chats, a
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
-| `source_instance_id` | String | REQUIRED | Connector instance identifier, e.g. `m365-acme`, `zulip-main` |
+| `insight_source_id` | String | REQUIRED | Connector instance identifier, e.g. `m365-acme`, `zulip-main` |
 | `user_id` | String | REQUIRED | Source-specific user identifier (M365 UPN / Zulip numeric ID) |
 | `email` | String | REQUIRED | User email — primary identity key → `person_id` |
 | `date` | Date | REQUIRED | Activity date (report date for M365, message date for Zulip) |
@@ -90,7 +90,7 @@ Daily aggregated message counts per user. Covers direct messages, group chats, a
 | `_version` | UInt64 | REQUIRED | Deduplication version (millisecond timestamp) |
 
 **Indexes**:
-- `idx_collab_chat_user`: `(source_instance_id, email, date)`
+- `idx_collab_chat_user`: `(insight_source_id, email, date)`
 - `idx_collab_chat_date`: `(date, data_source)`
 
 **`total_chat_messages` computation**:
@@ -107,7 +107,7 @@ Daily aggregated meeting and call participation per user. M365 Teams only at lau
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
-| `source_instance_id` | String | REQUIRED | Connector instance identifier |
+| `insight_source_id` | String | REQUIRED | Connector instance identifier |
 | `user_id` | String | REQUIRED | Source-specific user identifier |
 | `email` | String | REQUIRED | User email — identity key |
 | `date` | Date | REQUIRED | Activity date |
@@ -127,7 +127,7 @@ Daily aggregated meeting and call participation per user. M365 Teams only at lau
 | `_version` | UInt64 | REQUIRED | Deduplication version |
 
 **Indexes**:
-- `idx_collab_meeting_user`: `(source_instance_id, email, date)`
+- `idx_collab_meeting_user`: `(insight_source_id, email, date)`
 - `idx_collab_meeting_date`: `(date, data_source)`
 
 **Duration normalisation**: M365 returns `audioDuration`, `videoDuration`, `screenShareDuration` as ISO 8601 duration strings (e.g. `PT1H30M`) — convert to seconds at collection time.
@@ -140,7 +140,7 @@ Daily aggregated email activity per user. M365 Outlook only; no Zulip equivalent
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
-| `source_instance_id` | String | REQUIRED | Connector instance identifier |
+| `insight_source_id` | String | REQUIRED | Connector instance identifier |
 | `user_id` | String | REQUIRED | Source-specific user identifier (UPN for M365) |
 | `email` | String | REQUIRED | User email — identity key |
 | `date` | Date | REQUIRED | Activity date |
@@ -155,7 +155,7 @@ Daily aggregated email activity per user. M365 Outlook only; no Zulip equivalent
 | `_version` | UInt64 | REQUIRED | Deduplication version |
 
 **Indexes**:
-- `idx_collab_email_user`: `(source_instance_id, email, date)`
+- `idx_collab_email_user`: `(insight_source_id, email, date)`
 - `idx_collab_email_date`: `(date, data_source)`
 
 ---
@@ -166,7 +166,7 @@ Daily aggregated file and document activity per user. Covers OneDrive and ShareP
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
-| `source_instance_id` | String | REQUIRED | Connector instance identifier |
+| `insight_source_id` | String | REQUIRED | Connector instance identifier |
 | `user_id` | String | REQUIRED | Source-specific user identifier |
 | `email` | String | REQUIRED | User email — identity key |
 | `date` | Date | REQUIRED | Activity date |
@@ -182,7 +182,7 @@ Daily aggregated file and document activity per user. Covers OneDrive and ShareP
 | `_version` | UInt64 | REQUIRED | Deduplication version |
 
 **Indexes**:
-- `idx_collab_doc_user`: `(source_instance_id, email, date, product)`
+- `idx_collab_doc_user`: `(insight_source_id, email, date, product)`
 - `idx_collab_doc_date`: `(date, product)`
 
 **Note**: One user produces two rows per day — one for OneDrive, one for SharePoint. `product` distinguishes them. When aggregating total file activity, sum across both products.
@@ -195,7 +195,7 @@ Identity anchor for collaboration analytics. M365 does not expose a standalone u
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
-| `source_instance_id` | String | REQUIRED | Connector instance identifier |
+| `insight_source_id` | String | REQUIRED | Connector instance identifier |
 | `user_id` | String | REQUIRED | Source-specific user identifier (Zulip numeric ID / M365 UPN) |
 | `email` | String | REQUIRED | Email — primary identity key → `person_id` |
 | `display_name` | String | NULLABLE | Display name |
@@ -207,7 +207,7 @@ Identity anchor for collaboration analytics. M365 does not expose a standalone u
 
 **Indexes**:
 - `idx_collab_user_email`: `(email)`
-- `idx_collab_user_lookup`: `(source_instance_id, user_id, data_source)`
+- `idx_collab_user_lookup`: `(insight_source_id, user_id, data_source)`
 
 **M365 note**: For M365, `collab_users` rows are populated from UPNs observed in activity reports — not from a dedicated users API. `user_id = email = userPrincipalName`. `display_name` is available in email and Copilot reports (`displayName` field) but absent from Teams, OneDrive, and SharePoint reports.
 

@@ -17,7 +17,7 @@
 |--------|------|-------------|-------------|
 | `id` | UInt64 | PRIMARY KEY | Auto-generated unique identifier |
 | `source` | String | REQUIRED | Task tracker type: `youtrack`, `jira`, `github` |
-| `source_instance_id` | String | REQUIRED | Unique identifier of the task tracker instance (e.g. `youtrack-acme-prod`, `jira-team-alpha`) |
+| `insight_source_id` | String | REQUIRED | Unique identifier of the task tracker instance (e.g. `youtrack-acme-prod`, `jira-team-alpha`) |
 | `event_date` | Date | REQUIRED | Date when the activity occurred |
 | `event_author` | String | REQUIRED | Person who performed the activity |
 | `activity_ref` | String | REQUIRED | Internal activity ID within the task tracker |
@@ -36,7 +36,7 @@
 | `_version` | UInt64 | REQUIRED | Deduplication version for ReplacingMergeTree |
 
 **Indexes**:
-- `idx_issue_lookup`: `(source, source_instance_id, issue_ref)`
+- `idx_issue_lookup`: `(source, insight_source_id, issue_ref)`
 - `idx_event_date`: `(event_date)`
 - `idx_task_id`: `(task_id)`
 - `idx_parent`: `(parent_issue_ref)`
@@ -52,7 +52,7 @@
 - **Values**: `youtrack`, `jira`, `github`
 - **Usage**: Filtering and source-specific logic
 
-**`source_instance_id`** (String, REQUIRED)
+**`insight_source_id`** (String, REQUIRED)
 - **Purpose**: Identifies the specific task tracker instance. A company may operate multiple instances of the same tracker type (e.g. several YouTrack installations).
 - **Format**: Free-form string, recommended pattern: `{source}-{org}-{env}` (e.g. `youtrack-acme-prod`, `jira-team-alpha`)
 - **Usage**: Multi-tenant queries, instance-level aggregation
@@ -154,7 +154,7 @@
 ### Parent (self-referencing)
 
 **`task_tracker_activities`** (parent issue)
-- **Join**: `parent_issue_ref` → `issue_ref` (within the same `source` and `source_instance_id`)
+- **Join**: `parent_issue_ref` → `issue_ref` (within the same `source` and `insight_source_id`)
 - **Cardinality**: Many child issues to one parent issue
 - **Description**: Links child tasks/bugs to their parent User Story or Epic
 
@@ -207,7 +207,7 @@ SELECT
     fields_map
 FROM task_tracker_activities
 WHERE source = 'youtrack'
-  AND source_instance_id = 'youtrack-acme-prod'
+  AND insight_source_id = 'youtrack-acme-prod'
   AND event_author = 'Dev 1'
   AND created_date >= '2026-01-01'
   AND created_date < '2026-02-01'
@@ -232,7 +232,7 @@ SELECT
     fields_map
 FROM task_tracker_activities
 WHERE source = 'youtrack'
-  AND source_instance_id = 'youtrack-acme-prod'
+  AND insight_source_id = 'youtrack-acme-prod'
   AND parent_issue_ref = '1-1'  -- issue_ref of the target User Story
 ORDER BY task_id, event_date;
 ```
@@ -249,7 +249,7 @@ SELECT
     fields_map
 FROM task_tracker_activities
 WHERE source = 'youtrack'
-  AND source_instance_id = 'youtrack-acme-prod'
+  AND insight_source_id = 'youtrack-acme-prod'
   AND parent_issue_ref = '1-1'
 ORDER BY task_id, event_date DESC
 LIMIT 1 BY task_id;
@@ -272,14 +272,14 @@ INNER JOIN (
         assignee
     FROM task_tracker_activities
     WHERE source = 'youtrack'
-      AND source_instance_id = 'youtrack-acme-prod'
+      AND insight_source_id = 'youtrack-acme-prod'
       AND type = 'User Story'
     ORDER BY issue_ref, event_date DESC
     LIMIT 1 BY issue_ref
 ) AS parent
     ON child.parent_issue_ref = parent.issue_ref
 WHERE child.source = 'youtrack'
-  AND child.source_instance_id = 'youtrack-acme-prod'
+  AND child.insight_source_id = 'youtrack-acme-prod'
   AND child.type = 'Bug';
 ```
 
@@ -297,10 +297,10 @@ FROM (
         parent_issue_ref,
         state,
         source,
-        source_instance_id
+        insight_source_id
     FROM task_tracker_activities
     WHERE source = 'youtrack'
-      AND source_instance_id = 'youtrack-acme-prod'
+      AND insight_source_id = 'youtrack-acme-prod'
       AND parent_issue_ref != ''
     ORDER BY issue_ref, event_date DESC
     LIMIT 1 BY issue_ref
@@ -313,7 +313,7 @@ INNER JOIN (
         state
     FROM task_tracker_activities
     WHERE source = 'youtrack'
-      AND source_instance_id = 'youtrack-acme-prod'
+      AND insight_source_id = 'youtrack-acme-prod'
       AND type = 'User Story'
     ORDER BY issue_ref, event_date DESC
     LIMIT 1 BY issue_ref
@@ -350,24 +350,24 @@ Since this is an event stream, always use `LIMIT 1 BY` or a subquery to get the 
 SELECT *
 FROM task_tracker_activities
 WHERE source = 'youtrack'
-  AND source_instance_id = 'youtrack-acme-prod'
+  AND insight_source_id = 'youtrack-acme-prod'
 ORDER BY issue_ref, event_date DESC
 LIMIT 1 BY issue_ref;
 ```
 
 ### Multi-Instance Queries
 
-When querying across multiple tracker instances, always include `source` and `source_instance_id` in filters and joins to avoid cross-contamination:
+When querying across multiple tracker instances, always include `source` and `insight_source_id` in filters and joins to avoid cross-contamination:
 
 ```sql
-SELECT source, source_instance_id, COUNT(DISTINCT issue_ref) AS issue_count
+SELECT source, insight_source_id, COUNT(DISTINCT issue_ref) AS issue_count
 FROM task_tracker_activities
-GROUP BY source, source_instance_id;
+GROUP BY source, insight_source_id;
 ```
 
 ### Performance Considerations
 
-- Use `(source, source_instance_id, issue_ref)` index for issue lookups
+- Use `(source, insight_source_id, issue_ref)` index for issue lookups
 - Use `(event_date)` index for time-range scans
 - `LIMIT 1 BY` is efficient in ClickHouse for "latest per group" queries
 - The `_version` field with `ReplacingMergeTree` ensures idempotent re-ingestion; use `FINAL` for guaranteed deduplication

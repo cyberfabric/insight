@@ -65,36 +65,13 @@ definitions:
         http_method: POST
         request_body_json:
           title: "Insight Employee Sync"
-          fields:
-            # --- Identity & name ---
-            - "id"
-            - "displayName"
-            - "firstName"
-            - "lastName"
-            - "workEmail"
-            - "employeeNumber"
-            # --- Job & org ---
-            - "jobTitle"
-            - "department"
-            - "division"
-            - "status"
-            - "employmentHistoryStatus"
-            # --- Manager / hierarchy ---
-            - "supervisor"
-            - "supervisorEId"
-            - "supervisorEmail"
-            # --- Location ---
-            - "location"
-            - "country"
-            - "city"
-            # --- Dates ---
-            - "hireDate"
-            - "originalHireDate"
-            - "terminationDate"
-            - "lastChanged"
-            # --- Employment ---
-            - "payType"
-            - "standardHoursPerWeek"
+          fields: >-
+            {{ ['id', 'displayName', 'firstName', 'lastName', 'workEmail',
+            'employeeNumber', 'jobTitle', 'department', 'division', 'status',
+            'employmentHistoryStatus', 'supervisor', 'supervisorEId',
+            'supervisorEmail', 'location', 'country', 'city', 'hireDate',
+            'originalHireDate', 'terminationDate', 'lastChanged',
+            'standardHoursPerWeek'] + config.get('employees_custom_fields', []) }}
       record_selector:
         type: RecordSelector
         extractor:
@@ -106,10 +83,12 @@ definitions:
     transformations:
       - type: AddFields
         fields:
+          - path: [raw_data]
+            value: "{{ record }}"
           - path: [tenant_id]
             value: "{{ config['tenant_id'] }}"
           - path: [source_instance_id]
-            value: "bamboohr-{{ config['domain'] }}"
+            value: "{{ config['source_instance_id'] }}"
           - path: [_source]
             value: "bamboohr"
           - path: [_extracted_at]
@@ -125,6 +104,9 @@ definitions:
             type: string
           source_instance_id:
             type: string
+          raw_data:
+            type: object
+            additionalProperties: true
           id:
             type: string
           displayName:
@@ -208,19 +190,10 @@ definitions:
               - "null"
               - string
             format: date-time
-          payType:
-            type:
-              - "null"
-              - string
           standardHoursPerWeek:
             type:
               - "null"
               - string
-          _source:
-            type: string
-          _extracted_at:
-            type: string
-            format: date-time
 
   leave_requests_stream:
     type: DeclarativeStream
@@ -247,7 +220,7 @@ definitions:
           - path: [tenant_id]
             value: "{{ config['tenant_id'] }}"
           - path: [source_instance_id]
-            value: "bamboohr-{{ config['domain'] }}"
+            value: "{{ config['source_instance_id'] }}"
           - path: [_source]
             value: "bamboohr"
           - path: [_extracted_at]
@@ -345,11 +318,6 @@ definitions:
               - "null"
               - object
             additionalProperties: true
-          _source:
-            type: string
-          _extracted_at:
-            type: string
-            format: date-time
 
   meta_fields_stream:
     type: DeclarativeStream
@@ -377,7 +345,7 @@ definitions:
           - path: [tenant_id]
             value: "{{ config['tenant_id'] }}"
           - path: [source_instance_id]
-            value: "bamboohr-{{ config['domain'] }}"
+            value: "{{ config['source_instance_id'] }}"
           - path: [_source]
             value: "bamboohr"
           - path: [_extracted_at]
@@ -413,11 +381,6 @@ definitions:
             type:
               - "null"
               - boolean
-          _source:
-            type: string
-          _extracted_at:
-            type: string
-            format: date-time
 
 streams:
   - $ref: "#/definitions/employees_stream"
@@ -438,6 +401,7 @@ spec:
     type: object
     required:
       - "tenant_id"
+      - "source_instance_id"
       - "api_key"
       - "domain"
     additionalProperties: true
@@ -447,6 +411,13 @@ spec:
         title: "Tenant ID"
         description: "Tenant isolation identifier (UUID)."
         order: 0
+      source_instance_id:
+        type: string
+        title: "Source Instance ID"
+        description: "Stable identifier for this BambooHR instance (e.g., 'bamboohr-acme-prod')."
+        examples:
+          - "bamboohr-acme-prod"
+        order: 1
       api_key:
         type: string
         title: "API Key"
@@ -460,3 +431,14 @@ spec:
         examples:
           - "acme"
         order: 2
+      employees_custom_fields:
+        type: array
+        items:
+          type: string
+        title: "Employees Custom Fields"
+        description: >-
+          Optional list of custom BambooHR field aliases to include in employee
+          extraction (e.g., 'customFunctionalTeamRD', 'customActualProjects').
+          Use the meta_fields stream to discover available field aliases.
+        default: []
+        order: 3

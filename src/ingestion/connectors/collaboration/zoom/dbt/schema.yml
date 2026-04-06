@@ -1,0 +1,27 @@
+version: 2
+
+sources:
+  - name: bronze_zoom
+    schema: bronze_zoom
+    tables:
+      - name: users
+      - name: meetings
+      - name: participants
+
+models:
+  - name: zoom__comms_events
+    description: "Zoom communication events (meetings + chat) -> staging, feeds class_comms_events"
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: source_id
+        tests:
+          - not_null
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: activity_date
+        tests:
+          - not_null

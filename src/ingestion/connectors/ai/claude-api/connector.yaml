@@ -22,8 +22,8 @@ definitions:
     fields:
       - path: [tenant_id]
         value: "{{ config['tenant_id'] }}"
-      - path: [source_instance_id]
-        value: "{{ config.get('source_instance_id', '') }}"
+      - path: [insight_source_id]
+        value: "{{ config.get('insight_source_id', '') }}"
       - path: [collected_at]
         value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
       - path: [data_source]
@@ -38,7 +38,7 @@ definitions:
     page_token_option:
       type: RequestOption
       inject_into: request_parameter
-      field_name: after_id
+      field_name: page
 
   offset_paginator:
     type: DefaultPaginator
@@ -68,7 +68,7 @@ streams:
         properties:
           tenant_id:
             type: string
-          source_instance_id:
+          insight_source_id:
             type: string
           unique:
             type: string
@@ -123,7 +123,7 @@ streams:
       requester:
         type: HttpRequester
         url_base: https://api.anthropic.com
-        path: /v1/organizations/usage_report/messages
+        path: "/v1/organizations/usage_report/messages?group_by[]=model&group_by[]=api_key_id&group_by[]=workspace_id&group_by[]=service_tier&group_by[]=context_window"
         http_method: GET
         request_headers:
           $ref: "#/definitions/anthropic_headers"
@@ -131,22 +131,32 @@ streams:
           $ref: "#/definitions/api_key_authenticator"
         request_parameters:
           bucket_width: "1d"
-          "group_by[]": "model,api_key_id,workspace_id,service_tier,context_window,inference_geo,speed"
       record_selector:
         type: RecordSelector
         extractor:
           type: DpathExtractor
           field_path:
             - data
+            - "0"
+            - results
       paginator:
         $ref: "#/definitions/cursor_paginator"
     transformations:
       - $ref: "#/definitions/tenant_id_injection"
       - type: AddFields
         fields:
-          - path:
-              - unique
-            value: "{{ record.get('date', '') }}|{{ record.get('model', '') }}|{{ record.get('api_key_id', '') }}|{{ record.get('workspace_id', '') }}|{{ record.get('service_tier', '') }}|{{ record.get('context_window', '') }}|{{ record.get('inference_geo', '') }}|{{ record.get('speed', '') }}"
+          - path: [date]
+            value: "{{ stream_interval['start_time'][:10] }}"
+          - path: [cache_read_tokens]
+            value: "{{ record.get('cache_read_input_tokens', 0) }}"
+          - path: [cache_creation_5m_tokens]
+            value: "{{ record.get('cache_creation', {}).get('ephemeral_5m_input_tokens', 0) }}"
+          - path: [cache_creation_1h_tokens]
+            value: "{{ record.get('cache_creation', {}).get('ephemeral_1h_input_tokens', 0) }}"
+          - path: [web_search_requests]
+            value: "{{ record.get('server_tool_use', {}).get('web_search_requests', 0) }}"
+          - path: [unique]
+            value: "{{ stream_interval['start_time'][:10] }}|{{ record.get('model') or '' }}|{{ record.get('api_key_id') or '' }}|{{ record.get('workspace_id') or '' }}|{{ record.get('service_tier') or '' }}|{{ record.get('context_window') or '' }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: date
@@ -158,7 +168,7 @@ streams:
         type: MinMaxDatetime
         datetime: "{{ config.get('start_date', day_delta(-90, format='%Y-%m-%dT00:00:00Z')) }}"
         datetime_format: "%Y-%m-%dT%H:%M:%SZ"
-      step: P31D
+      step: P1D
       cursor_granularity: P1D
       start_time_option:
         type: RequestOption
@@ -182,7 +192,7 @@ streams:
         properties:
           tenant_id:
             type: string
-          source_instance_id:
+          insight_source_id:
             type: string
           unique:
             type: string
@@ -196,8 +206,38 @@ streams:
             type:
               - string
               - "null"
-          amount_cents:
-            type: number
+          amount:
+            type:
+              - string
+              - "null"
+          currency:
+            type:
+              - string
+              - "null"
+          cost_type:
+            type:
+              - string
+              - "null"
+          model:
+            type:
+              - string
+              - "null"
+          service_tier:
+            type:
+              - string
+              - "null"
+          context_window:
+            type:
+              - string
+              - "null"
+          token_type:
+            type:
+              - string
+              - "null"
+          inference_geo:
+            type:
+              - string
+              - "null"
           collected_at:
             type: string
           data_source:
@@ -207,7 +247,7 @@ streams:
       requester:
         type: HttpRequester
         url_base: https://api.anthropic.com
-        path: /v1/organizations/cost_report
+        path: "/v1/organizations/cost_report?group_by[]=workspace_id&group_by[]=description"
         http_method: GET
         request_headers:
           $ref: "#/definitions/anthropic_headers"
@@ -215,22 +255,24 @@ streams:
           $ref: "#/definitions/api_key_authenticator"
         request_parameters:
           bucket_width: "1d"
-          "group_by[]": "workspace_id,description"
       record_selector:
         type: RecordSelector
         extractor:
           type: DpathExtractor
           field_path:
             - data
+            - "0"
+            - results
       paginator:
         $ref: "#/definitions/cursor_paginator"
     transformations:
       - $ref: "#/definitions/tenant_id_injection"
       - type: AddFields
         fields:
-          - path:
-              - unique
-            value: "{{ record.get('date', '') }}|{{ record.get('workspace_id', '') }}|{{ record.get('description', '') }}"
+          - path: [date]
+            value: "{{ stream_interval['start_time'][:10] }}"
+          - path: [unique]
+            value: "{{ stream_interval['start_time'][:10] }}|{{ record.get('workspace_id') or '' }}|{{ record.get('description') or '' }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: date
@@ -242,7 +284,7 @@ streams:
         type: MinMaxDatetime
         datetime: "{{ config.get('start_date', day_delta(-90, format='%Y-%m-%dT00:00:00Z')) }}"
         datetime_format: "%Y-%m-%dT%H:%M:%SZ"
-      step: P31D
+      step: P1D
       cursor_granularity: P1D
       start_time_option:
         type: RequestOption
@@ -266,7 +308,7 @@ streams:
         properties:
           tenant_id:
             type: string
-          source_instance_id:
+          insight_source_id:
             type: string
           id:
             type: string
@@ -345,7 +387,7 @@ streams:
         properties:
           tenant_id:
             type: string
-          source_instance_id:
+          insight_source_id:
             type: string
           id:
             type: string
@@ -382,8 +424,6 @@ streams:
           $ref: "#/definitions/anthropic_headers"
         authenticator:
           $ref: "#/definitions/api_key_authenticator"
-        request_parameters:
-          limit: "100"
       record_selector:
         type: RecordSelector
         extractor:
@@ -391,7 +431,7 @@ streams:
           field_path:
             - data
       paginator:
-        type: NoPagination
+        $ref: "#/definitions/offset_paginator"
     transformations:
       - $ref: "#/definitions/tenant_id_injection"
       - type: AddFields
@@ -412,7 +452,7 @@ streams:
         properties:
           tenant_id:
             type: string
-          source_instance_id:
+          insight_source_id:
             type: string
           id:
             type: string
@@ -449,8 +489,6 @@ streams:
           $ref: "#/definitions/anthropic_headers"
         authenticator:
           $ref: "#/definitions/api_key_authenticator"
-        request_parameters:
-          limit: "100"
       record_selector:
         type: RecordSelector
         extractor:
@@ -458,7 +496,7 @@ streams:
           field_path:
             - data
       paginator:
-        type: NoPagination
+        $ref: "#/definitions/offset_paginator"
     transformations:
       - $ref: "#/definitions/tenant_id_injection"
 
@@ -482,7 +520,7 @@ spec:
         description: Anthropic Admin API key (from Anthropic Console)
         airbyte_secret: true
         order: 1
-      source_instance_id:
+      insight_source_id:
         type: string
         title: Source Instance ID
         description: Optional connector instance identifier for multi-instance deployments

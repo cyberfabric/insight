@@ -22,12 +22,13 @@ models:
         description: "Tenant isolation field — framework-injected"
         tests:
           - not_null
-      - name: source_instance_id
+      - name: insight_source_id
         description: "Connector instance identifier"
       - name: unique_id
-        description: "Composite dedup key: date|model|api_key_id|workspace_id|service_tier|context_window|inference_geo|speed"
+        description: "Composite dedup key: date|model|api_key_id|workspace_id|service_tier|context_window"
         tests:
           - not_null
+          - unique
       - name: report_date
         description: "Usage date (ISO 8601)"
         tests:
@@ -46,10 +47,6 @@ models:
         description: "API service tier"
       - name: context_window
         description: "Context window size used"
-      - name: inference_geo
-        description: "Inference geography"
-      - name: speed
-        description: "Inference speed tier"
       - name: uncached_input_tokens
         description: "Input tokens not served from cache"
       - name: cache_read_tokens
@@ -58,6 +55,8 @@ models:
         description: "Tokens written to 5-minute prompt cache"
       - name: cache_creation_1h_tokens
         description: "Tokens written to 1-hour prompt cache"
+      - name: cache_creation_tokens
+        description: "Derived: cache_creation_5m_tokens + cache_creation_1h_tokens (aggregated per DESIGN §4.5)"
       - name: output_tokens
         description: "Output tokens generated"
       - name: total_input_tokens
@@ -78,3 +77,5 @@ models:
               values: ['insight_claude_api']
       - name: collected_at
         description: "When the record was collected"
+        tests:
+          - not_null

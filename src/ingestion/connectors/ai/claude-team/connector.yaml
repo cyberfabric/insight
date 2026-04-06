@@ -22,8 +22,8 @@ definitions:
     fields:
       - path: [tenant_id]
         value: "{{ config['tenant_id'] }}"
-      - path: [source_instance_id]
-        value: "{{ config.get('source_instance_id', '') }}"
+      - path: [insight_source_id]
+        value: "{{ config.get('insight_source_id', '') }}"
       - path: [collected_at]
         value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
       - path: [data_source]
@@ -39,6 +39,20 @@ definitions:
       type: RequestOption
       inject_into: request_parameter
       field_name: after_id
+
+  offset_paginator:
+    type: DefaultPaginator
+    pagination_strategy:
+      type: OffsetIncrement
+      page_size: 1000
+    page_token_option:
+      type: RequestOption
+      inject_into: request_parameter
+      field_name: offset
+    page_size_option:
+      type: RequestOption
+      inject_into: request_parameter
+      field_name: limit
 
   next_page_paginator:
     type: DefaultPaginator
@@ -65,10 +79,14 @@ streams:
         properties:
           tenant_id:
             type: string
-          source_instance_id:
+          insight_source_id:
             type: string
           id:
             type: string
+          type:
+            type:
+              - string
+              - "null"
           email:
             type: string
           name:
@@ -78,7 +96,9 @@ streams:
           role:
             type: string
           status:
-            type: string
+            type:
+              - string
+              - "null"
           added_at:
             type:
               - string
@@ -128,7 +148,7 @@ streams:
         properties:
           tenant_id:
             type: string
-          source_instance_id:
+          insight_source_id:
             type: string
           unique:
             type: string
@@ -146,20 +166,42 @@ streams:
             type:
               - string
               - "null"
-          input_tokens:
-            type: number
-          output_tokens:
-            type: number
-          cache_read_tokens:
-            type: number
-          cache_creation_tokens:
-            type: number
-          tool_use_count:
-            type: number
+          customer_type:
+            type:
+              - string
+              - "null"
           session_count:
-            type: number
-          lines_generated:
-            type: number
+            type:
+              - number
+              - "null"
+          lines_added:
+            type:
+              - number
+              - "null"
+          lines_removed:
+            type:
+              - number
+              - "null"
+          tool_use_accepted:
+            type:
+              - number
+              - "null"
+          tool_use_rejected:
+            type:
+              - number
+              - "null"
+          core_metrics_json:
+            type:
+              - string
+              - "null"
+          tool_actions_json:
+            type:
+              - string
+              - "null"
+          model_breakdown_json:
+            type:
+              - string
+              - "null"
           collected_at:
             type: string
           data_source:
@@ -175,8 +217,6 @@ streams:
           $ref: "#/definitions/anthropic_headers"
         authenticator:
           $ref: "#/definitions/api_key_authenticator"
-        request_parameters:
-          bucket_width: "1d"
       record_selector:
         type: RecordSelector
         extractor:
@@ -189,29 +229,46 @@ streams:
       - $ref: "#/definitions/tenant_id_injection"
       - type: AddFields
         fields:
-          - path:
-              - unique
-            value: "{{ record.get('date', '') }}|{{ record.get('actor_type', '') }}|{{ record.get('actor_identifier', '') }}|{{ record.get('terminal_type', '') }}"
+          - path: [date]
+            value: "{{ record.get('date', '')[:10] }}"
+          - path: [actor_type]
+            value: "{{ record.get('actor', {}).get('type') or '' }}"
+          - path: [actor_identifier]
+            value: "{{ record.get('actor', {}).get('api_key_name') or record.get('actor', {}).get('email') or '' }}"
+          - path: [session_count]
+            value: "{{ record.get('core_metrics', {}).get('num_sessions', 0) }}"
+          - path: [lines_added]
+            value: "{{ record.get('core_metrics', {}).get('lines_of_code', {}).get('added', 0) }}"
+          - path: [lines_removed]
+            value: "{{ record.get('core_metrics', {}).get('lines_of_code', {}).get('removed', 0) }}"
+          - path: [tool_use_accepted]
+            value: "{{ (record.get('tool_actions', {}).get('edit_tool', {}).get('accepted', 0) or 0) + (record.get('tool_actions', {}).get('write_tool', {}).get('accepted', 0) or 0) + (record.get('tool_actions', {}).get('multi_edit_tool', {}).get('accepted', 0) or 0) + (record.get('tool_actions', {}).get('notebook_edit_tool', {}).get('accepted', 0) or 0) }}"
+          - path: [tool_use_rejected]
+            value: "{{ (record.get('tool_actions', {}).get('edit_tool', {}).get('rejected', 0) or 0) + (record.get('tool_actions', {}).get('write_tool', {}).get('rejected', 0) or 0) + (record.get('tool_actions', {}).get('multi_edit_tool', {}).get('rejected', 0) or 0) + (record.get('tool_actions', {}).get('notebook_edit_tool', {}).get('rejected', 0) or 0) }}"
+          - path: [core_metrics_json]
+            value: "{{ record.get('core_metrics', {}) | tojson }}"
+          - path: [tool_actions_json]
+            value: "{{ record.get('tool_actions', {}) | tojson }}"
+          - path: [model_breakdown_json]
+            value: "{{ record.get('model_breakdown', []) | tojson }}"
+          - path: [unique]
+            value: "{{ record.get('date', '')[:10] }}|{{ record.get('actor', {}).get('type') or '' }}|{{ record.get('actor', {}).get('api_key_name') or record.get('actor', {}).get('email') or '' }}|{{ record.get('terminal_type') or '' }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: date
       cursor_datetime_formats:
-        - "%Y-%m-%dT%H:%M:%SZ"
         - "%Y-%m-%d"
-      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      datetime_format: "%Y-%m-%d"
       start_datetime:
         type: MinMaxDatetime
-        datetime: "{{ config.get('start_date', day_delta(-90, format='%Y-%m-%dT00:00:00Z')) }}"
-        datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+        datetime: "{{ config.get('start_date', day_delta(-90, format='%Y-%m-%d')) }}"
+        datetime_format: "%Y-%m-%d"
       step: P1D
       cursor_granularity: P1D
       start_time_option:
         type: RequestOption
         field_name: starting_at
-        inject_into: request_parameter
-      end_time_option:
-        type: RequestOption
-        field_name: ending_at
         inject_into: request_parameter
 
   # ── Stream 3: claude_team_workspaces (full refresh) ──
@@ -227,7 +284,7 @@ streams:
         properties:
           tenant_id:
             type: string
-          source_instance_id:
+          insight_source_id:
             type: string
           id:
             type: string
@@ -264,8 +321,6 @@ streams:
           $ref: "#/definitions/anthropic_headers"
         authenticator:
           $ref: "#/definitions/api_key_authenticator"
-        request_parameters:
-          limit: "100"
       record_selector:
         type: RecordSelector
         extractor:
@@ -273,13 +328,13 @@ streams:
           field_path:
             - data
       paginator:
-        type: NoPagination
+        $ref: "#/definitions/offset_paginator"
     transformations:
       - $ref: "#/definitions/tenant_id_injection"
       - type: AddFields
         fields:
           - path: [data_residency]
-            value: "{{ record.get('data_residency', {}) | tojson if record.get('data_residency') else '' }}"
+            value: "{{ record.get('data_residency') | tojson if record.get('data_residency') else none }}"
 
   # ── Stream 4: claude_team_workspace_members (full refresh, substream of workspaces) ──
   - type: DeclarativeStream
@@ -294,10 +349,14 @@ streams:
         properties:
           tenant_id:
             type: string
-          source_instance_id:
+          insight_source_id:
             type: string
           unique:
             type: string
+          type:
+            type:
+              - string
+              - "null"
           user_id:
             type: string
           workspace_id:
@@ -391,7 +450,7 @@ streams:
         properties:
           tenant_id:
             type: string
-          source_instance_id:
+          insight_source_id:
             type: string
           id:
             type: string
@@ -401,7 +460,7 @@ streams:
             type: string
           status:
             type: string
-          created_at:
+          invited_at:
             type:
               - string
               - "null"
@@ -428,8 +487,6 @@ streams:
           $ref: "#/definitions/anthropic_headers"
         authenticator:
           $ref: "#/definitions/api_key_authenticator"
-        request_parameters:
-          limit: "100"
       record_selector:
         type: RecordSelector
         extractor:
@@ -437,7 +494,7 @@ streams:
           field_path:
             - data
       paginator:
-        type: NoPagination
+        $ref: "#/definitions/offset_paginator"
     transformations:
       - $ref: "#/definitions/tenant_id_injection"
 
@@ -461,7 +518,7 @@ spec:
         description: Anthropic Admin API key for Team/Enterprise workspace
         airbyte_secret: true
         order: 1
-      source_instance_id:
+      insight_source_id:
         type: string
         title: Source Instance ID
         description: Optional connector instance identifier for multi-instance deployments

@@ -1,0 +1,34 @@
+# Helm values for argo/argo-workflows chart — production
+# Adjust resources, auth, and ingress for your environment
+
+server:
+  extraArgs:
+    - "--auth-mode=server"    # Change to sso/client for production auth
+  serviceType: ClusterIP
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 200m
+  # ingress:
+  #   enabled: true
+  #   hosts:
+  #     - argo.internal.example.com
+
+controller:
+  workflowNamespaces:
+    - argo
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 200m
+
+workflow:
+  serviceAccount:
+    create: true
+    name: argo-workflow
+
+executor:
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 100m

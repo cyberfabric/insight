@@ -120,7 +120,7 @@ Each Anthropic Admin API endpoint maps to exactly one stream. `GET /v1/organizat
 
 - [ ] `p2` - **ID**: `cpt-insightspec-principle-claude-team-source-native-schema`
 
-Bronze tables preserve the original Anthropic Admin API field names in their native casing (snake_case). Nested objects (notably `data_residency` in workspaces) are preserved as-is at Bronze level -- flattening and type normalization happen in the Silver layer. The only added fields are `tenant_id`, `source_instance_id`, `collected_at`, `data_source`, and `_version` for framework support and deduplication.
+Bronze tables preserve the original Anthropic Admin API field names in their native casing (snake_case). Nested objects (notably `data_residency` in workspaces) are preserved as-is at Bronze level -- flattening and type normalization happen in the Silver layer. The only added fields are `tenant_id`, `source_instance_id`, `collected_at`, and `data_source` for framework support. Note: `_version` and `metadata` (full API response JSON) are documented in Bronze table schemas for forward compatibility but are **not implemented** in the declarative manifest — the Airbyte `AddFields` transformation cannot capture the full response payload or generate deduplication versions.
 
 ### 2.2 Constraints
 
@@ -152,7 +152,7 @@ Workspace members requires iterating over all workspaces from the `claude_team_w
 
 - [ ] `p2` - **ID**: `cpt-insightspec-constraint-claude-team-iso-dates`
 
-The code usage endpoint uses ISO 8601 datetime parameters (`starting_at`, `ending_at`) with `bucket_width=1d`. This differs from Cursor's epoch millisecond format. The manifest's `DatetimeBasedCursor` must use ISO format strings.
+The code usage endpoint uses a date-only parameter `starting_at` (format `YYYY-MM-DD`). Unlike the `messages` and `cost_report` endpoints, `claude_code` does **not** accept `ending_at` or `bucket_width` parameters — only `starting_at` is permitted. The connector sends one request per day with `starting_at=YYYY-MM-DD` and the API returns all usage for that date. The manifest's `DatetimeBasedCursor` uses `datetime_format: "%Y-%m-%d"` and does not inject `end_time_option`.
 
 ## 3. Technical Architecture
 
@@ -305,7 +305,7 @@ check:
   stream_names: [claude_team_users]
 
 definitions:
-  bearer_authenticator:
+  api_key_authenticator:
     type: ApiKeyAuthenticator
     api_token: "{{ config['admin_api_key'] }}"
     header: x-api-key
@@ -331,7 +331,7 @@ streams:
         path: /v1/organizations/users
         http_method: GET
         authenticator:
-          $ref: "#/definitions/bearer_authenticator"
+          $ref: "#/definitions/api_key_authenticator"
         request_headers:
           anthropic-version: "2023-06-01"
         request_parameters:
@@ -355,8 +355,8 @@ streams:
         fields:
           - path: [tenant_id]
             value: "{{ config['tenant_id'] }}"
-          - path: [source_instance_id]
-            value: "{{ config.get('source_instance_id', '') }}"
+          - path: [insight_source_id]
+            value: "{{ config.get('insight_source_id', '') }}"
           - path: [collected_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
           - path: [data_source]
@@ -408,7 +408,7 @@ Ensures every record emitted by all streams contains `tenant_id` from the connec
 | Stream | Endpoint | Method | Pagination | Date Params |
 |--------|----------|--------|------------|-------------|
 | `claude_team_users` | `GET /v1/organizations/users` | GET | Cursor: `after_id`, `limit=100` | None |
-| `claude_team_code_usage` | `GET /v1/organizations/usage_report/claude_code` | GET | Cursor-based | Query: `starting_at` (ISO), `ending_at` (ISO), `bucket_width=1d` |
+| `claude_team_code_usage` | `GET /v1/organizations/usage_report/claude_code` | GET | Cursor-based | Query: `starting_at` (YYYY-MM-DD only; no `ending_at` or `bucket_width`) |
 | `claude_team_workspaces` | `GET /v1/organizations/workspaces` | GET | `limit` param | None |
 | `claude_team_workspace_members` | `GET /v1/organizations/workspaces/{id}/members` | GET | `limit` param | None |
 | `claude_team_invites` | `GET /v1/organizations/invites` | GET | `limit` param | None |
@@ -480,15 +480,15 @@ transformations:
     fields:
       - path: [tenant_id]
         value: "{{ config['tenant_id'] }}"
-      - path: [source_instance_id]
-        value: "{{ config.get('source_instance_id', '') }}"
+      - path: [insight_source_id]
+        value: "{{ config.get('insight_source_id', '') }}"
       - path: [collected_at]
         value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
       - path: [data_source]
         value: "insight_claude_team"
 ```
 
-This transformation is applied to **every stream** in the manifest, ensuring `tenant_id`, `source_instance_id`, `collected_at`, and `data_source` are present in every record before it reaches the destination.
+This transformation is applied to **every stream** in the manifest, ensuring `tenant_id`, `insight_source_id`, `collected_at`, and `data_source` are present in every record before it reaches the destination.
 
 ### 3.4 Internal Dependencies
 
@@ -542,7 +542,7 @@ sequenceDiagram
 
     Note over Src,AApi: Stream 2: claude_team_code_usage (incremental)
     loop For each day (cursor -> now)
-        Src->>AApi: GET /v1/organizations/usage_report/claude_code?starting_at=ISO&ending_at=ISO&bucket_width=1d
+        Src->>AApi: GET /v1/organizations/usage_report/claude_code?starting_at=YYYY-MM-DD
         AApi-->>Src: {data: [...]}
     end
     Src-->>Dest: RECORD messages
@@ -598,14 +598,15 @@ These columns are not defined in the manifest schema but are present in all Bron
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key -- framework-injected |
-| `source_instance_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
+| `insight_source_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
 | `id` | String | Anthropic platform user ID -- primary key |
+| `type` | String (nullable) | Record type (e.g., `user`) |
 | `email` | String | User email -- primary identity key -> `person_id` |
-| `name` | String | User display name |
-| `role` | String | `owner` / `admin` / `member` |
-| `status` | String | `active` / `inactive` / `pending` |
-| `added_at` | String | When the seat was assigned (ISO 8601) |
-| `last_active_at` | String | Last recorded activity across all clients (ISO 8601) |
+| `name` | String (nullable) | User display name |
+| `role` | String | `admin` / `user` |
+| `status` | String (nullable) | `active` / `inactive` / `pending` -- may be absent from API response |
+| `added_at` | String (nullable) | When the seat was assigned (ISO 8601) |
+| `last_active_at` | String (nullable) | Last recorded activity across all clients (ISO 8601) -- may be absent |
 | `collected_at` | DateTime | Collection timestamp |
 | `data_source` | String | Always `insight_claude_team` |
 | `_version` | Int | Deduplication version |
@@ -618,18 +619,21 @@ One row per user. Current-state only -- no versioning.
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key -- framework-injected |
-| `source_instance_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
+| `insight_source_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
 | `unique` | String | Primary key -- computed composite of date + actor fields + terminal_type |
-| `date` | String | Activity date (ISO 8601) -- cursor for incremental sync |
-| `actor_type` | String | `user` or `api_key` |
-| `actor_identifier` | String | Email (for users) or API key name (for API keys) -- identity key |
-| `terminal_type` | String | Terminal/client type used |
-| `input_tokens` | Float64 | Input tokens consumed |
-| `output_tokens` | Float64 | Output tokens generated |
-| `cache_read_tokens` | Float64 | Tokens served from prompt cache |
-| `cache_write_tokens` | Float64 | Tokens written to prompt cache |
-| `tool_use_count` | Float64 | Tool/function calls made (agent-style usage signal) |
-| `session_count` | Float64 | Number of distinct Claude Code sessions |
+| `date` | String | Activity date (`YYYY-MM-DD`) -- cursor for incremental sync |
+| `actor_type` | String (nullable) | Actor type: `api_actor` or `user` -- flattened from `actor.type` |
+| `actor_identifier` | String (nullable) | API key name (for `api_actor`) or email (for `user`) -- flattened from `actor.api_key_name` or `actor.email` |
+| `terminal_type` | String (nullable) | Terminal/client type (e.g., `Apple_Terminal`, `rider`, `non-interactive`, `unknown`) |
+| `customer_type` | String (nullable) | Customer type (e.g., `api`) |
+| `session_count` | Float64 (nullable) | Number of distinct sessions -- extracted from `core_metrics.num_sessions` |
+| `lines_added` | Float64 (nullable) | Lines of code added -- extracted from `core_metrics.lines_of_code.added` |
+| `lines_removed` | Float64 (nullable) | Lines of code removed -- extracted from `core_metrics.lines_of_code.removed` |
+| `tool_use_accepted` | Float64 (nullable) | Total accepted tool actions (sum across edit/write/multi_edit/notebook tools) |
+| `tool_use_rejected` | Float64 (nullable) | Total rejected tool actions (sum across all tool types) |
+| `core_metrics_json` | String (JSON, nullable) | Full `core_metrics` object as JSON (sessions, lines_of_code, commits, PRs) |
+| `tool_actions_json` | String (JSON, nullable) | Full `tool_actions` object as JSON (per-tool accepted/rejected counts) |
+| `model_breakdown_json` | String (JSON, nullable) | Full `model_breakdown` array as JSON (per-model token usage + estimated cost) |
 | `collected_at` | DateTime | Collection timestamp |
 | `data_source` | String | Always `insight_claude_team` |
 | `_version` | Int | Deduplication version |
@@ -637,14 +641,18 @@ One row per user. Current-state only -- no versioning.
 
 One row per `(date, actor_type, actor_identifier, terminal_type)`. Incremental sync by `date`.
 
-**Note**: No `cost_cents` field -- under a Team subscription the per-token cost is not meaningful; the cost is the seat fee.
+**Note**: The API returns actor data as a nested object `actor: {type, email|api_key_name}`. The connector flattens this via `AddFields` transformations: `actor_type = actor.type`, `actor_identifier = actor.api_key_name || actor.email`.
+
+**Note**: Per-model token usage (input, output, cache_read, cache_creation) and estimated cost are stored in `model_breakdown_json` as a JSON array. These can be flattened in the Silver layer via dbt `jsonb_array_elements` or `LATERAL FLATTEN`. The Bronze layer preserves the full nested structure to avoid data loss.
+
+**Note**: No `cost_cents` field -- under a Team subscription the per-token cost is not meaningful; the cost is the seat fee. However, `model_breakdown_json` contains per-model `estimated_cost` for reference.
 
 #### Table: `claude_team_workspaces`
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key -- framework-injected |
-| `source_instance_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
+| `insight_source_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
 | `id` | String | Workspace ID -- primary key |
 | `name` | String | Workspace slug name |
 | `display_name` | String | Human-readable workspace name |
@@ -663,8 +671,9 @@ Full refresh -- one row per workspace.
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key -- framework-injected |
-| `source_instance_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
+| `insight_source_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
 | `unique` | String | Primary key -- computed as `{user_id}:{workspace_id}` |
+| `type` | String (nullable) | Record type (e.g., `workspace_member`) |
 | `user_id` | String | Anthropic user ID |
 | `workspace_id` | String | Workspace ID (from parent stream partition) |
 | `workspace_role` | String | User's role in this workspace |
@@ -680,12 +689,12 @@ Full refresh -- one row per user-workspace pair.
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key -- framework-injected |
-| `source_instance_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
+| `insight_source_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
 | `id` | String | Invite ID -- primary key |
 | `email` | String | Invited user's email |
 | `role` | String | Invited role |
 | `status` | String | Invitation status |
-| `created_at` | String | Invitation creation timestamp (ISO 8601) |
+| `invited_at` | String (nullable) | Invitation creation timestamp (ISO 8601) -- API field name is `invited_at` |
 | `expires_at` | String | Invitation expiry timestamp (ISO 8601) |
 | `workspace_id` | String | Target workspace ID (nullable) |
 | `collected_at` | DateTime | Collection timestamp |
@@ -700,7 +709,7 @@ Full refresh -- one row per invite.
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key -- framework-injected |
-| `source_instance_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
+| `insight_source_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
 | `run_id` | String | Unique run identifier -- primary key |
 | `started_at` | DateTime | Run start time |
 | `completed_at` | DateTime | Run end time |
@@ -768,15 +777,25 @@ The Identity Manager resolves `email`/`actor_identifier` -> canonical `person_id
 | `tenant_id` | `tenant_id` | Framework-injected |
 | `source_instance_id` | `source_instance_id` | Connector instance |
 | `data_source` | `data_source` | Always `insight_claude_team` |
+| `unique_id` | -- | Computed: `concat(date, '\|', actor_identifier, '\|', terminal_type)`. Note: `actor_type` is omitted because the model filters to `actor_type = 'user'` (always constant); Bronze key includes it but Silver does not. |
+| `report_date` | `date` | Rename from `date` |
 | `email` | `actor_identifier` | Identity key (when `actor_type = 'user'`) |
-| `date` | `date` | Report date (ISO 8601) |
-| `input_tokens` | `input_tokens` | Input tokens consumed |
-| `output_tokens` | `output_tokens` | Output tokens generated |
-| `cache_read_tokens` | `cache_read_tokens` | Tokens from prompt cache |
-| `cache_write_tokens` | `cache_write_tokens` | Tokens written to cache |
-| `tool_use_count` | `tool_use_count` | Tool/function calls -- Claude Code signal |
-| `session_count` | `session_count` | Distinct sessions |
 | `terminal_type` | `terminal_type` | Client terminal type |
+| `session_count` | `session_count` | Distinct sessions (from `core_metrics.num_sessions`) |
+| `lines_added` | `lines_added` | Lines of code added (from `core_metrics.lines_of_code.added`) |
+| `lines_removed` | `lines_removed` | Lines of code removed (from `core_metrics.lines_of_code.removed`) |
+| `tool_use_accepted` | `tool_use_accepted` | Total accepted tool actions (sum across all tool types) |
+| `tool_use_rejected` | `tool_use_rejected` | Total rejected tool actions |
+| `input_tokens` | -- | Extracted from `model_breakdown_json` via dbt LATERAL FLATTEN, summed across models |
+| `output_tokens` | -- | Extracted from `model_breakdown_json` via dbt |
+| `cache_read_tokens` | -- | Extracted from `model_breakdown_json` via dbt |
+| `cache_creation_tokens` | -- | Extracted from `model_breakdown_json` via dbt |
+| `total_tokens` | -- | Computed sum of all token types across all models |
+| `person_id` | -- | NULL at Silver step 1; resolved in step 2 via Identity Manager |
+| `provider` | -- | Constant: `'anthropic'` |
+| `client` | -- | Constant: `'claude_code'` |
+| `data_source` | `data_source` | Always `insight_claude_team` |
+| `collected_at` | `collected_at` | Collection timestamp |
 
 **`class_ai_tool_usage` field mapping** (placeholder):
 
@@ -807,14 +826,14 @@ Only the code usage stream uses incremental sync:
 | Stream | Sync mode | Cursor field | Cursor format | Start (first run) | End |
 |--------|-----------|-------------|---------------|-------------------|-----|
 | `claude_team_users` | Full refresh | N/A | N/A | N/A | N/A |
-| `claude_team_code_usage` | Incremental | `date` | ISO 8601 | Probe backward, stop after 6 empty days | now |
+| `claude_team_code_usage` | Incremental | `date` | ISO 8601 | Configurable `start_date` (default: 90 days ago) | now |
 | `claude_team_workspaces` | Full refresh | N/A | N/A | N/A | N/A |
 | `claude_team_workspace_members` | Full refresh | N/A | N/A | N/A | N/A |
 | `claude_team_invites` | Full refresh | N/A | N/A | N/A | N/A |
 
-On first run (empty state), the code usage stream probes backward day-by-day. After 6 consecutive days with zero records, it assumes no earlier data exists and fetches forward from the earliest non-empty day to now. On subsequent runs, the cursor starts from the last stored `date` position.
+**Manifest implementation**: The declarative manifest uses a fixed `start_datetime` (configurable `start_date`, default 90 days ago) with `step: P1D`. Adaptive backfill (probing backward and stopping after 6 consecutive empty days) is not supported by the Airbyte declarative framework and would require a custom CDK connector or orchestrator-level logic. The fixed lookback window is sufficient for most deployments; organizations needing deeper backfill can override `start_date` in the connection configuration. On subsequent runs, the cursor starts from the last stored `date` position.
 
-**Backfill probe**: Unlike Cursor's zero-activity rows (which return data for all team members even on empty days), the Anthropic code usage endpoint returns empty results for days with no activity. This makes the probe simpler -- an empty response genuinely means no data.
+**Note**: Unlike Cursor's zero-activity rows (which return data for all team members even on empty days), the Anthropic code usage endpoint returns empty results for days with no activity.
 
 ### Capacity Estimates
 
@@ -841,7 +860,7 @@ A full daily sync for a 200-person team with 10 workspaces takes approximately 1
 - Claude Code has `tool_use_count`, `session_count` -- Cursor/Windsurf do not have exact equivalents (Cursor has `agentRequests`, Windsurf has its own metrics).
 - Should `class_ai_dev_usage` use nullable columns for tool-specific metrics, or separate tables per tool category?
 
-**OQ-CT-4: Backfill depth** -- The connector stops probing backward after 6 consecutive empty days. Is this sufficient for all deployment scenarios? Organizations that enable the Admin API months after initial usage may need deeper backfill.
+**OQ-CT-4: Backfill depth** -- The connector uses a fixed lookback window (configurable `start_date`, default 90 days). Organizations that enable the Admin API months after initial usage may need a deeper `start_date` override. Adaptive backfill (probing backward until N empty days) is not supported by the Airbyte declarative framework and would require CDK or orchestrator-level logic.
 
 ### Non-Applicable Domains
 

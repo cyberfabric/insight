@@ -63,7 +63,7 @@ One row per page. Updated (upserted) on each collection run. Tracks current stat
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
-| `source_instance_id` | String | REQUIRED | Connector instance identifier, e.g. `confluence-acme`, `outline-main` |
+| `insight_source_id` | String | REQUIRED | Connector instance identifier, e.g. `confluence-acme`, `outline-main` |
 | `page_id` | String | REQUIRED | Source-native page identifier |
 | `space_id` | String | REQUIRED | Space / collection identifier (source-native) |
 | `title` | String | REQUIRED | Page title |
@@ -85,7 +85,7 @@ One row per page. Updated (upserted) on each collection run. Tracks current stat
 | `_version` | UInt64 | REQUIRED | Deduplication version (millisecond timestamp) |
 
 **Indexes**:
-- `idx_wiki_pages_lookup`: `(source_instance_id, page_id, data_source)`
+- `idx_wiki_pages_lookup`: `(insight_source_id, page_id, data_source)`
 - `idx_wiki_pages_space`: `(space_id, status)`
 - `idx_wiki_pages_author`: `(author_email)`
 
@@ -99,7 +99,7 @@ Per-user per-page per-day activity. Populated from Confluence Analytics (Premium
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
-| `source_instance_id` | String | REQUIRED | Connector instance identifier |
+| `insight_source_id` | String | REQUIRED | Connector instance identifier |
 | `page_id` | String | REQUIRED | Source-native page identifier |
 | `user_id` | String | NULLABLE | Source-native user identifier (NULL for Outline aggregate rows) |
 | `user_email` | String | NULLABLE | User email — identity key (NULL for Outline aggregate rows) |
@@ -111,7 +111,7 @@ Per-user per-page per-day activity. Populated from Confluence Analytics (Premium
 | `_version` | UInt64 | REQUIRED | Deduplication version |
 
 **Indexes**:
-- `idx_wiki_activity_user`: `(source_instance_id, user_email, date)`
+- `idx_wiki_activity_user`: `(insight_source_id, user_email, date)`
 - `idx_wiki_activity_page`: `(page_id, date)`
 
 ---
@@ -122,7 +122,7 @@ One row per space (Confluence) or collection (Outline). Organisational container
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
-| `source_instance_id` | String | REQUIRED | Connector instance identifier |
+| `insight_source_id` | String | REQUIRED | Connector instance identifier |
 | `space_id` | String | REQUIRED | Source-native space / collection identifier |
 | `name` | String | REQUIRED | Space / collection display name |
 | `description` | String | NULLABLE | Space description |
@@ -142,7 +142,7 @@ User identity anchor for wiki analytics.
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
-| `source_instance_id` | String | REQUIRED | Connector instance identifier |
+| `insight_source_id` | String | REQUIRED | Connector instance identifier |
 | `user_id` | String | REQUIRED | Source-native user identifier (Confluence `accountId` / Outline user UUID) |
 | `email` | String | REQUIRED | Email — primary identity key → `person_id` |
 | `display_name` | String | NULLABLE | Display name |
@@ -153,7 +153,7 @@ User identity anchor for wiki analytics.
 
 **Indexes**:
 - `idx_wiki_users_email`: `(email)`
-- `idx_wiki_users_lookup`: `(source_instance_id, user_id, data_source)`
+- `idx_wiki_users_lookup`: `(insight_source_id, user_id, data_source)`
 
 ---
 

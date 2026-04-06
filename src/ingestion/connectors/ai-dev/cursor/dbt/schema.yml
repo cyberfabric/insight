@@ -1,0 +1,62 @@
+version: 2
+
+sources:
+  - name: bronze
+    schema: raw
+    tables:
+      - name: cursor_members
+      - name: cursor_audit_logs
+      - name: cursor_usage_events
+      - name: cursor_usage_events_daily_resync
+      - name: cursor_daily_usage
+      - name: cursor_collection_runs
+
+models:
+  - name: to_ai_dev_usage
+    description: >
+      Unified AI dev tool usage events from Cursor.
+      Deduplication: yesterday and earlier from daily_resync (finalized costs),
+      today from hourly stream (near-real-time).
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field — framework-injected"
+        tests:
+          - not_null
+      - name: user_email
+        description: "User email (identity key for Silver step 2 resolution)"
+        tests:
+          - not_null
+      - name: event_timestamp
+        description: "Event timestamp (epoch ms as string)"
+        tests:
+          - not_null
+      - name: event_kind
+        description: "Event type: chat, completion, agent, cmd-k, etc."
+      - name: model
+        description: "AI model used (e.g. gpt-4o, claude-3.5-sonnet)"
+      - name: request_cost
+        description: "Request cost in credits"
+      - name: platform_fee
+        description: "Cursor platform fee"
+      - name: is_token_based
+        description: "Billed by tokens (true) vs per-request (false)"
+      - name: is_free_bugbot
+        description: "Free Bug Bot invocation"
+      - name: max_mode
+        description: "Premium model tier enabled"
+      - name: input_tokens
+        description: "Tokens in prompt (from tokenUsage, nullable)"
+      - name: output_tokens
+        description: "Tokens in response (from tokenUsage, nullable)"
+      - name: cache_read_tokens
+        description: "Tokens served from cache (from tokenUsage, nullable)"
+      - name: cache_write_tokens
+        description: "Tokens written to cache (from tokenUsage, nullable)"
+      - name: total_cents
+        description: "Total cost in cents (from tokenUsage, nullable)"
+      - name: data_source
+        description: "Always 'insight_cursor' — source discriminator for cross-tool queries"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['insight_cursor']

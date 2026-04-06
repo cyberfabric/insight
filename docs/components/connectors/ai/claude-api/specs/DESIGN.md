@@ -29,6 +29,8 @@
   - [4.3 Incremental Sync Strategy](#43-incremental-sync-strategy)
   - [4.4 Capacity Estimates](#44-capacity-estimates)
   - [4.5 Open Questions](#45-open-questions)
+  - [OQ-DESIGN-1: Cost allocation to usage rows](#oq-design-1-cost-allocation-to-usage-rows)
+  - [OQ-DESIGN-2: Cache token billing rates](#oq-design-2-cache-token-billing-rates)
   - [4.6 Non-Applicable Domains](#46-non-applicable-domains)
   - [4.7 ADRs](#47-adrs)
 - [5. Traceability](#5-traceability)
@@ -74,7 +76,7 @@ graph LR
 | `cpt-insightspec-fr-claude-api-workspaces` | `claude_api_workspaces` stream with offset-based pagination, full refresh |
 | `cpt-insightspec-fr-claude-api-invites` | `claude_api_invites` stream with offset-based pagination, full refresh |
 | `cpt-insightspec-fr-claude-api-collection-runs` | `claude_api_collection_runs` monitoring stream (framework-managed) |
-| `cpt-insightspec-fr-claude-api-framework-fields` | `AddFields` transformation injects `tenant_id`, `source_instance_id`, `data_source`, `collected_at`, `_version` |
+| `cpt-insightspec-fr-claude-api-framework-fields` | `AddFields` transformation injects `tenant_id`, `insight_source_id`, `data_source`, `collected_at`, `_version` |
 | `cpt-insightspec-fr-claude-api-usage-unique-key` | `AddFields` generates composite `unique` key from dimensional columns |
 | `cpt-insightspec-fr-claude-api-cost-unique-key` | `AddFields` generates composite `unique` key from `(date, workspace_id, description)` |
 
@@ -87,6 +89,13 @@ graph LR
 | `cpt-insightspec-nfr-claude-api-data-source` | `data_source = 'insight_claude_api'` on all rows | `AddFields` transformation | Hard-coded constant injected into every stream | Row-level assertion in integration tests |
 | `cpt-insightspec-nfr-claude-api-idempotent` | No duplicates on re-sync | Primary key definitions | `unique` composite key for usage/cost; `id` for dimension tables | Run sync twice; verify row counts unchanged |
 | `cpt-insightspec-nfr-claude-api-freshness` | 48h latency | Scheduler config | Daily schedule; lookback window covers D-2 | SLA monitoring dashboard |
+
+#### Architecture Decision Records
+
+| ADR ID | Decision | Impact |
+|--------|----------|--------|
+| `cpt-insightspec-adr-claude-api-001` | Drop `inference_geo` from `group_by` (API max-5 limit) | Unique key reduced to 6 components; inference_geo nullable in Bronze |
+| `cpt-insightspec-adr-claude-api-002` | Nested response extraction with P1D step + AddFields mapping | `field_path: [data, "0", results]`; field names mapped; cost_report schema expanded |
 
 ### 1.3 Architecture Layers
 
@@ -157,7 +166,7 @@ API keys, workspaces, and invites are small, slowly-changing dimension tables. F
 
 - [ ] `p1` - **ID**: `cpt-insightspec-principle-claude-api-framework-fields`
 
-All streams inject `tenant_id`, `source_instance_id`, `data_source`, `collected_at`, and `_version` via `AddFields` transformations. This is consistent across all Insight connectors and enables multi-tenant operation.
+All streams inject `tenant_id`, `source_instance_id`, `data_source`, and `collected_at` via `AddFields` transformations. This is consistent across all Insight connectors and enables multi-tenant operation. Note: `_version` and `metadata` (full API response JSON) are documented in Bronze table schemas for forward compatibility but are **not implemented** in the declarative manifest — the Airbyte `AddFields` transformation cannot capture the full response payload or generate deduplication versions. These fields may be added by a destination-side post-processing step if needed.
 
 ### 2.2 Constraints
 
@@ -171,13 +180,13 @@ The connector targets the Anthropic Admin API at `https://api.anthropic.com`. It
 
 - [ ] `p1` - **ID**: `cpt-insightspec-constraint-claude-api-date-range`
 
-The usage and cost report endpoints enforce a maximum date range of 31 days per request. The `DatetimeBasedCursor` `step` parameter is set to `P31D` to respect this constraint.
+The usage and cost report endpoints enforce a maximum date range of 31 days per request. The `DatetimeBasedCursor` `step` parameter is set to `P1D` (one day per request). This is required because the API returns a nested response structure (`data[].results[]`) where each `data` element is a date bucket containing a `results` array of individual usage records. The `DpathExtractor` uses `field_path: [data, "0", results]` to extract individual records from the single bucket returned per P1D request. The `date` field is injected from `stream_interval['start_time']` since individual result records do not contain a date field. API field names are mapped via `AddFields` transformations: `cache_read_input_tokens` → `cache_read_tokens`, `cache_creation.ephemeral_5m_input_tokens` → `cache_creation_5m_tokens`, `cache_creation.ephemeral_1h_input_tokens` → `cache_creation_1h_tokens`, `server_tool_use.web_search_requests` → `web_search_requests`.
 
 #### No Per-Request Granularity
 
 - [ ] `p1` - **ID**: `cpt-insightspec-constraint-claude-api-no-per-request`
 
-The Anthropic Admin API provides daily aggregated usage reports, not per-request logs. The finest granularity available is one row per `(date, model, api_key_id, workspace_id, service_tier, context_window, inference_geo, speed)`.
+The Anthropic Admin API provides daily aggregated usage reports, not per-request logs. The `group_by` parameter accepts max 5 dimensions; the connector uses: `model`, `api_key_id`, `workspace_id`, `service_tier`, `context_window` (matching the reference implementation). `inference_geo` and `speed` are not included in `group_by` but are retained in the Bronze schema as nullable fields — the API may return them in the response. Both are excluded from the composite unique key. The finest granularity for the unique key is `(date, model, api_key_id, workspace_id, service_tier, context_window)`.
 
 #### GET-Only Endpoints
 
@@ -237,7 +246,7 @@ Single YAML file that defines all streams, authentication, pagination strategies
 - Declares 5 data streams: `claude_api_messages_usage`, `claude_api_cost_report`, `claude_api_keys`, `claude_api_workspaces`, `claude_api_invites`.
 - Defines `ApiKeyAuthenticator` with `header: x-api-key` for authentication.
 - Defines `request_headers` with `anthropic-version: 2023-06-01` on each requester.
-- Implements `DatetimeBasedCursor` for incremental streams (usage, cost) with `P31D` step.
+- Implements `DatetimeBasedCursor` for incremental streams (usage, cost) with `P1D` step.
 - Implements `CursorPagination` for usage/cost streams using `next_page` token.
 - Implements `OffsetIncrement` pagination for keys/workspaces/invites.
 - Implements `AddFields` transformations for framework fields and composite unique keys.
@@ -248,6 +257,12 @@ Single YAML file that defines all streams, authentication, pagination strategies
 - Does NOT implement Silver/Gold transformations (owned by dbt models).
 - Does NOT implement identity resolution (owned by Identity Manager).
 - Does NOT implement collection run logging (owned by framework).
+
+##### Related components (by ID)
+
+- `cpt-insightspec-component-claude-api-descriptor` — Connector Descriptor (package metadata)
+- Identity Manager — resolves `created_by` and invite emails to `person_id` (Silver step 2)
+- dbt models (`to_ai_api_usage.sql`) — Bronze → Silver transformation
 
 #### Connector Descriptor
 
@@ -304,7 +319,7 @@ SQL transformation that maps `claude_api_messages_usage` Bronze data to the `cla
 |-------|------|----------|-------------|
 | `tenant_id` | string | Yes | Tenant isolation identifier (UUID) |
 | `admin_api_key` | string (secret) | Yes | Anthropic Admin API key |
-| `source_instance_id` | string | No | Source instance discriminator (default: empty) |
+| `insight_source_id` | string | No | Source instance discriminator (default: empty) |
 | `start_date` | string | No | Earliest date to collect (ISO 8601, default: 90 days ago) |
 
 ### 3.4 Internal Dependencies
@@ -428,15 +443,15 @@ sequenceDiagram
 |--------|------|-------------|
 | `tenant_id` | String | Tenant isolation identifier (UUID) -- framework-injected |
 | `source_instance_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
-| `unique` | String | Composite key: `{date}\|{model}\|{api_key_id}\|{workspace_id}\|{service_tier}\|{context_window}\|{inference_geo}\|{speed}` |
+| `unique` | String | Composite key: `{date}\|{model}\|{api_key_id}\|{workspace_id}\|{service_tier}\|{context_window}` |
 | `date` | String | Usage date (ISO 8601 date) |
 | `model` | String | Model ID (e.g., `claude-opus-4-6`, `claude-sonnet-4-6`) |
 | `api_key_id` | String | API key identifier |
 | `workspace_id` | String | Workspace identifier |
 | `service_tier` | String | Service tier (e.g., `scale`, `standard`) |
 | `context_window` | String | Context window size |
-| `inference_geo` | String | Inference geographic region |
-| `speed` | String | Speed tier |
+| `inference_geo` | String (nullable) | Inference geographic region — not in `group_by` (max 5 limit); retained in schema |
+| `speed` | String (nullable) | Speed tier — not a valid `group_by` dimension; retained for forward compatibility |
 | `uncached_input_tokens` | Integer | Input tokens not served from cache |
 | `cache_read_tokens` | Integer | Tokens served from prompt cache |
 | `cache_creation_5m_tokens` | Integer | Tokens written to prompt cache with 5-minute TTL |
@@ -450,7 +465,7 @@ sequenceDiagram
 
 **PK**: `unique`
 
-**Granularity**: One row per `(date, model, api_key_id, workspace_id, service_tier, context_window, inference_geo, speed)`.
+**Granularity**: One row per `(date, model, api_key_id, workspace_id, service_tier, context_window)`.
 
 ---
 
@@ -461,12 +476,19 @@ sequenceDiagram
 | Column | Type | Description |
 |--------|------|-------------|
 | `tenant_id` | String | Tenant isolation identifier (UUID) -- framework-injected |
-| `source_instance_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
+| `insight_source_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
 | `unique` | String | Composite key: `{date}\|{workspace_id}\|{description}` |
 | `date` | String | Cost date (ISO 8601 date) |
 | `workspace_id` | String | Workspace identifier |
 | `description` | String | Cost category description |
-| `amount_cents` | Number | Cost amount in cents |
+| `amount` | String | Cost amount in USD (string representation) |
+| `currency` | String (nullable) | Currency code (e.g., `USD`) |
+| `cost_type` | String (nullable) | Cost category type (e.g., `tokens`, `web_search`) |
+| `model` | String (nullable) | Model associated with the cost line |
+| `service_tier` | String (nullable) | Service tier |
+| `context_window` | String (nullable) | Context window size |
+| `token_type` | String (nullable) | Token type (e.g., `uncached_input_tokens`, `output_tokens`, `cache_read_input_tokens`) |
+| `inference_geo` | String (nullable) | Inference geography |
 | `collected_at` | String | Collection timestamp (ISO 8601) |
 | `data_source` | String | Always `insight_claude_api` |
 | `_version` | String | Deduplication version |
@@ -485,7 +507,7 @@ sequenceDiagram
 | Column | Type | Description |
 |--------|------|-------------|
 | `tenant_id` | String | Tenant isolation identifier (UUID) -- framework-injected |
-| `source_instance_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
+| `insight_source_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
 | `id` | String | API key identifier |
 | `name` | String | API key name |
 | `status` | String | Key status (e.g., `active`, `disabled`) |
@@ -509,7 +531,7 @@ sequenceDiagram
 | Column | Type | Description |
 |--------|------|-------------|
 | `tenant_id` | String | Tenant isolation identifier (UUID) -- framework-injected |
-| `source_instance_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
+| `insight_source_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
 | `id` | String | Workspace identifier |
 | `name` | String | Workspace name |
 | `display_name` | String | Workspace display name |
@@ -532,7 +554,7 @@ sequenceDiagram
 | Column | Type | Description |
 |--------|------|-------------|
 | `tenant_id` | String | Tenant isolation identifier (UUID) -- framework-injected |
-| `source_instance_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
+| `insight_source_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
 | `id` | String | Invite identifier |
 | `email` | String | Invitee email address |
 | `role` | String | Organization role assigned |
@@ -556,7 +578,7 @@ sequenceDiagram
 | Column | Type | Description |
 |--------|------|-------------|
 | `tenant_id` | String | Tenant isolation identifier (UUID) -- framework-injected |
-| `source_instance_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
+| `insight_source_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
 | `run_id` | String | Unique run identifier |
 | `started_at` | String | Run start time (ISO 8601) |
 | `completed_at` | String | Run end time (ISO 8601) |
@@ -614,7 +636,7 @@ The mapping from `created_by` fields and invite emails to `person_id` is handled
 | Bronze Field (`claude_api_messages_usage`) | Silver Field (`class_ai_api_usage`) | Transformation |
 |--------------------------------------------|-------------------------------------|---------------|
 | `tenant_id` | `tenant_id` | Pass through |
-| `date` | `usage_date` | Pass through |
+| `date` | `report_date` | Rename |
 | `model` | `model` | Pass through |
 | `api_key_id` | `api_key_id` | Pass through |
 | `workspace_id` | `workspace_id` | Pass through |
@@ -622,18 +644,18 @@ The mapping from `created_by` fields and invite emails to `person_id` is handled
 | -- | `api_key_name` | JOIN `claude_api_keys.name` |
 | `service_tier` | `service_tier` | Pass through |
 | `context_window` | `context_window` | Pass through |
-| `inference_geo` | `inference_geo` | Pass through |
-| `speed` | `speed` | Pass through |
-| `uncached_input_tokens` | `input_tokens` | Pass through |
+| `uncached_input_tokens` | `uncached_input_tokens` | Pass through |
 | `cache_read_tokens` | `cache_read_tokens` | Pass through |
 | `cache_creation_5m_tokens` | `cache_creation_tokens` | `cache_creation_5m_tokens + cache_creation_1h_tokens` |
 | `output_tokens` | `output_tokens` | Pass through |
 | `web_search_requests` | `web_search_requests` | Pass through |
-| -- | `total_tokens` | `uncached_input_tokens + cache_read_tokens + output_tokens` |
+| -- | `total_input_tokens` | `uncached_input_tokens + cache_read_tokens + cache_creation_5m_tokens + cache_creation_1h_tokens` |
+| -- | `total_tokens` | `uncached_input_tokens + cache_read_tokens + cache_creation_5m_tokens + cache_creation_1h_tokens + output_tokens` |
 | -- | `cost_cents` | JOIN `claude_api_cost_report` (approximate; see OQ) |
 | `data_source` | `data_source` | `'insight_claude_api'` |
 | -- | `provider` | `'anthropic'` (constant) |
 | -- | `person_id` | NULL (no user attribution at API level) |
+| `source_instance_id` | `source_instance_id` | Pass through |
 
 #### Silver/Gold Summary
 
@@ -652,7 +674,7 @@ The mapping from `created_by` fields and invite emails to `person_id` is handled
 **Usage and cost streams**:
 - Cursor field: `date`
 - Cursor granularity: daily (ISO 8601 date)
-- Step size: `P31D` (31-day windows, API maximum)
+- Step size: `P1D` (one day per request — see ADR-002 for nested response extraction)
 - Lookback: configurable `start_date` for first run; subsequent runs start from last cursor + 1 day
 - No billing period boundary issues: Anthropic API data is finalized daily
 
@@ -661,10 +683,10 @@ The mapping from `created_by` fields and invite emails to `person_id` is handled
 - Small dataset sizes make full refresh efficient
 - Upsert semantics prevent duplicates
 
-**Date windowing example** for a 90-day lookback:
-1. Window 1: `starting_at=2026-01-01`, `ending_at=2026-01-31`
-2. Window 2: `starting_at=2026-02-01`, `ending_at=2026-03-03`
-3. Window 3: `starting_at=2026-03-04`, `ending_at=2026-03-25`
+**Date windowing example** (P1D step, `ending_at` inclusive):
+1. Window 1: `starting_at=2026-01-01`, `ending_at=2026-01-31` (31 days)
+2. Window 2: `starting_at=2026-02-01`, `ending_at=2026-03-03` (31 days)
+3. Window 3: `starting_at=2026-03-04`, `ending_at=2026-03-27` (remainder to today)
 
 ### 4.4 Capacity Estimates
 
@@ -722,7 +744,10 @@ The mapping from `created_by` fields and invite emails to `person_id` is handled
 
 ### 4.7 ADRs
 
-No ADRs have been recorded yet. The `specs/ADR/` directory is provisioned for future architectural decisions.
+| ADR | Title | Status |
+|-----|-------|--------|
+| [ADR-001](./ADR/ADR-001-group-by-limit-inference-geo.md) (`cpt-insightspec-adr-claude-api-001`) | Drop `inference_geo` from `group_by` dimensions (API max-5 limit) | Accepted |
+| [ADR-002](./ADR/ADR-002-api-response-structure.md) (`cpt-insightspec-adr-claude-api-002`) | API response structure — nested records, field mapping, cost_report schema expansion | Accepted |
 
 ---
 

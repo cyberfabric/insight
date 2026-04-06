@@ -631,7 +631,7 @@ sequenceDiagram
     Pipeline ->> DB: SELECT * FROM git_commit_files WHERE data_source='insight_github'
     DB -->> Pipeline: commit file records
     loop For each file analyzed
-        Pipeline ->> DB: UPSERT git_commits_files_ext (tenant_id, source_instance_id, project_key, repo_slug, commit_hash, file_path, field_id, field_name, field_value_str/int/float, ...)
+        Pipeline ->> DB: UPSERT git_commits_files_ext (tenant_id, insight_source_id, project_key, repo_slug, commit_hash, file_path, field_id, field_name, field_value_str/int/float, ...)
     end
     Note over Pipeline,DB: Core git_commit_files rows unchanged
 ```

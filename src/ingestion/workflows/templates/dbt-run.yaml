@@ -1,0 +1,39 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: dbt-run
+  namespace: argo
+  labels:
+    app.kubernetes.io/part-of: ingestion
+spec:
+  entrypoint: run
+  templates:
+    - name: run
+      inputs:
+        parameters:
+          - name: dbt_select
+            default: "tag:silver"
+          - name: clickhouse_host
+            default: "clickhouse.data.svc.cluster.local"
+          - name: clickhouse_port
+            default: "8123"
+      activeDeadlineSeconds: 1800
+      script:
+        image: insight-toolbox:local
+        command: [bash]
+        source: |
+          cd /ingestion/dbt
+          cat > profiles.yml <<'PROFILES'
+          ingestion:
+            target: k8s
+            outputs:
+              k8s:
+                type: clickhouse
+                host: "{{inputs.parameters.clickhouse_host}}"
+                port: {{inputs.parameters.clickhouse_port}}
+                schema: silver
+                user: default
+                password: "clickhouse"
+                secure: false
+          PROFILES
+          dbt run --profiles-dir . --select "{{inputs.parameters.dbt_select}}"

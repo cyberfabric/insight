@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clickhouse
+  namespace: data
+  labels:
+    app: clickhouse
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: clickhouse
+  template:
+    metadata:
+      labels:
+        app: clickhouse
+    spec:
+      containers:
+        - name: clickhouse
+          image: clickhouse/clickhouse-server:25.3
+          ports:
+            - name: http
+              containerPort: 8123
+              protocol: TCP
+            - name: native
+              containerPort: 9000
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/clickhouse
+            - name: config
+              mountPath: /etc/clickhouse-server/config.d/cluster.xml
+              subPath: cluster.xml
+              readOnly: true
+            - name: config
+              mountPath: /etc/clickhouse-server/users.d/default.xml
+              subPath: default.xml
+              readOnly: true
+          readinessProbe:
+            exec:
+              command:
+                - clickhouse-client
+                - --password
+                - clickhouse
+                - --query
+                - "SELECT 1"
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command:
+                - clickhouse-client
+                - --password
+                - clickhouse
+                - --query
+                - "SELECT 1"
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            requests:
+              memory: 512Mi
+              cpu: 250m
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: clickhouse-data
+        - name: config
+          configMap:
+            name: clickhouse-config

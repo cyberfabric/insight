@@ -78,7 +78,7 @@ Organizations typically use 5–15+ SaaS tools across development, HR, communica
 | Term | Definition |
 |------|------------|
 | Connector | A configured integration with a specific external data source instance, responsible for extracting data and delivering it to the Bronze layer |
-| Source Instance | A single deployment of an external system, e.g., a company's Jira Cloud, a team's GitHub organization. Identified by a stable `source_instance_id` |
+| Source Instance | A single deployment of an external system, e.g., a company's Jira Cloud, a team's GitHub organization. Identified by a stable `insight_source_id` |
 | Bronze Layer | The raw data layer in the Medallion Architecture. Stores collected data preserving source-native schema and identifiers. One set of tables per source |
 | Silver Layer | The unified data layer. Cross-source normalized data with canonical `class_{domain}` schemas. Silver tables retain source-native user identifiers; identity resolution is not applied at this layer but Silver records can be joined with the Identity Manager's `person_id` mapping at query time or in Gold |
 | Gold Layer | The derived metrics layer. Pre-aggregated analytics consuming exclusively from Silver tables. Domain-specific names, no raw events |
@@ -414,6 +414,16 @@ The system MUST enforce distinct permission boundaries for the three authorship 
 **Rationale**: Without tier-based permissions, community or self-service connectors could bypass quality controls or affect other workspaces.
 
 **Actors**: `cpt-insightspec-actor-cn-platform-engineer`, `cpt-insightspec-actor-cn-connector-author`, `cpt-insightspec-actor-cn-workspace-admin`
+
+#### Row-Level Security (RLS) on Bronze and Silver Tables
+
+- [ ] `p1` - **ID**: `cpt-insightspec-fr-cn-rls`
+
+ClickHouse ROW POLICYs **MUST** be applied to all Bronze and Silver tables to enforce tenant-level data isolation at the database level. RLS policies **MUST** filter on `tenant_id` column and restrict each tenant role to only their data. Policies **MUST** survive table recreation (DROP + CREATE) — they are managed separately via `apply-rls.sh` and a declarative RLS config. The RLS config **MUST** be applied automatically during `./up.sh` initialization and **MUST** be re-applicable without data loss.
+
+**Rationale**: Application-level `WHERE tenant_id = ...` is insufficient as the sole isolation mechanism. Database-level RLS provides defense-in-depth and prevents accidental cross-tenant data exposure via ad-hoc queries or BI tools connecting directly to ClickHouse.
+
+**Actors**: `cpt-insightspec-actor-cn-platform-engineer`
 
 ### 5.5 Data Classification & Privacy
 

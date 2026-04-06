@@ -70,7 +70,7 @@ Derived daily aggregates of design activity per user per file. Populated at coll
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier, e.g. `figma-acme` |
+| `insight_source_id` | String | Connector instance identifier, e.g. `figma-acme` |
 | `data_source` | String | Source discriminator: `insight_figma` |
 | `user_id` | String | Source-native user identifier (Figma: numeric user ID) |
 | `email` | String | User email — primary identity key → `person_id` |
@@ -83,7 +83,7 @@ Derived daily aggregates of design activity per user per file. Populated at coll
 | `_version` | UInt64 | Deduplication version (millisecond timestamp) |
 
 **Indexes**:
-- `idx_design_activity_user`: `(source_instance_id, email, date)`
+- `idx_design_activity_user`: `(insight_source_id, email, date)`
 - `idx_design_activity_file`: `(file_key, date, data_source)`
 
 **Derivation note**: One `design_file_activity` row per `(user_id, file_key, date)`. At collection time:
@@ -101,7 +101,7 @@ Directory of all design files and the projects they belong to. Used as a dimensi
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier |
+| `insight_source_id` | String | Connector instance identifier |
 | `data_source` | String | Source discriminator: `insight_figma` |
 | `file_key` | String | Source-native file identifier — primary key for joins with `design_file_activity` |
 | `file_name` | String | Human-readable file name |
@@ -124,7 +124,7 @@ Identity anchor for design tool analytics. Populated from the team members endpo
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier |
+| `insight_source_id` | String | Connector instance identifier |
 | `data_source` | String | Source discriminator: `insight_figma` |
 | `user_id` | String | Source-native user identifier (Figma: numeric user ID string) |
 | `email` | String | User email — primary identity key → `person_id` |
@@ -136,7 +136,7 @@ Identity anchor for design tool analytics. Populated from the team members endpo
 
 **Indexes**:
 - `idx_design_users_email`: `(email)`
-- `idx_design_users_lookup`: `(source_instance_id, user_id, data_source)`
+- `idx_design_users_lookup`: `(insight_source_id, user_id, data_source)`
 
 ---
 

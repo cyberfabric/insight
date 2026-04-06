@@ -1,0 +1,48 @@
+version: 2
+
+sources:
+  - name: bamboohr
+    schema: bronze_bamboohr
+    tables:
+      - name: employees
+      - name: leave_requests
+      - name: meta_fields
+
+models:
+  - name: to_class_people
+    description: >
+      BambooHR Employees -> class_people (Silver Step 1).
+      Full-refresh source. Identity key: email (workEmail).
+      Maps BambooHR status to normalised status (active/on_leave/terminated).
+      SCD Type 2 fields (valid_from/valid_to) are set as current-state snapshot
+      (valid_from = lastChanged, valid_to = NULL).
+    columns:
+      - name: source_person_id
+        description: "BambooHR employee ID"
+        tests:
+          - not_null
+      - name: email
+        description: "Work email — identity key for Silver Step 2"
+      - name: display_name
+        description: "Full display name"
+      - name: first_name
+        description: "First name"
+      - name: last_name
+        description: "Last name"
+      - name: status
+        description: "Normalised: active, on_leave, terminated"
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['active', 'on_leave', 'terminated']
+      - name: source
+        description: "Always 'bamboohr'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['bamboohr']
+      - name: workspace_id
+        description: "Tenant identifier"
+        tests:
+          - not_null

@@ -143,7 +143,7 @@ Unlike the Claude API connector (programmatic access, pay-per-token), Claude Tea
 
 #### Identity Manager
 
-**Ref**: `cpt-insightspec-actor-claude-team-identity-mgr`
+**ID**: `cpt-insightspec-actor-claude-team-identity-mgr`
 
 Resolves `email` from Claude Team Bronze tables to canonical `person_id` in Silver step 2. Enables cross-system joins (Claude Code + Cursor + Windsurf + GitHub + Jira, etc.).
 
@@ -156,7 +156,7 @@ Resolves `email` from Claude Team Bronze tables to canonical `person_id` in Silv
 - Authentication uses `x-api-key` header with `anthropic-version: 2023-06-01` required on all requests
 - The connector **SHOULD** run daily -- all streams are daily or current-state snapshots
 - The Anthropic Admin API enforces rate limits; the connector must add a 1-second delay between paginated pages for users and between workspace iterations for workspace members
-- Code usage data uses ISO 8601 date parameters (`starting_at`, `ending_at`) with `bucket_width=1d`
+- Code usage data uses a date-only parameter `starting_at` (format `YYYY-MM-DD`); the `claude_code` endpoint does not accept `ending_at` or `bucket_width`
 - Workspace members requires iterating over all workspaces first (SubstreamPartitionRouter pattern)
 
 ## 4. Scope
@@ -211,7 +211,7 @@ The user collection **MUST** represent current-state only (one row per user, no 
 
 - [ ] `p2` - **ID**: `cpt-insightspec-fr-claude-team-invites-collect`
 
-The connector **MUST** extract all pending invitations from the `GET /v1/organizations/invites` endpoint, capturing `id`, `email`, `role`, `status`, `created_at`, `expires_at`, and `workspace_id`.
+The connector **MUST** extract all pending invitations from the `GET /v1/organizations/invites` endpoint, capturing `id`, `email`, `role`, `status`, `invited_at`, `expires_at`, and `workspace_id`.
 
 **Rationale**: Invitations complement the seat roster by showing planned but not-yet-accepted seats. Combined with user data, they provide a complete picture of license allocation.
 
@@ -233,9 +233,9 @@ The connector **MUST** extract daily Claude Code usage records from the `GET /v1
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-claude-team-code-usage-incremental`
 
-The connector **MUST** support incremental sync for code usage using a date-based cursor (`date` field). On each run, only new days since the last cursor position are fetched. On backfill, the connector fetches day-by-day and stops after 6 consecutive empty days.
+The connector **MUST** support incremental sync for code usage using a date-based cursor (`date` field). On each run, only new days since the last cursor position are fetched. On first run, the connector fetches from a configurable `start_date` (default: 90 days ago) forward to today.
 
-**Rationale**: Incremental sync avoids re-fetching the entire usage history on each run. The 6-empty-days stop condition prevents unbounded backfill probing.
+**Rationale**: Incremental sync avoids re-fetching the entire usage history on each run. The fixed lookback window is configurable via `start_date` for organizations needing deeper history. Adaptive backfill (probing backward until N empty days) is not supported by the Airbyte declarative framework.
 
 **Actors**: `cpt-insightspec-actor-claude-team-operator`
 
@@ -385,7 +385,7 @@ Bronze table schemas **MUST** remain stable across connector versions. Breaking 
 | Stream | Endpoint | Method |
 |--------|----------|--------|
 | `claude_team_users` | `GET /v1/organizations/users?limit=100&after_id={cursor}` | Full refresh |
-| `claude_team_code_usage` | `GET /v1/organizations/usage_report/claude_code?starting_at=ISO&ending_at=ISO&bucket_width=1d` | Incremental |
+| `claude_team_code_usage` | `GET /v1/organizations/usage_report/claude_code?starting_at=YYYY-MM-DD` | Incremental |
 | `claude_team_workspaces` | `GET /v1/organizations/workspaces?limit={n}` | Full refresh |
 | `claude_team_workspace_members` | `GET /v1/organizations/workspaces/{id}/members` | Full refresh (iterates workspaces) |
 | `claude_team_invites` | `GET /v1/organizations/invites?limit={n}` | Full refresh |
@@ -452,7 +452,7 @@ Bronze table schemas **MUST** remain stable across connector versions. Breaking 
 
 **Alternative Flows**:
 
-- **First run (code usage)**: Connector fetches day-by-day backward until 6 consecutive empty days, then fetches forward to now
+- **First run (code usage)**: Connector fetches from configurable `start_date` (default: 90 days ago) forward to today
 - **API throttling (HTTP 429)**: Connector retries with exponential backoff
 - **Empty date range**: No new data to fetch; sync completes with zero records
 - **Workspace iteration**: If workspace list is empty, workspace members stream emits zero records

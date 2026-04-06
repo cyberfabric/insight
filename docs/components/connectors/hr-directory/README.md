@@ -47,7 +47,7 @@ prd: pending
     - [ClickHouse](#clickhouse)
     - [Identity Resolution V3 (PostgreSQL / MariaDB)](#identity-resolution-v3-postgresql-mariadb)
   - [3.6 Interactions & Sequences](#36-interactions-sequences)
-    - [Bronze to Silver Ingestion — class_people](#bronze-to-silver-ingestion-classpeople)
+    - [Bronze to Silver Ingestion - class_people](#bronze-to-silver-ingestion---class_people)
     - [Org Unit Hierarchy Rebuild](#org-unit-hierarchy-rebuild)
   - [3.7 Database Schemas & Tables](#37-database-schemas-tables)
     - [Table: `class_people`](#table-classpeople)
@@ -339,7 +339,7 @@ ClickHouse partition pruning on `(workspace_id, valid_to)` is the primary perfor
 
 ### 3.6 Interactions & Sequences
 
-#### Bronze to Silver Ingestion — class_people
+#### Bronze to Silver Ingestion - class_people
 
 **ID**: `cpt-insightspec-seq-hr-bronze-to-silver`
 

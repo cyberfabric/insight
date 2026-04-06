@@ -1,0 +1,37 @@
+# Airbyte Helm values — local Kind cluster
+# Uses latest version from airbyte/airbyte Helm chart
+
+connectorBuilderServer:
+  enabled: true
+
+server:
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 250m
+
+worker:
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 250m
+
+# Airbyte's internal Postgres (managed by the chart)
+postgresql:
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+
+# Default admin account for local dev
+global:
+  auth:
+    instanceAdmin:
+      firstName: Admin
+      lastName: Local
+      email: admin@example.com
+      password: admin123
+
+# No ingress — use kubectl port-forward or NodePort for local access
+ingress:
+  enabled: false

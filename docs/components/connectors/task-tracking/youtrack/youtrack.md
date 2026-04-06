@@ -41,7 +41,7 @@ Standalone specification for the YouTrack (Task Tracking) connector.
 
 **Design principle**: `youtrack_issue` stores identifiers and immutable context fields (type, reporter, initial estimate). All state transitions live in `youtrack_issue_history` as an append-only event log. This is the source of truth for cycle time, status periods, and assignee history.
 
-**`source_instance_id`**: present in all tables — required to disambiguate multiple YouTrack instances in the same Bronze store.
+**`insight_source_id`**: present in all tables — required to disambiguate multiple YouTrack instances in the same Bronze store.
 
 ---
 
@@ -51,7 +51,7 @@ Standalone specification for the YouTrack (Task Tracking) connector.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier, e.g. `youtrack-acme-prod` |
+| `insight_source_id` | String | Connector instance identifier, e.g. `youtrack-acme-prod` |
 | `youtrack_id` | String | YouTrack internal ID, e.g. `2-12345` |
 | `id_readable` | String | Human-readable ID, e.g. `MON-123` — joins to `youtrack_issue_history.id_readable` |
 | `project_key` | String | Project short name, e.g. `MON` — from `project(shortName)` |
@@ -74,7 +74,7 @@ Every state transition, reassignment, and field update is a separate row. Collec
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier — scopes all IDs |
+| `insight_source_id` | String | Connector instance identifier — scopes all IDs |
 | `id_readable` | String | Human-readable issue ID — joins to `youtrack_issue.id_readable` |
 | `issue_youtrack_id` | String | Parent issue's internal ID |
 | `author_youtrack_id` | String | Who made the change — `author.id` — joins to `youtrack_user.youtrack_id` |
@@ -102,7 +102,7 @@ Stores per-issue custom field values that don't fit the core schema. Follows the
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier |
+| `insight_source_id` | String | Connector instance identifier |
 | `id_readable` | String | Issue ID — joins to `youtrack_issue.id_readable` |
 | `field_id` | String | Custom field machine ID |
 | `field_name` | String | Custom field human name, e.g. `Team`, `Squad`, `Customer` |
@@ -120,7 +120,7 @@ Collected from `/api/issues/{id}/timeTracking/workItems`.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier |
+| `insight_source_id` | String | Connector instance identifier |
 | `work_item_id` | String | Work item ID |
 | `id_readable` | String | Parent issue ID — joins to `youtrack_issue.id_readable` |
 | `author_youtrack_id` | String | Who logged the time — joins to `youtrack_user.youtrack_id` |
@@ -139,7 +139,7 @@ Collected from `/api/issues/{id}/comments`.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier |
+| `insight_source_id` | String | Connector instance identifier |
 | `comment_id` | String | Comment ID |
 | `id_readable` | String | Parent issue ID — joins to `youtrack_issue.id_readable` |
 | `author_youtrack_id` | String | Comment author — joins to `youtrack_user.youtrack_id` |
@@ -158,7 +158,7 @@ Collected from `/api/admin/projects`.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier |
+| `insight_source_id` | String | Connector instance identifier |
 | `project_id` | String | YouTrack internal project ID |
 | `project_key` | String | Short name, e.g. `MON` — joins to `youtrack_issue.project_key` |
 | `name` | String | Full project name |
@@ -176,7 +176,7 @@ Collected from `/api/issues/{id}/links`.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier |
+| `insight_source_id` | String | Connector instance identifier |
 | `source_issue` | String | Source issue ID (`id_readable`) |
 | `target_issue` | String | Target issue ID (`id_readable`) |
 | `link_type` | String | Link type name, e.g. `blocks` / `duplicates` / `relates to` / `subtask of` |
@@ -193,7 +193,7 @@ Collected from `/api/agiles/{boardId}/sprints`.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier |
+| `insight_source_id` | String | Connector instance identifier |
 | `sprint_id` | String | Sprint ID |
 | `board_id` | String | Agile board ID |
 | `board_name` | String | Agile board name |
@@ -212,7 +212,7 @@ Collected from `/api/agiles/{boardId}/sprints`.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | String | Connector instance identifier |
+| `insight_source_id` | String | Connector instance identifier |
 | `youtrack_id` | String | YouTrack internal user ID — joins to `author_youtrack_id` / `reporter_id` / `leader_youtrack_id` |
 | `email` | String | Email — primary key for cross-system identity resolution |
 | `full_name` | String | Display name |
@@ -249,7 +249,7 @@ Resolution chain for history events:
 
 Same chain applies to `youtrack_worklogs.author_youtrack_id`, `youtrack_comments.author_youtrack_id`, and `youtrack_projects.leader_youtrack_id`.
 
-`source_instance_id` must be included in all joins — YouTrack IDs are scoped to their instance.
+`insight_source_id` must be included in all joins — YouTrack IDs are scoped to their instance.
 
 ---
 
@@ -277,9 +277,9 @@ Same chain applies to `youtrack_worklogs.author_youtrack_id`, `youtrack_comments
 
 ## Open Questions
 
-### OQ-YT-1: `source_instance_id` in all tables
+### OQ-YT-1: `insight_source_id` in all tables
 
-`source_instance_id` is now required in all tables including `youtrack_issue_history`, `youtrack_worklogs`, `youtrack_comments`. Confirm the connector produces this field consistently for all object types.
+`insight_source_id` is now required in all tables including `youtrack_issue_history`, `youtrack_worklogs`, `youtrack_comments`. Confirm the connector produces this field consistently for all object types.
 
 ### OQ-YT-2: `author_youtrack_id` type — string format
 

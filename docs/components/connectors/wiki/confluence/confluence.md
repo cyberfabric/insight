@@ -64,7 +64,7 @@ Populated from `GET /spaces` (paginated).
 
 | Field | Type | Confluence API field | Notes |
 |-------|------|---------------------|-------|
-| `source_instance_id` | String | connector config | e.g. `confluence-acme` |
+| `insight_source_id` | String | connector config | e.g. `confluence-acme` |
 | `space_id` | String | `spaces[].id` | Confluence space ID |
 | `name` | String | `spaces[].name` | Space display name |
 | `description` | String | `spaces[].description.plain.value` | Plain text description |
@@ -84,7 +84,7 @@ Populated from `GET /pages` (paginated, filtered by space). Upserted on each run
 
 | Field | Type | Confluence API field | Notes |
 |-------|------|---------------------|-------|
-| `source_instance_id` | String | connector config | |
+| `insight_source_id` | String | connector config | |
 | `page_id` | String | `pages[].id` | Confluence page ID |
 | `space_id` | String | `pages[].spaceId` | Parent space ID |
 | `title` | String | `pages[].title` | Page title |
@@ -119,7 +119,7 @@ Two activity sub-types collected separately and merged into the unified table:
 
 | Field | Type | Confluence API field | Notes |
 |-------|------|---------------------|-------|
-| `source_instance_id` | String | connector config | |
+| `insight_source_id` | String | connector config | |
 | `page_id` | String | `versions[].pageId` | |
 | `user_id` | String | `versions[].authorId` | `accountId` of version author |
 | `user_email` | String | resolved via User API | |
@@ -151,7 +151,7 @@ Populated by enriching `accountId` values encountered in page and version respon
 
 | Field | Type | Confluence API field | Notes |
 |-------|------|---------------------|-------|
-| `source_instance_id` | String | connector config | |
+| `insight_source_id` | String | connector config | |
 | `user_id` | String | `accountId` | Atlassian account ID |
 | `email` | String | `email` | From User API; requires `read:confluence-user` scope |
 | `display_name` | String | `displayName` | |

@@ -48,7 +48,7 @@ Defines the Silver layer for task tracking connectors. The Silver layer has two 
 
 **Design principle**: `task_tracker_issues` stores identifiers and immutable context. `task_tracker_history` is an append-only event log — the source of truth for cycle time, status periods, and assignee history. This pattern applies uniformly across YouTrack and Jira.
 
-**`source_instance_id`**: present in all tables — required to disambiguate multiple tool instances (e.g. two YouTrack tenants or multiple Jira organizations in the same Silver Step 1 store). `(source_instance_id, issue_id)` is the composite primary key for issues.
+**`insight_source_id`**: present in all tables — required to disambiguate multiple tool instances (e.g. two YouTrack tenants or multiple Jira organizations in the same Silver Step 1 store). `(insight_source_id, issue_id)` is the composite primary key for issues.
 
 **Terminology mapping**:
 
@@ -73,7 +73,7 @@ Minimal record — identifiers and immutable context fields only. All mutable st
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
-| `source_instance_id` | String | REQUIRED | Connector instance identifier, e.g. `youtrack-acme-prod`, `jira-team-alpha` |
+| `insight_source_id` | String | REQUIRED | Connector instance identifier, e.g. `youtrack-acme-prod`, `jira-team-alpha` |
 | `issue_id` | String | REQUIRED | Source-specific internal issue ID (YouTrack `youtrack_id` / Jira `jira_id`) |
 | `id_readable` | String | REQUIRED | Human-readable key, e.g. `MON-123` / `PROJ-123` — display and join key |
 | `project_key` | String | REQUIRED | Project short key, e.g. `MON` / `PROJ` — joins to `task_tracker_projects.project_key` |
@@ -91,8 +91,8 @@ Minimal record — identifiers and immutable context fields only. All mutable st
 | `_version` | UInt64 | REQUIRED | Deduplication version (millisecond timestamp) |
 
 **Indexes**:
-- `idx_tt_issue_lookup`: `(source_instance_id, issue_id, data_source)`
-- `idx_tt_issue_readable`: `(source_instance_id, id_readable, data_source)`
+- `idx_tt_issue_lookup`: `(insight_source_id, issue_id, data_source)`
+- `idx_tt_issue_readable`: `(insight_source_id, id_readable, data_source)`
 - `idx_tt_issue_updated`: `(updated_at)`
 
 **Note on `story_points`**: field name and ID differ per instance and project type. See OQ-TT-1.
@@ -105,7 +105,7 @@ Every state transition, reassignment, and field update is a separate row. This i
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
-| `source_instance_id` | String | REQUIRED | Connector instance identifier — scopes all IDs |
+| `insight_source_id` | String | REQUIRED | Connector instance identifier — scopes all IDs |
 | `id_readable` | String | REQUIRED | Human-readable issue key — joins to `task_tracker_issues.id_readable` |
 | `issue_id` | String | REQUIRED | Parent issue's internal ID |
 | `author_id` | String | NULLABLE | Source user ID of who made the change — joins to `task_tracker_users.user_id` |
@@ -122,7 +122,7 @@ Every state transition, reassignment, and field update is a separate row. This i
 | `_version` | UInt64 | REQUIRED | Deduplication version |
 
 **Indexes**:
-- `idx_tt_history_issue`: `(source_instance_id, id_readable, data_source)`
+- `idx_tt_history_issue`: `(insight_source_id, id_readable, data_source)`
 - `idx_tt_history_author`: `(author_id, data_source)`
 - `idx_tt_history_created`: `(created_at)`
 - `idx_tt_history_field`: `(field_name, data_source)`
@@ -141,7 +141,7 @@ Stores per-issue custom field values that don't fit the core schema. Follows the
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
-| `source_instance_id` | String | REQUIRED | Connector instance identifier |
+| `insight_source_id` | String | REQUIRED | Connector instance identifier |
 | `id_readable` | String | REQUIRED | Issue key — joins to `task_tracker_issues.id_readable` |
 | `field_id` | String | REQUIRED | Custom field machine ID |
 | `field_name` | String | REQUIRED | Custom field display name, e.g. `Team`, `Squad`, `Customer` |
@@ -152,7 +152,7 @@ Stores per-issue custom field values that don't fit the core schema. Follows the
 | `_version` | UInt64 | REQUIRED | Deduplication version |
 
 **Indexes**:
-- `idx_tt_ext_issue`: `(source_instance_id, id_readable, data_source)`
+- `idx_tt_ext_issue`: `(insight_source_id, id_readable, data_source)`
 - `idx_tt_ext_field`: `(field_name, data_source)`
 
 **Purpose**: captures team, squad, domain, customer, and other org-specific fields without schema changes. Promoted to Silver snapshots selectively.
@@ -163,7 +163,7 @@ Stores per-issue custom field values that don't fit the core schema. Follows the
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
-| `source_instance_id` | String | REQUIRED | Connector instance identifier |
+| `insight_source_id` | String | REQUIRED | Connector instance identifier |
 | `worklog_id` | String | REQUIRED | Source-specific worklog / work item ID |
 | `id_readable` | String | REQUIRED | Parent issue key — joins to `task_tracker_issues.id_readable` |
 | `author_id` | String | REQUIRED | Who logged the time — source user ID — joins to `task_tracker_users.user_id` |
@@ -175,7 +175,7 @@ Stores per-issue custom field values that don't fit the core schema. Follows the
 | `_version` | UInt64 | REQUIRED | Deduplication version |
 
 **Indexes**:
-- `idx_tt_worklog_issue`: `(source_instance_id, id_readable, data_source)`
+- `idx_tt_worklog_issue`: `(insight_source_id, id_readable, data_source)`
 - `idx_tt_worklog_author`: `(author_id, data_source)`
 - `idx_tt_worklog_date`: `(work_date)`
 
@@ -191,7 +191,7 @@ Stores per-issue custom field values that don't fit the core schema. Follows the
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
-| `source_instance_id` | String | REQUIRED | Connector instance identifier |
+| `insight_source_id` | String | REQUIRED | Connector instance identifier |
 | `comment_id` | String | REQUIRED | Comment ID |
 | `id_readable` | String | REQUIRED | Parent issue key — joins to `task_tracker_issues.id_readable` |
 | `author_id` | String | REQUIRED | Comment author — source user ID — joins to `task_tracker_users.user_id` |
@@ -203,7 +203,7 @@ Stores per-issue custom field values that don't fit the core schema. Follows the
 | `_version` | UInt64 | REQUIRED | Deduplication version |
 
 **Indexes**:
-- `idx_tt_comment_issue`: `(source_instance_id, id_readable, data_source)`
+- `idx_tt_comment_issue`: `(insight_source_id, id_readable, data_source)`
 - `idx_tt_comment_author`: `(author_id, data_source)`
 
 **Purpose**: collaboration signal — comment volume per person, review participation, cross-team communication.
@@ -214,7 +214,7 @@ Stores per-issue custom field values that don't fit the core schema. Follows the
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
-| `source_instance_id` | String | REQUIRED | Connector instance identifier |
+| `insight_source_id` | String | REQUIRED | Connector instance identifier |
 | `project_id` | String | REQUIRED | Source-specific internal project ID |
 | `project_key` | String | REQUIRED | Short key, e.g. `MON` / `PROJ` — joins to `task_tracker_issues.project_key` |
 | `name` | String | REQUIRED | Full project name |
@@ -227,7 +227,7 @@ Stores per-issue custom field values that don't fit the core schema. Follows the
 | `_version` | UInt64 | REQUIRED | Deduplication version |
 
 **Indexes**:
-- `idx_tt_project_lookup`: `(source_instance_id, project_key, data_source)`
+- `idx_tt_project_lookup`: `(insight_source_id, project_key, data_source)`
 
 **Purpose**: maps issues to teams/departments. `project_style` (Jira) is important — Next-gen and Classic projects use different custom field IDs for story points and sprint assignment.
 
@@ -237,7 +237,7 @@ Stores per-issue custom field values that don't fit the core schema. Follows the
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
-| `source_instance_id` | String | REQUIRED | Connector instance identifier |
+| `insight_source_id` | String | REQUIRED | Connector instance identifier |
 | `source_issue` | String | REQUIRED | Source issue key (`id_readable`) |
 | `target_issue` | String | REQUIRED | Target issue key (`id_readable`) |
 | `link_type` | String | REQUIRED | Link type name, e.g. `blocks` / `is blocked by` / `duplicates` / `relates to` / `subtask of` |
@@ -247,8 +247,8 @@ Stores per-issue custom field values that don't fit the core schema. Follows the
 | `_version` | UInt64 | REQUIRED | Deduplication version |
 
 **Indexes**:
-- `idx_tt_link_source`: `(source_instance_id, source_issue, data_source)`
-- `idx_tt_link_target`: `(source_instance_id, target_issue, data_source)`
+- `idx_tt_link_source`: `(insight_source_id, source_issue, data_source)`
+- `idx_tt_link_target`: `(insight_source_id, target_issue, data_source)`
 
 **Purpose**: dependency and blocker analysis. Required for fair productivity measurement — blocked issues should not penalise the assignee's throughput metrics.
 
@@ -258,7 +258,7 @@ Stores per-issue custom field values that don't fit the core schema. Follows the
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
-| `source_instance_id` | String | REQUIRED | Connector instance identifier |
+| `insight_source_id` | String | REQUIRED | Connector instance identifier |
 | `sprint_id` | String | REQUIRED | Source-specific sprint ID (YouTrack text ID / Jira numeric ID as string) |
 | `board_id` | String | REQUIRED | Agile board ID (text for YouTrack, numeric as string for Jira) |
 | `board_name` | String | NULLABLE | Agile board name |
@@ -273,8 +273,8 @@ Stores per-issue custom field values that don't fit the core schema. Follows the
 | `_version` | UInt64 | REQUIRED | Deduplication version |
 
 **Indexes**:
-- `idx_tt_sprint_lookup`: `(source_instance_id, sprint_id, data_source)`
-- `idx_tt_sprint_project`: `(source_instance_id, project_key, data_source)`
+- `idx_tt_sprint_lookup`: `(insight_source_id, sprint_id, data_source)`
+- `idx_tt_sprint_project`: `(insight_source_id, project_key, data_source)`
 
 **`state` normalisation**:
 - YouTrack: `is_completed = true` → `closed`; active board sprint → `active`; future sprint → `future`
@@ -288,7 +288,7 @@ Stores per-issue custom field values that don't fit the core schema. Follows the
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
-| `source_instance_id` | String | REQUIRED | Connector instance identifier |
+| `insight_source_id` | String | REQUIRED | Connector instance identifier |
 | `user_id` | String | REQUIRED | Source-specific user ID (YouTrack `youtrack_id` / Jira Atlassian `account_id`) |
 | `email` | String | NULLABLE | Email — primary key for identity resolution; **nullable** — may be suppressed by Atlassian privacy controls (Jira Cloud) |
 | `display_name` | String | NULLABLE | Display name (`full_name` in YouTrack, `displayName` in Jira) |
@@ -300,7 +300,7 @@ Stores per-issue custom field values that don't fit the core schema. Follows the
 | `_version` | UInt64 | REQUIRED | Deduplication version |
 
 **Indexes**:
-- `idx_tt_user_lookup`: `(source_instance_id, user_id, data_source)`
+- `idx_tt_user_lookup`: `(insight_source_id, user_id, data_source)`
 - `idx_tt_user_email`: `(email)`
 
 **Identity note**: `user_id` is scoped to the source system (YouTrack IDs look like `1-234`; Jira Cloud uses Atlassian alphanumeric `account_id`). Email is the cross-system resolution key. For Jira, when email is suppressed, `account_id` may serve as a fallback within the Atlassian ecosystem — see OQ-TT-2.
@@ -381,7 +381,7 @@ task_tracker_history.author_id
 ```
 Same chain applies to `task_tracker_worklogs.author_id`, `task_tracker_comments.author_id`, and `task_tracker_projects.lead_id`.
 
-**`source_instance_id` is required in all joins** — `id_readable` values like `PROJ-123` can collide across instances.
+**`insight_source_id` is required in all joins** — `id_readable` values like `PROJ-123` can collide across instances.
 
 **Jira email suppression**: Atlassian privacy controls may suppress `emailAddress` for some users. When email is NULL, `user_id` (Atlassian `account_id`) may be used as a fallback within the Atlassian ecosystem (Jira + Confluence + Bitbucket on the same tenant). See OQ-TT-2.
 

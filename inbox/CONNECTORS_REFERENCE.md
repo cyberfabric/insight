@@ -95,7 +95,7 @@
   - [OQ-2: Identity re-resolution strategy](#oq-2-identity-re-resolution-strategy)
   - [OQ-3: AI API tools — per-key user attribution](#oq-3-ai-api-tools-per-key-user-attribution)
   - [OQ-4: Zulip Bronze schema — extra fields in stream spec](#oq-4-zulip-bronze-schema-extra-fields-in-stream-spec)
-  - [OQ-5: YouTrack Bronze schema — `source_instance_id` presence](#oq-5-youtrack-bronze-schema-sourceinstanceid-presence)
+  - [OQ-5: YouTrack Bronze schema — `insight_source_id` presence](#oq-5-youtrack-bronze-schema-sourceinstanceid-presence)
   - [OQ-6: `class_task_tracker_activities` — author/assignee field types](#oq-6-classtasktrackeractivities-authorassignee-field-types)
   - [OQ-7: Silver table naming convention — `class_` vs `_enriched`](#oq-7-silver-table-naming-convention-class-vs-enriched)
   - [OQ-8: Git Bronze schema — per-source tables vs unified table with `data_source`; extra tables](#oq-8-git-bronze-schema-per-source-tables-vs-unified-table-with-datasource-extra-tables)
@@ -407,7 +407,7 @@ Monitoring table — not an analytics source.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | text | Connector instance identifier, e.g. `youtrack-acme-prod` |
+| `insight_source_id` | text | Connector instance identifier, e.g. `youtrack-acme-prod` |
 | `youtrack_id` | text | YouTrack internal ID, e.g. `2-12345` |
 | `id_readable` | text | Human-readable ID, e.g. `MON-123` |
 | `created` | timestamp | Issue creation timestamp |
@@ -460,7 +460,7 @@ Every state transition, reassignment, and field update is a separate row.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_instance_id` | text | Connector instance identifier, e.g. `jira-team-alpha` |
+| `insight_source_id` | text | Connector instance identifier, e.g. `jira-team-alpha` |
 | `jira_id` | text | Jira internal numeric ID, e.g. `10001` |
 | `id_readable` | text | Human-readable key, e.g. `PROJ-123` |
 | `project_key` | text | Project key, e.g. `PROJ` |
@@ -835,7 +835,7 @@ Append-only event log built from Bronze changelogs. Each row = one field-change 
 |-------|------|-------------|
 | `id` | UInt64 | Unique event identifier |
 | `source` | String | `youtrack` / `jira` / `github` |
-| `source_instance_id` | String | Connector instance, e.g. `youtrack-acme-prod`, `jira-team-alpha` |
+| `insight_source_id` | String | Connector instance, e.g. `youtrack-acme-prod`, `jira-team-alpha` |
 | `activity_ref` | String | Source activity ID — deduplication + link back to Bronze |
 | `task_id` | String | Human-readable ID, e.g. `MON-123`, `PROJ-42` |
 | `issue_ref` | String | Internal tracker ID |
@@ -852,11 +852,11 @@ Append-only event log built from Bronze changelogs. Each row = one field-change 
 | `parent_issue_ref` | String NULL | Parent issue ID (single parent — enforced by automation) |
 | `title_version` | UInt32 | Title change counter |
 | `description_version` | UInt32 | Description change counter |
-| `fields_map` | Map(String, String) | Whitelisted extra fields per `source_instance_id`; values are IDs/numbers, not text |
+| `fields_map` | Map(String, String) | Whitelisted extra fields per `insight_source_id`; values are IDs/numbers, not text |
 | `collected_at` | DateTime64(3) | Collection timestamp |
 | `_version` | UInt64 | ReplacingMergeTree version |
 
-**`fields_map` examples** (whitelist configured per `source_instance_id`):
+**`fields_map` examples** (whitelist configured per `insight_source_id`):
 
 | Key | Example value | Universal? |
 |-----|---------------|-----------|
@@ -875,7 +875,7 @@ Gold layer extracts needed fields from `fields_map` via client configuration —
 
 Same schema as `class_task_tracker_activities`, but:
 
-- **Unique key**: `(source_instance_id, issue_ref)` — one row per issue
+- **Unique key**: `(insight_source_id, issue_ref)` — one row per issue
 - **Engine**: ReplacingMergeTree by `_version`
 - **Not append-only**: updated on every change
 
@@ -894,7 +894,7 @@ Replaces source-specific identifiers (`author_youtrack_id`, `author_account_id`)
 | `task_id` | String | Human-readable ID, e.g. `MON-123`, `PROJ-42` |
 | `issue_ref` | String | Internal tracker ID |
 | `source` | String | `youtrack` / `jira` / `github` |
-| `source_instance_id` | String | Connector instance identifier |
+| `insight_source_id` | String | Connector instance identifier |
 | `type` | String | Issue type (not normalised — stored as-is) |
 | `state` | String | Current status (not normalised — stored as-is) |
 | `event_date` | Date | Event date |
@@ -927,10 +927,10 @@ Tasks link to git commits via `task_id` matched against commit messages (extract
 
 ### Gold: Derived metrics (built on top of `class_task_tracker`)
 
-Gold does not store raw events — only computed metrics. Requires per-`source_instance_id` status category configuration:
+Gold does not store raw events — only computed metrics. Requires per-`insight_source_id` status category configuration:
 
 ```yaml
-source_instance_id: jira-acme-prod
+insight_source_id: jira-acme-prod
 status_categories:
   in_progress: ["In Progress", "In Development"]
   testing:     ["In Review", "To Verify", "QA"]
@@ -1638,8 +1638,8 @@ No `cost_cents` — flat subscription.
 | **GitHub** | `github_repositories`, `github_branches`, `github_commits`, `github_commit_files`, `github_pull_requests`, `github_pull_request_reviews`, `github_pull_request_comments`, `github_pull_request_commits`, `github_ticket_refs`, `github_collection_runs` | REST v3 + GraphQL v4; formal review states |
 | **Bitbucket** | `bitbucket_repositories`, `bitbucket_branches`, `bitbucket_commits`, `bitbucket_commit_files`, `bitbucket_pull_requests`, `bitbucket_pull_request_reviewers`, `bitbucket_pull_request_comments`, `bitbucket_pull_request_commits`, `bitbucket_ticket_refs`, `bitbucket_collection_runs` | REST v1/v2; uuid identity; comment severity field |
 | **GitLab** | same structure with `gitlab_` prefix + `gitlab_num_stat`, `gitlab_files`, `gitlab_mr_approvals` | Merge Requests; effective-dated file stats; approval model |
-| **YouTrack** | `youtrack_issue`, `youtrack_issue_history`, `youtrack_user` | Full field change history; `source_instance_id` in issue table |
-| **Jira** | `jira_issue`, `jira_issue_history`, `jira_user` | Same model as YouTrack; changelog has explicit from/to values; `source_instance_id` in issue table |
+| **YouTrack** | `youtrack_issue`, `youtrack_issue_history`, `youtrack_user` | Full field change history; `insight_source_id` in issue table |
+| **Jira** | `jira_issue`, `jira_issue_history`, `jira_user` | Same model as YouTrack; changelog has explicit from/to values; `insight_source_id` in issue table |
 | **M365** | `ms365_email_activity`, `ms365_teams_activity`, `ms365_onedrive_activity`, `ms365_sharepoint_activity` | 4 separate endpoint tables; camelCase field names; M365 Copilot not yet collected |
 | **Zulip** | `zulip_messages`, `zulip_users` | Aggregated counts, no message content |
 | **Cursor** | `cursor_daily_usage`, `cursor_events`, `cursor_events_token_usage` | Daily aggregates + per-event detail |
@@ -1702,11 +1702,11 @@ When Identity Manager merges two previously separate `person_id` values (or spli
 - Are these fields present in the actual connector output and should be added to the Reference?
 - Or are they implementation artifacts that should be removed from the stream spec?
 
-### OQ-5: YouTrack Bronze schema — `source_instance_id` presence
+### OQ-5: YouTrack Bronze schema — `insight_source_id` presence
 
-This Reference lists `source_instance_id` as the first field in both `youtrack_issue` and `youtrack_issue_history` (required for multi-instance support). However, `streams/raw_youtrack/youtrack_issue.md` and `streams/raw_youtrack/youtrack_issue_history.md` (PR #3) do not include this field.
+This Reference lists `insight_source_id` as the first field in both `youtrack_issue` and `youtrack_issue_history` (required for multi-instance support). However, `streams/raw_youtrack/youtrack_issue.md` and `streams/raw_youtrack/youtrack_issue_history.md` (PR #3) do not include this field.
 
-- Is `source_instance_id` populated by the current connector or only planned?
+- Is `insight_source_id` populated by the current connector or only planned?
 - If not yet implemented, should it be added to the stream spec before production use?
 
 ### OQ-6: `class_task_tracker_activities` — author/assignee field types
