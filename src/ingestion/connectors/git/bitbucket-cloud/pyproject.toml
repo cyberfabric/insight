@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "source-bitbucket-cloud-insight"
+version = "0.1.0"
+description = "Airbyte source connector for Bitbucket Cloud"
+requires-python = ">=3.10"
+dependencies = [
+    "airbyte-cdk>=0.80.0",
+    "requests>=2.31.0",
+]
+
+[project.scripts]
+source-bitbucket-cloud-insight = "source_bitbucket_cloud.source:main"
+
+[tool.setuptools.packages.find]
+include = ["source_bitbucket_cloud*"]
