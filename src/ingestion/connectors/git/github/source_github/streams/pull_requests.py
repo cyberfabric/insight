@@ -135,6 +135,12 @@ class PullRequestsStream(GitHubGraphQLStream):
                 logger.debug(f"PR freshness: skipping {owner}/{repo} (pushed_at unchanged)")
                 continue
 
+            # Eagerly persist pushed_at so repos with zero PRs are still
+            # marked as seen and won't be re-traversed on the next sync.
+            if pushed_at:
+                repo_state_key = f"_repo:{owner}/{repo}"
+                state[repo_state_key] = {"pushed_at": pushed_at}
+
             partition_key = f"{owner}/{repo}"
             cursor_value = state.get(partition_key, {}).get(self.cursor_field)
             yield {

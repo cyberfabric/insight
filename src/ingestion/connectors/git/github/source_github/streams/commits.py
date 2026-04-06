@@ -218,7 +218,12 @@ class CommitsStream(GitHubGraphQLStream):
                     if ahead == 0:
                         branches_skipped_not_ahead += 1
                         logger.debug(f"Not ahead: skipping {owner}/{repo}/{branch} (0 commits ahead of {default_branch})")
-                        # Still update state with current HEAD so we skip next time too
+                        # Persist HEAD so unchanged-HEAD gate skips this branch next sync
+                        if head_sha:
+                            state[partition_key] = {
+                                **state.get(partition_key, {}),
+                                "head_sha": head_sha,
+                            }
                         continue
 
                 final_selected.append((record, head_sha, stored_head))
@@ -241,6 +246,7 @@ class CommitsStream(GitHubGraphQLStream):
                     "owner": owner,
                     "repo": repo,
                     "branch": branch,
+                    "default_branch": default_branch,
                     "partition_key": partition_key,
                     "cursor_value": cursor_value,
                     "head_sha": head_sha,
@@ -312,6 +318,7 @@ class CommitsStream(GitHubGraphQLStream):
         self._current_stop_at_sha = s.get("stop_at_sha")
         head_sha = s.get("head_sha", "")
         repo_pushed_at = s.get("repo_pushed_at", "")
+        default_branch = s.get("default_branch", "")
 
         body = response.json()
         self._update_graphql_rate_limit(body)
@@ -364,6 +371,7 @@ class CommitsStream(GitHubGraphQLStream):
                 "repo_owner": owner,
                 "repo_name": repo,
                 "branch_name": branch,
+                "default_branch_name": default_branch,
                 "head_sha": head_sha,
                 "repo_pushed_at": repo_pushed_at,
             }
@@ -399,5 +407,6 @@ class CommitsStream(GitHubGraphQLStream):
                 "repo_owner": {"type": "string"},
                 "repo_name": {"type": "string"},
                 "branch_name": {"type": "string"},
+                "default_branch_name": {"type": ["null", "string"]},
             },
         }

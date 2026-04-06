@@ -58,7 +58,7 @@
         "description": "Number of PRs per GraphQL request (max 50).",
         "default": 50,
         "minimum": 1,
-        "maximum": 100,
+        "maximum": 50,
         "order": 6
       },
       "rate_limit_threshold": {

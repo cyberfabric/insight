@@ -119,14 +119,23 @@ class FileChangesStream(GitHubRestStream):
         """Yield one slice per direct-push commit (default branch, non-merge)."""
         total = 0
         skipped = 0
-        for commit in self._commits_parent.read_records(sync_mode=None):
+        # Pass the commits parent's stream state so it can apply its
+        # committed_date cursor and skip already-synced branches, instead of
+        # re-walking full history every time.
+        commits_state = getattr(self._commits_parent, "state", None)
+        for commit in self._commits_parent.read_records(sync_mode=None, stream_state=commits_state):
             branch = commit.get("branch_name", "")
             parent_hashes = commit.get("parent_hashes") or []
 
             # Only default branch, non-merge commits
-            # We check branch name — default branch commits have branch_name set
             # Merge commits have >1 parent — skip those (they're PR merges)
             if len(parent_hashes) > 1:
+                continue
+
+            # Filter to default branch only: commit records now carry
+            # default_branch_name from the commits stream slice.
+            default_branch = commit.get("default_branch_name", "")
+            if branch and default_branch and branch != default_branch:
                 continue
 
             owner = commit.get("repo_owner", "")
@@ -166,6 +175,23 @@ class FileChangesStream(GitHubRestStream):
 
     # --- Fetch methods (thread-safe) ---
 
+    def _do_rest_get(self, url: str, params: dict = None) -> req.Response:
+        """REST GET with page-level retry for retriable errors. Thread-safe."""
+        def _call():
+            self._rate_limiter.throttle("rest")
+            resp = req.get(url, headers=rest_headers(self._token), params=params, timeout=30)
+            remaining = resp.headers.get("X-RateLimit-Remaining")
+            reset = resp.headers.get("X-RateLimit-Reset")
+            if remaining and reset:
+                self._rate_limiter.update_rest(int(remaining), float(reset))
+            if resp.status_code in (502, 503):
+                self._rate_limiter.on_secondary_limit()
+                raise RuntimeError(f"GitHub secondary rate limit ({resp.status_code}) for {url}")
+            if resp.status_code == 429 or resp.status_code >= 500:
+                raise RuntimeError(f"GitHub API error {resp.status_code} for {url}")
+            return resp
+        return retry_request(_call, context=url)
+
     def _fetch_pr_files(self, stream_slice: dict) -> List[Mapping[str, Any]]:
         """Fetch all changed files for one PR. Thread-safe."""
         owner = stream_slice.get("owner", "")
@@ -179,17 +205,11 @@ class FileChangesStream(GitHubRestStream):
         params = {"per_page": "100"}
 
         while url:
-            self._rate_limiter.throttle("rest")
-            resp = req.get(url, headers=rest_headers(self._token), params=params, timeout=30)
+            resp = self._do_rest_get(url, params)
             params = {}
 
-            remaining = resp.headers.get("X-RateLimit-Remaining")
-            reset = resp.headers.get("X-RateLimit-Reset")
-            if remaining and reset:
-                self._rate_limiter.update_rest(int(remaining), float(reset))
+            self._rate_limiter.wait_if_needed("rest")
 
-            if resp.status_code in (502, 503):
-                self._rate_limiter.on_secondary_limit()
             if not check_rest_response(resp, f"{owner}/{repo} PR#{pr_number} files"):
                 break
 
@@ -243,17 +263,11 @@ class FileChangesStream(GitHubRestStream):
         params = {"per_page": "100"}
 
         while url:
-            self._rate_limiter.throttle("rest")
-            resp = req.get(url, headers=rest_headers(self._token), params=params, timeout=30)
+            resp = self._do_rest_get(url, params)
             params = {}
 
-            remaining = resp.headers.get("X-RateLimit-Remaining")
-            reset = resp.headers.get("X-RateLimit-Reset")
-            if remaining and reset:
-                self._rate_limiter.update_rest(int(remaining), float(reset))
+            self._rate_limiter.wait_if_needed("rest")
 
-            if resp.status_code in (502, 503):
-                self._rate_limiter.on_secondary_limit()
             if not check_rest_response(resp, f"{owner}/{repo}/{sha} files"):
                 return records
 

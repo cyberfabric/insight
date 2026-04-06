@@ -42,17 +42,19 @@ class RateLimiter:
         self._secondary_cooldown_until: float = 0.0
 
     def update_rest(self, remaining: int, reset_at: float):
-        self.rest.remaining = remaining
-        self.rest.reset_at = reset_at
+        with self._lock:
+            self.rest.remaining = remaining
+            self.rest.reset_at = reset_at
 
     def update_graphql(self, remaining: int, reset_at_iso: str):
-        self.graphql.remaining = remaining
-        try:
-            from datetime import datetime, timezone
-            dt = datetime.fromisoformat(reset_at_iso.replace("Z", "+00:00"))
-            self.graphql.reset_at = dt.timestamp()
-        except (ValueError, AttributeError):
-            pass
+        with self._lock:
+            self.graphql.remaining = remaining
+            try:
+                from datetime import datetime, timezone
+                dt = datetime.fromisoformat(reset_at_iso.replace("Z", "+00:00"))
+                self.graphql.reset_at = dt.timestamp()
+            except (ValueError, AttributeError):
+                pass
 
     def throttle(self, api_type: str = "rest"):
         """Enforce minimum interval between requests. Thread-safe."""
@@ -89,11 +91,14 @@ class RateLimiter:
     def wait_if_needed(self, api_type: str = "rest"):
         """Check primary rate limit budget and sleep if near exhaustion."""
         self.throttle(api_type)
-        budget = self.rest if api_type == "rest" else self.graphql
-        if budget.remaining < self.threshold and budget.reset_at > time.time():
-            wait_seconds = budget.reset_at - time.time() + 1
+        with self._lock:
+            budget = self.rest if api_type == "rest" else self.graphql
+            remaining = budget.remaining
+            reset_at = budget.reset_at
+        if remaining < self.threshold and reset_at > time.time():
+            wait_seconds = reset_at - time.time() + 1
             logger.warning(
-                f"Rate limit low ({api_type}: {budget.remaining} remaining). "
+                f"Rate limit low ({api_type}: {remaining} remaining). "
                 f"Sleeping {wait_seconds:.0f}s until reset."
             )
             time.sleep(min(wait_seconds, 900))  # Cap at 15 min

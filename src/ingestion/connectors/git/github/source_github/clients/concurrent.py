@@ -62,10 +62,11 @@ def fetch_parallel_with_slices(
                     consecutive_errors = 0
                     yield SliceResult(slice=s, records=future.result())
 
-                # Submit next slice to keep pipeline full
-                next_s = next(slice_iter, None)
-                if next_s is not None:
-                    in_flight[pool.submit(_with_retry, fn, next_s)] = next_s
+                # Submit next slice only if below adaptive concurrency limit
+                if len(in_flight) < current_workers:
+                    next_s = next(slice_iter, None)
+                    if next_s is not None:
+                        in_flight[pool.submit(_with_retry, fn, next_s)] = next_s
 
 
 def retry_request(fn: Callable[[], Any], context: str = "") -> Any:
@@ -73,6 +74,7 @@ def retry_request(fn: Callable[[], Any], context: str = "") -> Any:
 
     Use this inside fetch loops for page-level retry.
     Raises on auth/permission/404 errors immediately.
+    Rate-limit 403s (containing "rate limit") are retried.
     """
     last_exc = None
     for attempt in range(MAX_RETRIES):
@@ -81,7 +83,10 @@ def retry_request(fn: Callable[[], Any], context: str = "") -> Any:
         except Exception as e:
             last_exc = e
             error_str = str(e).lower()
-            if "401" in error_str or "403" in error_str or "404" in error_str:
+            # Rate-limit 403s should be retried, not raised immediately
+            if "rate limit" in error_str:
+                pass  # fall through to retry
+            elif "401" in error_str or "403" in error_str or "404" in error_str:
                 raise
             jitter = random.uniform(0, 1)
             delay = RETRY_BASE_DELAY * (2 ** attempt) + jitter
@@ -102,8 +107,13 @@ def _with_retry(
         except Exception as e:
             last_exc = e
             error_str = str(e).lower()
-            if "401" in error_str or "403" in error_str:
+            # Rate-limit 403s should be retried, not raised immediately
+            if "rate limit" in error_str:
+                pass  # fall through to retry
+            elif "401" in error_str or "403" in error_str:
                 raise
+            elif "404" in error_str:
+                raise  # deleted/missing resources are non-retryable
             jitter = random.uniform(0, 1)
             delay = RETRY_BASE_DELAY * (2 ** attempt) + jitter
             logger.warning(f"Slice retry {attempt + 1}/{MAX_RETRIES}: {e}. Waiting {delay:.1f}s...")

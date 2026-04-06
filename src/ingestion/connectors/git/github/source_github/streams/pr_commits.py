@@ -118,8 +118,8 @@ class PRCommitsStream(GitHubRestStream):
         if resp.status_code in (502, 503):
             self._rate_limiter.on_secondary_limit()
             raise RuntimeError(f"GitHub secondary rate limit ({resp.status_code})")
-        if resp.status_code == 429 or resp.status_code >= 500:
-            raise RuntimeError(f"GitHub GraphQL error {resp.status_code}")
+        if resp.status_code == 429 or resp.status_code >= 400:
+            raise RuntimeError(f"GitHub GraphQL error {resp.status_code}: {resp.text[:500]}")
         body = resp.json()
         # Update rate limit from GraphQL response
         rate_limit = body.get("data", {}).get("rateLimit", {})
@@ -155,9 +155,9 @@ class PRCommitsStream(GitHubRestStream):
             body = self._graphql_post(variables)
 
             if "errors" in body:
-                if "data" not in body or body.get("data") is None:
-                    raise RuntimeError(f"GraphQL query failed for {owner}/{repo} PR#{pr_number}: {body['errors']}")
-                logger.warning(f"GraphQL partial errors for {owner}/{repo} PR#{pr_number} commits: {body['errors']}")
+                raise RuntimeError(
+                    f"GraphQL errors for {owner}/{repo} PR#{pr_number} commits: {body['errors']}"
+                )
 
             pr_data = (body.get("data", {}).get("repository", {}).get("pullRequest") or {})
             commits_data = pr_data.get("commits") or {}

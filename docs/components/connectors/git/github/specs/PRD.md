@@ -291,7 +291,7 @@ The connector MUST populate PR-level statistics: commit count, comment count, an
 
 - [ ] `p2` - **ID**: `cpt-insightspec-fr-gh-extract-tickets`
 
-The connector MUST extract ticket references (e.g., Jira issue keys, GitHub issue numbers) from PR titles, descriptions, and commit messages and store them in the ticket references table. This extraction is performed at the Bronze→Silver transformation step, not during API collection.
+The connector MUST extract ticket references (e.g., Jira issue keys, GitHub issue numbers) from PR titles, descriptions, and commit messages and store them in the ticket references table. Extraction timing and implementation details are specified in [DESIGN.md](./DESIGN.md).
 
 **Actors**: `cpt-insightspec-actor-gh-analytics-eng`
 
@@ -461,7 +461,7 @@ The connector MUST operate within GitHub's API rate limits. It MUST implement ex
 
 - [ ] `p1` - **ID**: `cpt-insightspec-nfr-gh-schema-compliance`
 
-All collected data MUST be stored in the unified `git_*` Silver tables defined in `docs/components/connectors/git/README.md`. Raw API data is first written to Bronze tables, then transformed to Silver via dbt. The connector MUST NOT create GitHub-specific Silver tables.
+All collected data MUST be stored in the unified `git_*` tables defined in `docs/components/connectors/git/README.md`. The connector MUST NOT create GitHub-specific analytics tables. Storage layering details are specified in [DESIGN.md](./DESIGN.md).
 
 #### Data Source Discriminator
 
@@ -497,11 +497,11 @@ Repeated collection of the same data MUST NOT create duplicate rows. The connect
 
 - [ ] `p1` - **ID**: `cpt-insightspec-interface-gh-entrypoint`
 
-**Type**: Airbyte Python CDK source connector
+**Type**: Source connector
 
 **Stability**: stable
 
-**Description**: The connector implements the Airbyte protocol (`check`, `discover`, `read`) and runs as a Docker container managed by the Airbyte orchestrator. Configuration (organization scope, credentials, schedule parameters) is provided via Airbyte's connection settings.
+**Description**: The connector implements a standard source protocol (`check`, `discover`, `read`) and runs as an isolated container managed by the orchestrator. Configuration (organization scope, credentials, schedule parameters) is provided via connection settings. Implementation technology details are specified in [DESIGN.md](./DESIGN.md).
 
 **Breaking Change Policy**: Configuration schema changes require a version bump and migration guide.
 
@@ -671,7 +671,7 @@ Repeated collection of the same data MUST NOT create duplicate rows. The connect
 
 **Status**: Resolved (Owner: Platform Engineering, Resolved: 2026-03)
 
-The connector stores raw `author_email`, `author_login`, and `author_database_id` on commit records. Identity resolution is delegated to Silver Step 2 via the Identity Manager, using email as primary key and GitHub login as fallback. No-reply addresses are handled by the fallback path. For reviews and comments (REST endpoints), `author_email` is not available — identity resolution uses `author_login` + `author_database_id`.
+The connector stores raw author identity fields (email, login, database ID) on commit records. Identity resolution is delegated to the Identity Manager, using email as primary key and GitHub login as fallback. No-reply addresses are handled by the fallback path. For reviews and comments, email is not available — identity resolution uses login and database ID. Implementation details are specified in [DESIGN.md](./DESIGN.md).
 
 ---
 
@@ -679,4 +679,4 @@ The connector stores raw `author_email`, `author_login`, and `author_database_id
 
 **Status**: Resolved (Owner: Platform Engineering, Resolved: 2026-03)
 
-All four formal review states (`APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`, `DISMISSED`) are stored in Bronze. `PENDING` reviews (draft reviews not yet formally submitted) are skipped — they are not collected. Analytics consumers filter by state as needed.
+All four formal review states (`APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`, `DISMISSED`) are persisted. `PENDING` reviews (draft reviews not yet formally submitted) are skipped — they are not collected. Analytics consumers filter by state as needed.

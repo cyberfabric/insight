@@ -7,7 +7,7 @@ import requests as req
 
 from source_github.clients.auth import rest_headers
 from source_github.clients.concurrent import fetch_parallel_with_slices, retry_request
-from source_github.streams.base import GitHubRestStream, _make_pk, _now_iso, check_rest_response
+from source_github.streams.base import GitHubRestStream, _make_pk, _now_iso, check_rest_response, _is_rate_limit_403
 from source_github.streams.pull_requests import PullRequestsStream
 
 logger = logging.getLogger("airbyte")
@@ -32,6 +32,7 @@ class CommentsStream(GitHubRestStream):
         self._parent = parent
         self._max_workers = max_workers
         self._state: MutableMapping[str, Any] = {}
+        self._known_pr_numbers: Optional[dict] = None  # repo_key -> set of PR numbers
 
     def _path(self, **kwargs) -> str:
         return ""
@@ -43,6 +44,19 @@ class CommentsStream(GitHubRestStream):
     @state.setter
     def state(self, value: MutableMapping[str, Any]):
         self._state = value or {}
+
+    def _get_known_pr_numbers(self, repo_key: str) -> set:
+        """Return the set of known PR numbers for a repo. Built lazily from parent cache."""
+        if self._known_pr_numbers is None:
+            self._known_pr_numbers = {}
+            for pr in self._parent.get_child_slices():
+                owner = pr.get("repo_owner", "")
+                repo = pr.get("repo_name", "")
+                num = pr.get("number")
+                if owner and repo and num is not None:
+                    rk = f"{owner}/{repo}"
+                    self._known_pr_numbers.setdefault(rk, set()).add(num)
+        return self._known_pr_numbers.get(repo_key, set())
 
     def stream_slices(
         self,
@@ -101,9 +115,12 @@ class CommentsStream(GitHubRestStream):
         repo_key = stream_slice.get("repo_key", "")
         if not repo_key:
             return
-        # Find max updated_at for general and inline separately
-        max_general = stream_slice.get("general_since", "")
-        max_inline = stream_slice.get("inline_since", "")
+        # Use page-level max timestamps (covers ALL items on the page, including
+        # non-PR issue comments that were filtered out). This ensures the cursor
+        # advances past active issue comments so they don't replay forever.
+        max_general = stream_slice.get("_general_page_max", "") or stream_slice.get("general_since", "")
+        max_inline = stream_slice.get("_inline_page_max", "") or stream_slice.get("inline_since", "")
+        # Also check emitted records in case page-level max wasn't set
         for r in records:
             updated = r.get("updated_at", "")
             if not updated:
@@ -122,8 +139,13 @@ class CommentsStream(GitHubRestStream):
     def _fetch_repo_comments(self, stream_slice: dict) -> List[Mapping[str, Any]]:
         """Fetch both general and inline comments for one repo. Thread-safe."""
         records = []
-        records.extend(self._fetch_paginated(stream_slice, comment_type="general"))
-        records.extend(self._fetch_paginated(stream_slice, comment_type="inline"))
+        general_records, general_page_max = self._fetch_paginated(stream_slice, comment_type="general")
+        inline_records, inline_page_max = self._fetch_paginated(stream_slice, comment_type="inline")
+        records.extend(general_records)
+        records.extend(inline_records)
+        # Stash page-level max timestamps on the slice for _advance_state
+        stream_slice["_general_page_max"] = general_page_max
+        stream_slice["_inline_page_max"] = inline_page_max
         return records
 
     def _do_rest_get(self, url: str, params: dict = None) -> req.Response:
@@ -134,24 +156,31 @@ class CommentsStream(GitHubRestStream):
             if resp.status_code in (502, 503):
                 self._rate_limiter.on_secondary_limit()
                 raise RuntimeError(f"GitHub secondary rate limit ({resp.status_code}) for {url}")
+            if _is_rate_limit_403(resp):
+                raise RuntimeError(f"GitHub rate limit exhausted (403) for {url}")
             if resp.status_code == 429 or resp.status_code >= 500:
                 raise RuntimeError(f"GitHub API error {resp.status_code} for {url}")
             return resp
         return retry_request(_call, context=url)
 
-    def _fetch_paginated(self, stream_slice: dict, comment_type: str) -> List[Mapping[str, Any]]:
+    def _fetch_paginated(self, stream_slice: dict, comment_type: str) -> tuple:
+        """Fetch paginated comments. Returns (records, page_max_updated_at)."""
         owner = stream_slice.get("owner", "")
         repo = stream_slice.get("repo", "")
+        repo_key = stream_slice.get("repo_key", f"{owner}/{repo}")
         records = []
+        page_max_updated_at = ""  # Track max updated_at across ALL page items (not just emitted)
 
         if comment_type == "general":
             # Repo-level issues comments (includes PR discussion comments)
             url = f"https://api.github.com/repos/{owner}/{repo}/issues/comments"
             since = stream_slice.get("general_since", "")
+            known_prs = self._get_known_pr_numbers(repo_key)
         else:
             # Repo-level pull request review comments (inline)
             url = f"https://api.github.com/repos/{owner}/{repo}/pulls/comments"
             since = stream_slice.get("inline_since", "")
+            known_prs = None  # Inline comments are always PR comments
 
         is_inline = comment_type == "inline"
         pk_prefix = "r" if is_inline else "c"
@@ -177,10 +206,23 @@ class CommentsStream(GitHubRestStream):
                 comments = [comments]
 
             for comment in comments:
+                # Track page-level max updated_at for ALL comments (including
+                # issue-only ones) so the cursor advances past them and they
+                # don't replay on next sync.
+                comment_updated = comment.get("updated_at", "")
+                if comment_updated and comment_updated > page_max_updated_at:
+                    page_max_updated_at = comment_updated
+
                 # Extract PR number from the comment's issue/PR URL
                 pr_number = self._extract_pr_number(comment, is_inline)
                 if pr_number is None:
                     continue  # Not a PR comment (could be an issue comment)
+
+                # For general (issue) comments, verify the number belongs to a
+                # known PR — the issues/comments endpoint returns comments for
+                # both issues and PRs indiscriminately.
+                if known_prs is not None and pr_number not in known_prs:
+                    continue
 
                 comment_id = str(comment.get("id", ""))
                 user = comment.get("user") or {}
@@ -220,10 +262,16 @@ class CommentsStream(GitHubRestStream):
 
             url = resp.links.get("next", {}).get("url")
 
-        return records
+        return records, page_max_updated_at
 
     def _extract_pr_number(self, comment: dict, is_inline: bool) -> Optional[int]:
-        """Extract PR number from a comment record."""
+        """Extract issue/PR number from a comment record.
+
+        For general comments this extracts the issue number from issue_url.
+        The caller is responsible for verifying it belongs to an actual PR
+        (via the known-PR-numbers set) since the issues/comments endpoint
+        returns comments for both issues and PRs.
+        """
         if is_inline:
             # Inline review comments have pull_request_url
             pr_url = comment.get("pull_request_url", "")
@@ -235,10 +283,6 @@ class CommentsStream(GitHubRestStream):
             return None
         else:
             # General comments: issue_url contains the issue/PR number
-            # But we need to filter out non-PR issue comments
-            # PR comments have pull_request field in the issue
-            # The issues/comments endpoint doesn't distinguish — we include all
-            # and let the issue_url indicate the PR number
             issue_url = comment.get("issue_url", "")
             if issue_url:
                 try:

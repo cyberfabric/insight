@@ -18,6 +18,17 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _is_rate_limit_403(resp) -> bool:
+    """Return True if a 403 response is due to rate limit exhaustion, not auth failure."""
+    if resp.status_code != 403:
+        return False
+    if resp.headers.get("Retry-After"):
+        return True
+    if resp.headers.get("X-RateLimit-Remaining") == "0":
+        return True
+    return False
+
+
 def check_rest_response(resp, context: str = ""):
     """Validate a REST response. Raises on unexpected errors, returns False for skip-worthy ones."""
     if resp.status_code in (404, 409):
@@ -25,6 +36,8 @@ def check_rest_response(resp, context: str = ""):
         return False
     if resp.status_code == 429 or resp.status_code >= 500:
         raise RuntimeError(f"GitHub API error {resp.status_code} for {context}")
+    if resp.status_code == 403 and _is_rate_limit_403(resp):
+        raise RuntimeError(f"GitHub rate limit exhausted (403) for {context}")
     if resp.status_code in (401, 403):
         raise RuntimeError(f"GitHub auth error {resp.status_code} for {context}: {resp.text[:200]}")
     if resp.status_code >= 400:
@@ -80,12 +93,17 @@ class GitHubRestStream(HttpStream, ABC):
         ...
 
     def should_retry(self, response: requests.Response) -> bool:
+        if response.status_code == 403 and _is_rate_limit_403(response):
+            return True
         if response.status_code in (401, 403, 404, 409):
             return False
         return response.status_code in (429, 500, 502, 503, 504)
 
     def backoff_time(self, response: requests.Response) -> Optional[float]:
-        if response.status_code == 429:
+        if response.status_code == 429 or (response.status_code == 403 and _is_rate_limit_403(response)):
+            retry_after = response.headers.get("Retry-After")
+            if retry_after:
+                return max(float(retry_after), 1.0)
             reset = response.headers.get("X-RateLimit-Reset")
             if reset:
                 import time
@@ -198,6 +216,8 @@ class GitHubGraphQLStream(HttpStream, ABC):
         return None
 
     def should_retry(self, response: requests.Response) -> bool:
+        if response.status_code == 403 and _is_rate_limit_403(response):
+            return True
         if response.status_code in (401, 403):
             return False
         return response.status_code in (429, 500, 502, 503, 504)

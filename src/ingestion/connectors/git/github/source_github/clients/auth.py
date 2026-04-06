@@ -11,11 +11,10 @@ def auth_headers(token: str) -> dict:
 
 def rest_headers(token: str) -> dict:
     headers = auth_headers(token)
-    headers["Accept"] = "application/vnd.github.v3+json"
+    headers["Accept"] = "application/vnd.github+json"
+    headers["X-GitHub-Api-Version"] = "2022-11-28"
     return headers
 
 
 def graphql_headers(token: str) -> dict:
-    headers = auth_headers(token)
-    headers["Accept"] = "application/vnd.github.v4+json"
-    return headers
+    return auth_headers(token)
