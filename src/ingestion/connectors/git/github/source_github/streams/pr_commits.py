@@ -8,7 +8,7 @@ import requests as req
 from source_github.clients.auth import graphql_headers
 from source_github.clients.concurrent import fetch_parallel_with_slices
 from source_github.graphql.queries import PR_COMMITS_QUERY
-from source_github.streams.base import GitHubRestStream, _is_fatal, _make_pk, _now_iso
+from source_github.streams.base import GitHubRestStream, _is_fatal, _make_pk, _make_unique_key, _now_iso
 from source_github.streams.pull_requests import PullRequestsStream
 
 logger = logging.getLogger("airbyte")
@@ -179,9 +179,10 @@ class PRCommitsStream(GitHubRestStream):
                 if not sha:
                     continue
                 records.append({
-                    "pk": _make_pk(self._tenant_id, self._source_instance_id, owner, repo, pr_id, sha),
+                    "pk": _make_pk(self._tenant_id, self._source_id, owner, repo, pr_id, sha),
+                    "unique_key": _make_unique_key(self._tenant_id, self._source_id, owner, repo, pr_id, sha),
                     "tenant_id": self._tenant_id,
-                    "source_instance_id": self._source_instance_id,
+                    "source_id": self._source_id,
                     "data_source": "insight_github",
                     "collected_at": _now_iso(),
                     "pr_database_id": pr_database_id,
@@ -224,7 +225,8 @@ class PRCommitsStream(GitHubRestStream):
             "properties": {
                 "pk": {"type": "string"},
                 "tenant_id": {"type": "string"},
-                "source_instance_id": {"type": "string"},
+                "source_id": {"type": "string"},
+                "unique_key": {"type": "string"},
                 "data_source": {"type": "string"},
                 "collected_at": {"type": "string"},
                 "pr_database_id": {"type": ["null", "integer"]},

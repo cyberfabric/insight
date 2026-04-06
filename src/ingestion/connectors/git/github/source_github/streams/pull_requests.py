@@ -4,7 +4,7 @@ import logging
 from typing import Any, Iterable, List, Mapping, MutableMapping, Optional
 
 from source_github.graphql.queries import BULK_PR_QUERY
-from source_github.streams.base import GitHubGraphQLStream, _make_pk
+from source_github.streams.base import GitHubGraphQLStream, _make_pk, _make_unique_key
 from source_github.streams.repositories import RepositoriesStream
 
 logger = logging.getLogger("airbyte")
@@ -258,7 +258,8 @@ class PullRequestsStream(GitHubGraphQLStream):
                     requested_teams.append(reviewer["slug"])
 
             record = {
-                "pk": _make_pk(self._tenant_id, self._source_instance_id, owner, repo, pr_id),
+                "pk": _make_pk(self._tenant_id, self._source_id, owner, repo, pr_id),
+                "unique_key": _make_unique_key(self._tenant_id, self._source_id, owner, repo, pr_id),
                 "database_id": pr_database_id,
                 "number": pr_number,
                 "title": pr_node.get("title"),
@@ -302,7 +303,8 @@ class PullRequestsStream(GitHubGraphQLStream):
             "properties": {
                 "pk": {"type": "string"},
                 "tenant_id": {"type": "string"},
-                "source_instance_id": {"type": "string"},
+                "source_id": {"type": "string"},
+                "unique_key": {"type": "string"},
                 "data_source": {"type": "string"},
                 "collected_at": {"type": "string"},
                 "database_id": {"type": ["null", "integer"]},

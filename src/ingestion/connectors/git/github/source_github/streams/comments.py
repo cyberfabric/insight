@@ -7,7 +7,7 @@ import requests as req
 
 from source_github.clients.auth import rest_headers
 from source_github.clients.concurrent import fetch_parallel_with_slices, retry_request
-from source_github.streams.base import GitHubRestStream, _is_fatal, _make_pk, _now_iso, check_rest_response, _is_rate_limit_403
+from source_github.streams.base import GitHubRestStream, _is_fatal, _make_pk, _make_unique_key, _now_iso, check_rest_response, _is_rate_limit_403
 from source_github.streams.pull_requests import PullRequestsStream
 
 logger = logging.getLogger("airbyte")
@@ -236,9 +236,10 @@ class CommentsStream(GitHubRestStream):
                 comment_id = str(comment.get("id", ""))
                 user = comment.get("user") or {}
                 record = {
-                    "pk": _make_pk(self._tenant_id, self._source_instance_id, owner, repo, pk_prefix, comment_id),
+                    "pk": _make_pk(self._tenant_id, self._source_id, owner, repo, pk_prefix, comment_id),
+                    "unique_key": _make_unique_key(self._tenant_id, self._source_id, owner, repo, pk_prefix, comment_id),
                     "tenant_id": self._tenant_id,
-                    "source_instance_id": self._source_instance_id,
+                    "source_id": self._source_id,
                     "data_source": "insight_github",
                     "collected_at": _now_iso(),
                     "database_id": comment.get("id"),
@@ -314,7 +315,8 @@ class CommentsStream(GitHubRestStream):
             "properties": {
                 "pk": {"type": "string"},
                 "tenant_id": {"type": "string"},
-                "source_instance_id": {"type": "string"},
+                "source_id": {"type": "string"},
+                "unique_key": {"type": "string"},
                 "data_source": {"type": "string"},
                 "collected_at": {"type": "string"},
                 "database_id": {"type": ["null", "integer"]},

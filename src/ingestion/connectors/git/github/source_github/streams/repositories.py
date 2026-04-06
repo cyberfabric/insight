@@ -3,7 +3,7 @@
 import logging
 from typing import Any, Iterable, List, Mapping, Optional
 
-from source_github.streams.base import GitHubRestStream, _make_pk, check_rest_response
+from source_github.streams.base import GitHubRestStream, _make_pk, _make_unique_key, check_rest_response
 
 logger = logging.getLogger("airbyte")
 
@@ -73,7 +73,8 @@ class RepositoriesStream(GitHubRestStream):
             if self._skip_forks and repo.get("fork"):
                 skipped += 1
                 continue
-            repo["pk"] = _make_pk(self._tenant_id, self._source_instance_id, owner, name)
+            repo["pk"] = _make_pk(self._tenant_id, self._source_id, owner, name)
+            repo["unique_key"] = _make_unique_key(self._tenant_id, self._source_id, owner, name)
             yield self._add_envelope(repo)
         if skipped:
             logger.info(f"Repo filter: skipped {skipped} repos (archived/fork) in org {org}")
@@ -86,7 +87,8 @@ class RepositoriesStream(GitHubRestStream):
             "properties": {
                 "pk": {"type": "string"},
                 "tenant_id": {"type": "string"},
-                "source_instance_id": {"type": "string"},
+                "source_id": {"type": "string"},
+                "unique_key": {"type": "string"},
                 "data_source": {"type": "string"},
                 "collected_at": {"type": "string"},
                 "id": {"type": ["null", "integer"]},

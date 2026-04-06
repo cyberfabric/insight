@@ -8,7 +8,7 @@ import requests as req
 
 from source_github.clients.auth import rest_headers
 from source_github.graphql.queries import BULK_COMMIT_QUERY
-from source_github.streams.base import GitHubGraphQLStream, _make_pk
+from source_github.streams.base import GitHubGraphQLStream, _make_pk, _make_unique_key
 from source_github.streams.branches import BranchesStream
 
 logger = logging.getLogger("airbyte")
@@ -364,7 +364,8 @@ class CommitsStream(GitHubGraphQLStream):
             committer_user = committer.get("user") or {}
 
             record = {
-                "pk": _make_pk(self._tenant_id, self._source_instance_id, owner, repo, commit_hash),
+                "pk": _make_pk(self._tenant_id, self._source_id, owner, repo, commit_hash),
+                "unique_key": _make_unique_key(self._tenant_id, self._source_id, owner, repo, commit_hash),
                 "oid": commit_hash,
                 "message": node.get("message"),
                 "committed_date": node.get("committedDate"),
@@ -398,7 +399,8 @@ class CommitsStream(GitHubGraphQLStream):
             "properties": {
                 "pk": {"type": "string"},
                 "tenant_id": {"type": "string"},
-                "source_instance_id": {"type": "string"},
+                "source_id": {"type": "string"},
+                "unique_key": {"type": "string"},
                 "data_source": {"type": "string"},
                 "collected_at": {"type": "string"},
                 "oid": {"type": "string"},

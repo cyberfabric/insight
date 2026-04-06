@@ -4,18 +4,18 @@
     "$schema": "http://json-schema.org/draft-07/schema#",
     "title": "GitHub Source",
     "type": "object",
-    "required": ["tenant_id", "source_instance_id", "token", "organizations"],
+    "required": ["insight_tenant_id", "insight_source_id", "token", "organizations"],
     "additionalProperties": true,
     "properties": {
-      "tenant_id": {
+      "insight_tenant_id": {
         "type": "string",
         "title": "Tenant ID",
         "description": "Tenant isolation identifier (UUID).",
         "order": 0
       },
-      "source_instance_id": {
+      "insight_source_id": {
         "type": "string",
-        "title": "Source Instance ID",
+        "title": "Source ID",
         "description": "Stable identifier for this GitHub instance (e.g., 'github-acme-prod').",
         "examples": ["github-acme-prod"],
         "order": 1

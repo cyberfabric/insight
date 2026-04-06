@@ -1,6 +1,12 @@
 name: github
 version: "1.0"
 type: cdk
+schedule: "0 2 * * *"
+workflow: sync
+dbt_select: "tag:github+"
+
+connection:
+  namespace: "bronze_github"
 
 silver_targets:
   - class_git_repositories

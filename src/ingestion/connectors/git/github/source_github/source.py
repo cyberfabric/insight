@@ -61,8 +61,8 @@ class SourceGitHub(AbstractSource):
 
     def streams(self, config: Mapping[str, Any]) -> List[Stream]:
         token = config["token"]
-        tenant_id = config["tenant_id"]
-        source_instance_id = config["source_instance_id"]
+        tenant_id = config["insight_tenant_id"]
+        source_id = config["insight_source_id"]
         organizations = config["organizations"]
         start_date = config.get("start_date")
         page_size_commits = config.get("page_size_graphql_commits", 100)
@@ -76,7 +76,7 @@ class SourceGitHub(AbstractSource):
         shared_kwargs = {
             "token": token,
             "tenant_id": tenant_id,
-            "source_instance_id": source_instance_id,
+            "source_id": source_id,
             "rate_limiter": rate_limiter,
         }
 
