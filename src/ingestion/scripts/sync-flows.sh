@@ -14,12 +14,26 @@ CONNECTIONS_DIR="./connections"
 echo "  Applying WorkflowTemplates..."
 kubectl apply -f "${WORKFLOWS_DIR}/templates/"
 
-# --- Get connection_id from Airbyte state ---
-source "${SCRIPT_DIR}/airbyte-state.sh"
-
+# --- Get connection_id from per-tenant state ---
 get_connection_id() {
   local tenant="$1" connector="$2"
-  state_get "tenants.${tenant}.connections.${connector}"
+  local state_file="${CONNECTIONS_DIR}/.state/${tenant}.yaml"
+  [[ -f "$state_file" ]] || return 1
+  python3 -c "
+import yaml, sys
+state = yaml.safe_load(open('$state_file')) or {}
+conns = state.get('tenants', {}).get('$tenant', {}).get('connections', {})
+# Exact match first
+if '$connector' in conns:
+    print(conns['$connector'])
+    sys.exit(0)
+# Prefix match: m365 → m365-m365-main
+for k, v in conns.items():
+    if k.startswith('$connector' + '-'):
+        print(v)
+        sys.exit(0)
+sys.exit(1)
+" 2>/dev/null
 }
 
 # --- Generate and apply CronWorkflows for a tenant ---
