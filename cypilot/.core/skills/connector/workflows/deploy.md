@@ -13,7 +13,7 @@ Registers connector in Airbyte, creates connections, and sets up Argo workflows.
 - **Local testing completed**: `source.sh check`, `discover`, `read` all pass
 - **Schema generated from real data**: `./scripts/generate-schema.sh <name>` run, schemas in manifest
 - **All cursor fields exist in schema** (prevents ClickHouse destination NPE)
-- Tenant credentials in `connections/<tenant>.yaml`
+- Tenant config (`connections/<tenant>.yaml` with `tenant_id`) and K8s Secrets with credentials
 - Cluster running (`./up.sh` completed)
 
 ## Phase 1: Upload Manifest

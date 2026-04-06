@@ -98,9 +98,18 @@ def discover_secrets():
         data = {}
         for k, v in item.get("data", {}).items():
             try:
-                data[k] = base64.b64decode(v).decode()
+                raw = base64.b64decode(v).decode()
             except Exception:
-                data[k] = v
+                raw = v
+            # Parse JSON arrays/objects stored as strings in K8s Secrets
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, (list, dict)):
+                    data[k] = parsed
+                else:
+                    data[k] = raw
+            except (json.JSONDecodeError, TypeError):
+                data[k] = raw
         secrets.append({
             "connector": connector,
             "source_id": source_id or connector,
@@ -200,20 +209,18 @@ secrets_by_connector = {}
 for s in all_secrets:
     secrets_by_connector.setdefault(s["connector"], []).append(s)
 
-# --- Build connector instances from K8s Secrets (sole credential source) ---
+# --- Build connector instances from K8s Secrets (sole source of truth) ---
+# Active connectors are determined entirely by K8s Secrets, not by tenant YAML.
+# Tenant YAML provides only tenant_id.
 connector_instances = []
-for connector_name in tenant.get("connectors", {}).keys():
-    matching_secrets = secrets_by_connector.get(connector_name, [])
-    if matching_secrets:
-        for secret in matching_secrets:
-            sid = secret["source_id"]
-            config = dict(secret["data"])
-            config["insight_tenant_id"] = tenant_id
-            config["insight_source_id"] = sid
-            connector_instances.append((connector_name, sid, config))
-            print(f"  Connector: {connector_name} (source: {sid}, from Secret '{secret['name']}')")
-    else:
-        print(f"  Connector: {connector_name} — ERROR: no K8s Secret found, skipping", file=sys.stderr)
+for connector_name, matching_secrets in secrets_by_connector.items():
+    for secret in matching_secrets:
+        sid = secret["source_id"]
+        config = dict(secret["data"])
+        config["insight_tenant_id"] = tenant_id
+        config["insight_source_id"] = sid
+        connector_instances.append((connector_name, sid, config))
+        print(f"  Connector: {connector_name} (source: {sid}, from Secret '{secret['name']}')")
 
 # --- Per-connector sources + connections (ID-based only) ---
 for connector_name, source_id_label, config in connector_instances:
@@ -292,7 +299,6 @@ for connector_name, source_id_label, config in connector_instances:
     conn_state["source_id"] = source_id
 
     # --- Connection (ID-based: state → verify → create if missing) ---
-    connection_config = descriptor.get("connection", {})
     connection_name = f"{connector_name}-{source_id_label}-to-clickhouse-{tenant_id}"
     connection_id = conn_state.get("connection_id")
 
@@ -306,9 +312,6 @@ for connector_name, source_id_label, config in connector_instances:
             print(f"    Connection exists: {connection_id}")
 
     if not connection_id:
-        configured_streams = connection_config.get("streams", [])
-        configured_names = {s["name"] for s in configured_streams}
-
         print(f"    Discovering schema from source...")
         discover_result = api("POST", "/api/v1/sources/discover_schema", {
             "sourceId": source_id,
@@ -320,8 +323,6 @@ for connector_name, source_id_label, config in connector_instances:
             for entry in discover_result["catalog"].get("streams", []):
                 stream_def = entry.get("stream", entry)
                 stream_name = stream_def.get("name", "")
-                if configured_names and stream_name not in configured_names:
-                    continue
                 supported = stream_def.get("supportedSyncModes", ["full_refresh"])
                 sync_mode = "incremental" if "incremental" in supported else "full_refresh"
                 dest_sync_mode = "append_dedup"

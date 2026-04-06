@@ -97,7 +97,7 @@ stringData:
 
 **Discovery**: `apply-connections.sh` discovers Secrets by label `app.kubernetes.io/part-of=insight` and reads connector type from annotation `insight.cyberfabric.com/connector`.
 
-**Merge**: Secret data is merged with inline tenant YAML fields (inline takes precedence). `insight_tenant_id` comes from tenant YAML, `insight_source_id` from Secret annotation.
+**Tenant YAML**: Contains only `tenant_id`. No connector config, no credentials — everything comes from K8s Secrets. `insight_tenant_id` is set from tenant YAML `tenant_id`. `insight_source_id` is set from Secret annotation `insight.cyberfabric.com/source-id`.
 
 **Multi-instance**: Multiple Secrets with the same `connector` annotation create separate Airbyte sources (e.g., two M365 tenants).
 
@@ -177,5 +177,5 @@ Set these before routing to workflow:
 | `CONNECTOR_NAME` | from argument | `m365` |
 | `CONNECTOR_PATH` | resolved | `collaboration/m365` |
 | `CONNECTOR_DIR` | full path | `src/ingestion/connectors/collaboration/m365` |
-| `CONNECTOR_TYPE` | from descriptor.yaml or user input | `nocode` or `cdk` |
+| `CONNECTOR_TYPE` | from user input (nocode default) | `nocode` or `cdk` |
 | `INGESTION_DIR` | fixed | `src/ingestion` |

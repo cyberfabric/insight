@@ -23,44 +23,55 @@ Insight Connector = Airbyte Connector + descriptor + dbt transformations + crede
 | `descriptor.yaml` | Schedule, streams, dbt_select, workflow type | Connector developer |
 | `credentials.yaml.example` | Template listing required credentials | Connector developer |
 | `dbt/` | Bronze → Silver transformations | Connector developer |
-| `connections/{tenant}.yaml` | Real credentials per tenant | Tenant admin |
+| `connections/{tenant}.yaml` | Tenant identity (tenant_id only) | Platform admin |
 
-Connector developers create the package. Tenant admins only fill in credentials — they never touch the connector code.
+Connector developers create the package. Credentials are managed via K8s Secrets — never in tenant YAML or repo.
 
 ### Credential Separation
 
-Credentials are strictly separated from connector code:
+Credentials are strictly separated from connector code and tenant config:
 
 ```
 connectors/collaboration/m365/            # In repo (shared, read-only for tenants)
   connector.yaml                          #   Airbyte manifest
   descriptor.yaml                         #   Metadata + schedule
-  credentials.yaml.example                #   Template: which credentials are needed
+  README.md                               #   K8s Secret fields documentation
   dbt/                                    #   Transformations
 
-connections/                              # Per-tenant credentials
+connections/                              # Tenant identity only
   example-tenant.yaml.example             #   Template (tracked in repo)
-  example-tenant.yaml                     #   Real credentials (NEVER committed)
+  example-tenant.yaml                     #   Tenant config (gitignored)
+
+secrets/connectors/                       # K8s Secret templates
+  m365.yaml.example                       #   Template (tracked in repo)
+  m365.yaml                               #   Real credentials (gitignored)
 ```
 
-One tenant = one file with all credentials for all connectors:
+Tenant config contains ONLY `tenant_id` — no credentials, no connector list:
 
 ```yaml
-# connections/acme-corp.yaml (gitignored — never committed)
+# connections/acme-corp.yaml
 tenant_id: acme_corp
+```
 
-connectors:
-  m365:
-    azure_tenant_id: "63b4c45f-..."
-    azure_client_id: "309e3a13-..."
-    azure_client_secret: "G2x8Q~..."
-  bamboohr:
-    api_key: "abc123..."
-    subdomain: "acme"
-  jira:
-    domain: "acme.atlassian.net"
-    email: "integration@acme.com"
-    api_token: "ATATT3x..."
+All credentials and connector parameters are in K8s Secrets. Active connectors are discovered automatically by label `app.kubernetes.io/part-of=insight`:
+
+```yaml
+# secrets/connectors/m365.yaml (gitignored — never committed)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: insight-m365-main
+  labels:
+    app.kubernetes.io/part-of: insight
+  annotations:
+    insight.cyberfabric.com/connector: m365
+    insight.cyberfabric.com/source-id: m365-main
+type: Opaque
+stringData:
+  azure_tenant_id: "63b4c45f-..."
+  azure_client_id: "309e3a13-..."
+  azure_client_secret: "G2x8Q~..."
 ```
 
 Each connector's `credentials.yaml.example` documents what's required:
