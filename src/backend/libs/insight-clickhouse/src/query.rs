@@ -3,7 +3,7 @@
 //! All values are passed via bind parameters — no string interpolation.
 //! The builder always starts with `WHERE tenant_id = ?` to enforce tenant isolation.
 
-use clickhouse::Row;
+use clickhouse::{RowOwned, RowRead};
 use uuid::Uuid;
 
 use crate::{Client, Error};
@@ -193,7 +193,7 @@ impl QueryBuilder {
     /// Returns [`Error`] if the query fails or times out.
     pub async fn fetch_all<T>(self) -> Result<Vec<T>, Error>
     where
-        T: Row + for<'a> Row<Value<'a> = T> + for<'de> serde::Deserialize<'de> + 'static,
+        T: RowOwned + RowRead,
     {
         let sql = self.to_sql();
         tracing::debug!(sql = %sql, "executing tenant-scoped query");
