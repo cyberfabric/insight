@@ -1,40 +1,7 @@
-# Connector package descriptor
 name: cursor
-version: "1.0"
-type: nocode
-
-# Silver layer targets this connector populates
-silver_targets:
-  - class_ai_dev_usage
-
-# Stream definitions mapping to Bronze tables
-streams:
-  - name: cursor_members
-    bronze_table: cursor_members
-    primary_key: [email]
-    cursor_field: null                # Full refresh
-
-  - name: cursor_audit_logs
-    bronze_table: cursor_audit_logs
-    primary_key: [event_id]
-    cursor_field: timestamp
-
-  - name: cursor_usage_events
-    bronze_table: cursor_usage_events
-    primary_key: [unique]
-    cursor_field: timestamp
-
-  - name: cursor_usage_events_daily_resync
-    bronze_table: cursor_usage_events_daily_resync
-    primary_key: [unique]
-    cursor_field: null                # Fixed window (previous day) — no cursor
-
-  - name: cursor_daily_usage
-    bronze_table: cursor_daily_usage
-    primary_key: [unique]
-    cursor_field: date
-
-  - name: cursor_collection_runs
-    bronze_table: cursor_collection_runs
-    primary_key: [run_id]
-    cursor_field: null                # Monitoring table
+version: '1.0'
+schedule: 0 2 * * *
+dbt_select: tag:cursor+
+workflow: sync
+connection:
+  namespace: bronze_cursor
