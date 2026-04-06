@@ -25,7 +25,7 @@ stringData:
   zoom_account_id: ""       # Zoom account ID
   zoom_client_id: ""        # OAuth app client ID
   zoom_client_secret: ""    # OAuth app client secret
-  start_date: "2026-01-01"  # Earliest date for incremental sync (YYYY-MM-DD)
+  zoom_start_date: "2026-01-01"  # Earliest date for incremental sync (YYYY-MM-DD)
 ```
 
 ### Fields
@@ -35,7 +35,7 @@ stringData:
 | `zoom_account_id` | Yes | Zoom Server-to-Server OAuth account ID |
 | `zoom_client_id` | Yes | OAuth app client ID |
 | `zoom_client_secret` | Yes | OAuth app client secret (sensitive) |
-| `start_date` | Yes | Earliest date for incremental sync (YYYY-MM-DD) |
+| `zoom_start_date` | Yes | Earliest date for incremental sync (YYYY-MM-DD) |
 
 ### Automatically injected
 

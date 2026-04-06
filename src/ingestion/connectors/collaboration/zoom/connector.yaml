@@ -336,7 +336,7 @@ streams:
         - "%Y-%m-%dT%H:%M:%S%z"
       start_datetime:
         type: MinMaxDatetime
-        datetime: "{{ config['start_date'] }}"
+        datetime: "{{ config['zoom_start_date'] }}"
         datetime_format: "%Y-%m-%d"
       end_datetime:
         type: MinMaxDatetime
@@ -859,7 +859,7 @@ spec:
       - zoom_account_id
       - zoom_client_id
       - zoom_client_secret
-      - start_date
+      - zoom_start_date
     properties:
       insight_tenant_id:
         type: string
@@ -886,7 +886,7 @@ spec:
         title: Zoom Client Secret
         airbyte_secret: true
         order: 4
-      start_date:
+      zoom_start_date:
         type: string
         description: >-
           Earliest date to request during initial sync or best-effort historical
