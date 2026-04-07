@@ -93,7 +93,7 @@ class SourceGitHub(AbstractSource):
         )
         prs = PullRequestsStream(
             parent=repos,
-            page_size=100,
+            page_size=50,
             **shared_kwargs,
         )
 
