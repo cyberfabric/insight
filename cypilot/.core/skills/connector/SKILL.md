@@ -42,6 +42,8 @@ ALWAYS use `{INGESTION_DIR}/logs.sh` to read Airbyte job logs or Argo workflow l
 
 ALWAYS run `logs.sh` from `{INGESTION_DIR}` directory with `KUBECONFIG="${KUBECONFIG:-$HOME/.kube/kind-ingestion}"`.
 
+ALWAYS check logs when a sync fails. Workflow failure → check Argo workflow logs first (`./logs.sh <workflow|latest>`), then Airbyte job logs (`./logs.sh airbyte <job-id>`). Common causes: expired credentials in K8s Secret, source API errors, ClickHouse destination unreachable.
+
 ## E2E Sync
 
 E2E (end-to-end) sync means running the full pipeline through Argo, not just triggering an Airbyte sync via API. The Argo pipeline includes: Airbyte sync → dbt transformations (Bronze → Silver). Without Argo, dbt models are not executed and Silver tables are not populated.
@@ -58,16 +60,78 @@ NEVER consider a raw Airbyte API sync (`/api/v1/connections/sync`) as e2e — it
 | dbt run | Bronze → Silver transformations | `run-sync.sh` (step 2) |
 | Full e2e | Both steps via Argo DAG | `./run-sync.sh <connector> <tenant>` |
 
+## Airbyte Architecture
+
+### Shared Destination
+
+ALWAYS use a single shared ClickHouse destination for all connectors. Do NOT create per-connector destinations.
+
+Each connection controls its own Bronze namespace via the `namespaceDefinition` and `namespaceFormat` fields:
+
+| Field | Value | Purpose |
+|-------|-------|---------|
+| `namespaceDefinition` | `"customformat"` | Use custom namespace |
+| `namespaceFormat` | `"bronze_{connector_name}"` | Per-connector ClickHouse database |
+
+The shared destination is configured with a default database (e.g., `default` or `bronze`). Each connection overrides the namespace to route data to the correct Bronze database.
+
+### Connector Credentials via K8s Secrets
+
+Connector credentials are managed via Kubernetes Secrets, not inline in tenant YAML.
+
+**Secret structure**:
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: insight-{connector}-{source-id}       # naming convention
+  labels:
+    app.kubernetes.io/part-of: insight         # discovery label
+  annotations:
+    insight.cyberfabric.com/connector: {name}  # matches descriptor.yaml name
+    insight.cyberfabric.com/source-id: {id}    # passed as insight_source_id
+type: Opaque
+stringData:
+  {field}: {value}                             # fields from connector.yaml connection_specification
+```
+
+**Discovery**: `apply-connections.sh` discovers Secrets by label `app.kubernetes.io/part-of=insight` and reads connector type from annotation `insight.cyberfabric.com/connector`.
+
+**Tenant YAML**: Contains only `tenant_id`. No connector config, no credentials — everything comes from K8s Secrets. `insight_tenant_id` is set from tenant YAML `tenant_id`. `insight_source_id` is set from Secret annotation `insight.cyberfabric.com/source-id`.
+
+**Multi-instance**: Multiple Secrets with the same `connector` annotation create separate Airbyte sources (e.g., two M365 tenants).
+
+**No inline fallback**: If no matching Secret is found, the connector is skipped with an error. All parameters (credentials, config fields like `start_date`) must be in the Secret.
+
+**Per-connector docs**: Each connector's `README.md` documents the required Secret fields. See `src/ingestion/connectors/*/README.md`.
+
+**Local development**: Create `.yaml` files in `src/ingestion/secrets/connectors/` (gitignored) and run `./secrets/apply.sh` to apply them. Secrets must contain ALL connector parameters — there is no inline fallback. See connector READMEs for required Secret fields.
+
+### Airbyte Resource Identity
+
+Scripts identify Airbyte resources (definitions, sources, connections) by UUID from the state file — NEVER by name. Name matching is prohibited.
+
+- ID not in state → create resource, save ID to state
+- ID in state but Airbyte returns 404 → delete stale ID, recreate, save new ID
+- Never search by name — multiple resources can share the same name
+- Existing resources: always update config (credentials may have changed since creation)
+
+### Password Rotation
+
+When rotating ClickHouse password:
+1. Update K8s Secret → `./secrets/apply.sh --infra-only`
+2. Restart ClickHouse → `kubectl rollout restart deployment/clickhouse -n data` (strategy: Recreate — avoids PVC conflicts)
+3. Sync Airbyte destination → `./scripts/apply-connections.sh <tenant>` (updates destination password from Secret)
+
 ## Service Credentials
 
-ALWAYS obtain credentials from the cluster, not from hardcoded values.
+ALWAYS obtain credentials from K8s Secrets, not from hardcoded values or ConfigMaps.
 
 ### ClickHouse
 
 | Environment | How to get credentials |
 |-------------|----------------------|
-| Local (Kind) | Defined in `{INGESTION_DIR}/k8s/clickhouse/configmap.yaml` (`default.xml` → `<users><default><password>`) |
-| Any cluster | `kubectl get configmap clickhouse-config -n data -o jsonpath='{.data.default\.xml}'` and parse `<password>` |
+| Any cluster | `kubectl get secret clickhouse-credentials -n data -o jsonpath='{.data.password}' \| base64 -d` |
 | Tenant config | `yq '.destination' {INGESTION_DIR}/connections/<tenant>.yaml` |
 
 Quick test: `kubectl exec -n data deploy/clickhouse -- clickhouse-client --password <password> --query "SELECT currentUser()"`
@@ -102,6 +166,8 @@ Quick test: `kubectl get workflows -n argo --no-headers | tail -5`
 
 If `<name>` is not a path, search `src/ingestion/connectors/` for it.
 
+ALWAYS use the full relative path (e.g. `collaboration/m365`, not just `m365`) when calling `upload-manifests.sh` directly — it resolves `connectors/{path}/connector.yaml`.
+
 If `<command>` is omitted, show available commands and existing connectors.
 
 ### Context Variables
@@ -113,5 +179,5 @@ Set these before routing to workflow:
 | `CONNECTOR_NAME` | from argument | `m365` |
 | `CONNECTOR_PATH` | resolved | `collaboration/m365` |
 | `CONNECTOR_DIR` | full path | `src/ingestion/connectors/collaboration/m365` |
-| `CONNECTOR_TYPE` | from descriptor.yaml or user input | `nocode` or `cdk` |
+| `CONNECTOR_TYPE` | from user input (nocode default) | `nocode` or `cdk` |
 | `INGESTION_DIR` | fixed | `src/ingestion` |

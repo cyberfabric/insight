@@ -1,44 +1,6 @@
 # Tenant connection config
-# Copy to example-tenant.yaml and fill in real credentials
-# NEVER commit the .yaml file — only .yaml.example is tracked
+# Copy to {tenant-name}.yaml (e.g., acme.yaml)
+# Contains ONLY tenant_id — all credentials and connector config come from K8s Secrets.
+# Active connectors are discovered by label app.kubernetes.io/part-of=insight.
 
 tenant_id: example_tenant
-
-# ClickHouse destination (shared across all connectors)
-destination:
-  type: clickhouse
-  host: clickhouse.data.svc.cluster.local
-  port: 8123
-  username: default
-  password: clickhouse
-
-# Connector credentials
-# Single instance — object:
-#   connector_name:
-#     insight_source_id: "my-instance"
-#     api_key: "..."
-#
-# Multiple instances — array:
-#   connector_name:
-#     - insight_source_id: "instance-1"
-#       api_key: "..."
-#     - insight_source_id: "instance-2"
-#       api_key: "..."
-
-connectors:
-  m365:
-    insight_source_id: "m365-main"
-    azure_tenant_id: "YOUR_AZURE_TENANT_ID"
-    azure_client_id: "YOUR_AZURE_CLIENT_ID"
-    azure_client_secret: "YOUR_AZURE_CLIENT_SECRET"
-
-  # Example: multiple Bitbucket instances
-  # bitbucket:
-  #   - insight_source_id: "bitbucket-cloud"
-  #     workspace: "acme-cloud"
-  #     username: "integration"
-  #     app_password: "..."
-  #   - insight_source_id: "bitbucket-onprem"
-  #     server_url: "https://bitbucket.acme.local"
-  #     username: "integration"
-  #     app_password: "..."

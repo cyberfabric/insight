@@ -1,20 +1,7 @@
 name: zoom
-version: "1.0"
-type: nocode
-
-schedule: "0 3 * * *"
-dbt_select: "tag:zoom tag:silver"
+version: '1.0'
+schedule: 0 3 * * *
+dbt_select: tag:zoom+
 workflow: sync
-
 connection:
-  namespace: "bronze_zoom"
-  streams:
-    - name: users
-      sync_mode: full_refresh_overwrite
-    - name: meetings
-      sync_mode: incremental_append
-    - name: participants
-      sync_mode: incremental_append
-
-silver_targets:
-  - class_comms_events
+  namespace: bronze_zoom

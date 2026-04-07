@@ -262,7 +262,7 @@ streams:
       datetime_format: "%Y-%m-%d"
       start_datetime:
         type: MinMaxDatetime
-        datetime: "{{ config.get('start_date', day_delta(-90, format='%Y-%m-%d')) }}"
+        datetime: "{{ config.get('start_date', day_delta(-90, format='%Y-%m-%d'))[:10] }}"
         datetime_format: "%Y-%m-%d"
       step: P1D
       cursor_granularity: P1D
@@ -418,8 +418,6 @@ streams:
                     $ref: "#/definitions/anthropic_headers"
                   authenticator:
                     $ref: "#/definitions/api_key_authenticator"
-                  request_parameters:
-                    limit: "100"
                 record_selector:
                   type: RecordSelector
                   extractor:
@@ -427,7 +425,7 @@ streams:
                     field_path:
                       - data
                 paginator:
-                  type: NoPagination
+                  $ref: "#/definitions/offset_paginator"
     transformations:
       - $ref: "#/definitions/tenant_id_injection"
       - type: AddFields
@@ -527,7 +525,8 @@ spec:
       start_date:
         type: string
         title: Start Date
-        description: "Earliest date to collect code usage from (ISO 8601, e.g. 2026-01-01T00:00:00Z). Defaults to 90 days ago."
+        description: "Earliest date to collect code usage from (YYYY-MM-DD, e.g. 2026-01-01). Full ISO datetimes also accepted. Defaults to 90 days ago."
+        pattern: "^\\d{4}-\\d{2}-\\d{2}(T.*)?$"
         order: 3
     additionalProperties: true
 

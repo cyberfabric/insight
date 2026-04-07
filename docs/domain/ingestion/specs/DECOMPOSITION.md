@@ -16,6 +16,7 @@ date: 2026-03-24
   - [2.5 Argo Workflows Orchestration — HIGH](#25-argo-workflows-orchestration--high)
   - [2.6 dbt Project & Silver Union — HIGH](#26-dbt-project--silver-union--high)
   - [2.7 Reference Connector Package — M365 — MEDIUM](#27-reference-connector-package--m365--medium)
+  - [2.8 K8s Secret Credential Resolution — HIGH](#28-k8s-secret-credential-resolution--high)
 - [3. Feature Dependencies](#3-feature-dependencies)
 
 <!-- /toc -->
@@ -478,6 +479,41 @@ The Ingestion Layer DESIGN is decomposed into seven features organized around de
   - [ ] `p1` - `cpt-insightspec-contract-ing-dbt-contracts`
 
 
+### 2.8 [K8s Secret Credential Resolution](feature-k8s-secret-credentials/) — HIGH
+
+- [ ] `p1` - **ID**: `cpt-insightspec-feature-k8s-secret-credentials`
+
+- **Purpose**: Enable `apply-connections.sh` to discover and resolve connector credentials from Kubernetes Secrets via label-based discovery, replacing inline plaintext credentials in tenant YAML. Consumers manage secrets through their own K8s secret infrastructure (Vault + ESO, Sealed Secrets, manual).
+
+- **Depends On**: `cpt-insightspec-feature-terraform-connections`
+
+- **Scope**:
+  - `src/ingestion/scripts/apply-connections.sh` — Secret discovery, credential merge, backward compatibility
+  - `src/ingestion/connections/example-tenant.yaml` — updated to remove inline credentials
+  - `src/ingestion/connectors/*/README.md` — per-connector K8s Secret specification (7 connectors)
+
+- **Out of scope**:
+  - ClickHouse destination credentials (separate concern)
+  - Secret creation tooling (consumer responsibility)
+  - Vault/ESO integration (transparent — produces K8s Secrets)
+
+- **Requirements Covered**:
+
+  - [ ] `p1` - `cpt-insightspec-fr-ing-secret-management`
+
+- **Design Principles Covered**:
+
+  - [ ] `p1` - `cpt-insightspec-principle-ing-tenant-isolation`
+
+- **Design Components**:
+
+  - [ ] `p1` - `cpt-insightspec-component-ing-airbyte`
+  - [ ] `p1` - `cpt-insightspec-component-ing-terraform`
+
+- **ADR**:
+
+  - `cpt-insightspec-adr-k8s-secrets-credentials`
+
 ---
 
 ## 3. Feature Dependencies
@@ -489,7 +525,8 @@ cpt-insightspec-feature-local-infra
     │       ↓
     │       └─→ cpt-insightspec-feature-terraform-connections
     │               ↓
-    │               └─→ cpt-insightspec-feature-argo-orchestration
+    │               ├─→ cpt-insightspec-feature-argo-orchestration
+    │               └─→ cpt-insightspec-feature-k8s-secret-credentials
     ├─→ cpt-insightspec-feature-dbt-silver
     │       ↓
     │       └─→ cpt-insightspec-feature-ref-m365
@@ -505,11 +542,13 @@ cpt-insightspec-feature-local-debug  (independent — no platform dependency)
 - `cpt-insightspec-feature-manifest-upload` requires `cpt-insightspec-feature-local-infra`: needs a running Airbyte instance to upload manifests to
 - `cpt-insightspec-feature-terraform-connections` requires `cpt-insightspec-feature-manifest-upload`: connections reference source definitions that must be registered first
 - `cpt-insightspec-feature-argo-orchestration` requires `cpt-insightspec-feature-local-infra` and `cpt-insightspec-feature-terraform-connections`: CronWorkflows trigger syncs on existing connections
+- `cpt-insightspec-feature-k8s-secret-credentials` requires `cpt-insightspec-feature-terraform-connections`: K8s Secret resolution modifies the connection management script
 - `cpt-insightspec-feature-dbt-silver` requires `cpt-insightspec-feature-local-infra`: dbt needs ClickHouse to be running
 - `cpt-insightspec-feature-ref-m365` requires `cpt-insightspec-feature-local-debug` and `cpt-insightspec-feature-dbt-silver`: reference package needs both debugging tools and dbt project structure
 - `cpt-insightspec-feature-local-debug` is independent — runs standalone Docker containers without the platform
 
 **Parallel tracks**:
 - Track A (platform): local-infra → manifest-upload → connection-management → argo-orchestration
+- Track A' (secrets): connection-management → k8s-secret-credentials
 - Track B (data): local-infra → dbt-silver → ref-m365
 - Track C (standalone): local-debug → ref-m365

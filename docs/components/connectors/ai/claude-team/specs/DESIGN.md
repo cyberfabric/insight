@@ -120,7 +120,7 @@ Each Anthropic Admin API endpoint maps to exactly one stream. `GET /v1/organizat
 
 - [ ] `p2` - **ID**: `cpt-insightspec-principle-claude-team-source-native-schema`
 
-Bronze tables preserve the original Anthropic Admin API field names in their native casing (snake_case). Nested objects (notably `data_residency` in workspaces) are preserved as-is at Bronze level -- flattening and type normalization happen in the Silver layer. The only added fields are `tenant_id`, `source_instance_id`, `collected_at`, and `data_source` for framework support. Note: `_version` and `metadata` (full API response JSON) are documented in Bronze table schemas for forward compatibility but are **not implemented** in the declarative manifest — the Airbyte `AddFields` transformation cannot capture the full response payload or generate deduplication versions.
+Bronze tables preserve the original Anthropic Admin API field names in their native casing (snake_case) where possible. Framework fields (`tenant_id`, `source_instance_id`, `collected_at`, `data_source`) are injected via `AddFields`. Additionally, the `code_usage` stream derives several flattened fields from nested API objects: `actor_type` and `actor_identifier` (from `actor`), `session_count`, `lines_added`, `lines_removed` (from `core_metrics`), `tool_use_accepted`, `tool_use_rejected` (summed from `tool_actions`), and serializes `core_metrics_json`, `tool_actions_json`, `model_breakdown_json` as JSON strings. All streams compute a `unique` composite key. Nested objects like `data_residency` (workspaces) are serialized to JSON strings via `tojson`. Note: `_version` and `metadata` are documented in Bronze table schemas for forward compatibility but are **not implemented** in the declarative manifest.
 
 ### 2.2 Constraints
 
@@ -826,12 +826,12 @@ Only the code usage stream uses incremental sync:
 | Stream | Sync mode | Cursor field | Cursor format | Start (first run) | End |
 |--------|-----------|-------------|---------------|-------------------|-----|
 | `claude_team_users` | Full refresh | N/A | N/A | N/A | N/A |
-| `claude_team_code_usage` | Incremental | `date` | ISO 8601 | Configurable `start_date` (default: 90 days ago) | now |
+| `claude_team_code_usage` | Incremental | `date` | `YYYY-MM-DD` | Configurable `start_date` (default: 90 days ago; accepts YYYY-MM-DD or full ISO datetime, truncated to date) | now |
 | `claude_team_workspaces` | Full refresh | N/A | N/A | N/A | N/A |
 | `claude_team_workspace_members` | Full refresh | N/A | N/A | N/A | N/A |
 | `claude_team_invites` | Full refresh | N/A | N/A | N/A | N/A |
 
-**Manifest implementation**: The declarative manifest uses a fixed `start_datetime` (configurable `start_date`, default 90 days ago) with `step: P1D`. Adaptive backfill (probing backward and stopping after 6 consecutive empty days) is not supported by the Airbyte declarative framework and would require a custom CDK connector or orchestrator-level logic. The fixed lookback window is sufficient for most deployments; organizations needing deeper backfill can override `start_date` in the connection configuration. On subsequent runs, the cursor starts from the last stored `date` position.
+**Manifest implementation**: The declarative manifest uses a fixed `start_datetime` (configurable `start_date`, default 90 days ago) with `step: P1D`. The `start_date` config accepts both `YYYY-MM-DD` and full ISO datetime formats (pattern: `^\d{4}-\d{2}-\d{2}(T.*)?$`); the value is truncated to the first 10 characters (`[:10]`) before use, normalizing both formats to `YYYY-MM-DD`. The fixed lookback window is sufficient for most deployments; organizations needing deeper backfill can override `start_date` in the connection configuration. On subsequent runs, the cursor starts from the last stored `date` position.
 
 **Note**: Unlike Cursor's zero-activity rows (which return data for all team members even on empty days), the Anthropic code usage endpoint returns empty results for days with no activity.
 

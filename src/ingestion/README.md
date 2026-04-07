@@ -23,44 +23,55 @@ Insight Connector = Airbyte Connector + descriptor + dbt transformations + crede
 | `descriptor.yaml` | Schedule, streams, dbt_select, workflow type | Connector developer |
 | `credentials.yaml.example` | Template listing required credentials | Connector developer |
 | `dbt/` | Bronze → Silver transformations | Connector developer |
-| `connections/{tenant}.yaml` | Real credentials per tenant | Tenant admin |
+| `connections/{tenant}.yaml` | Tenant identity (tenant_id only) | Platform admin |
 
-Connector developers create the package. Tenant admins only fill in credentials — they never touch the connector code.
+Connector developers create the package. Credentials are managed via K8s Secrets — never in tenant YAML or repo.
 
 ### Credential Separation
 
-Credentials are strictly separated from connector code:
+Credentials are strictly separated from connector code and tenant config:
 
 ```
 connectors/collaboration/m365/            # In repo (shared, read-only for tenants)
   connector.yaml                          #   Airbyte manifest
   descriptor.yaml                         #   Metadata + schedule
-  credentials.yaml.example                #   Template: which credentials are needed
+  README.md                               #   K8s Secret fields documentation
   dbt/                                    #   Transformations
 
-connections/                              # Per-tenant credentials
+connections/                              # Tenant identity only
   example-tenant.yaml.example             #   Template (tracked in repo)
-  example-tenant.yaml                     #   Real credentials (NEVER committed)
+  example-tenant.yaml                     #   Tenant config (gitignored)
+
+secrets/connectors/                       # K8s Secret templates
+  m365.yaml.example                       #   Template (tracked in repo)
+  m365.yaml                               #   Real credentials (gitignored)
 ```
 
-One tenant = one file with all credentials for all connectors:
+Tenant config contains ONLY `tenant_id` — no credentials, no connector list:
 
 ```yaml
-# connections/acme-corp.yaml (gitignored — never committed)
+# connections/acme-corp.yaml
 tenant_id: acme_corp
+```
 
-connectors:
-  m365:
-    azure_tenant_id: "63b4c45f-..."
-    azure_client_id: "309e3a13-..."
-    azure_client_secret: "G2x8Q~..."
-  bamboohr:
-    api_key: "abc123..."
-    subdomain: "acme"
-  jira:
-    domain: "acme.atlassian.net"
-    email: "integration@acme.com"
-    api_token: "ATATT3x..."
+All credentials and connector parameters are in K8s Secrets. Active connectors are discovered automatically by label `app.kubernetes.io/part-of=insight`:
+
+```yaml
+# secrets/connectors/m365.yaml (gitignored — never committed)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: insight-m365-main
+  labels:
+    app.kubernetes.io/part-of: insight
+  annotations:
+    insight.cyberfabric.com/connector: m365
+    insight.cyberfabric.com/source-id: m365-main
+type: Opaque
+stringData:
+  azure_tenant_id: "63b4c45f-..."
+  azure_client_id: "309e3a13-..."
+  azure_client_secret: "G2x8Q~..."
 ```
 
 Each connector's `credentials.yaml.example` documents what's required:
@@ -82,14 +93,24 @@ brew install kind kubectl helm
 ## Quick Start
 
 ```bash
-# 1. Copy tenant config and fill in credentials
-cp connections/example-tenant.yaml.example connections/my-tenant.yaml
-# Edit my-tenant.yaml with real API keys
-
-# 2. Start the stack
+# 1. Start the cluster (creates namespaces, deploys Airbyte + Argo)
+#    ClickHouse will be skipped until its Secret exists
 ./up.sh
 
-# 3. Run a sync
+# 2. Create and apply secrets
+cp secrets/clickhouse.yaml.example secrets/clickhouse.yaml
+cp secrets/airbyte.yaml.example secrets/airbyte.yaml
+cp secrets/connectors/m365.yaml.example secrets/connectors/m365.yaml
+# Edit each .yaml with real credentials
+./secrets/apply.sh
+
+# 3. Re-run up.sh — now ClickHouse will deploy
+./up.sh
+
+# 4. Initialize (register connectors, create connections, sync workflows)
+./run-init.sh
+
+# 5. Run a sync
 ./run-sync.sh m365 my-tenant
 ```
 
@@ -99,7 +120,9 @@ cp connections/example-tenant.yaml.example connections/my-tenant.yaml
 
 | Command | Description |
 |---------|-------------|
-| `./up.sh` | Start all services (idempotent, safe to re-run) |
+| `./up.sh` | Create cluster and deploy services (idempotent, safe to re-run) |
+| `./secrets/apply.sh` | Apply K8s Secrets (infra + connectors). Run after `up.sh` |
+| `./run-init.sh` | Initialize: create databases, register connectors, apply connections. Run after secrets |
 | `./down.sh` | Stop all services. **Data preserved** |
 | `./cleanup.sh` | Delete cluster and all data. Asks for confirmation |
 
@@ -143,21 +166,18 @@ After `./up.sh`:
 
 ### ClickHouse Credentials
 
-Credentials are stored in a ConfigMap and referenced by destination configs.
+**Production:** password from K8s Secret `clickhouse-credentials` in namespace `data` (see [Production Deployment](#production-deployment)).
 
-**Local (Kind):** defined in `k8s/clickhouse/configmap.yaml` (`default.xml` → `<users><default><password>`).
+**Local (Kind):** falls back to default password `clickhouse` from `k8s/clickhouse/configmap.yaml` when Secret is absent.
 
-**Any environment:** read from the running cluster:
+**Any environment:**
 
 ```bash
-# From ConfigMap
-kubectl get configmap clickhouse-config -n data -o jsonpath='{.data.default\.xml}' | grep -oP '(?<=<password>).*(?=</password>)'
-
-# From tenant config
-yq '.destination' connections/<tenant>.yaml
+# Read password from Secret (production)
+kubectl get secret clickhouse-credentials -n data -o jsonpath='{.data.password}' | base64 -d
 
 # Quick test
-kubectl exec -n data deploy/clickhouse -- clickhouse-client --password clickhouse --query "SELECT currentUser()"
+kubectl exec -n data deploy/clickhouse -- clickhouse-client --password "$(kubectl get secret clickhouse-credentials -n data -o jsonpath='{.data.password}' | base64 -d 2>/dev/null || echo clickhouse)" --query "SELECT currentUser()"
 ```
 
 ### Airbyte Credentials
@@ -178,15 +198,24 @@ In-cluster API address: `http://airbyte-airbyte-server-svc.airbyte.svc.cluster.l
 
 ### Argo Credentials
 
-**Local (Kind):** UI at `http://localhost:30500`, no authentication.
+**Local (Kind):** UI at `http://localhost:30500`, no authentication (`--auth-mode=server`).
+
+**Production:** UI requires a Bearer token (`--auth-mode=client`):
+
+```bash
+# Create a ServiceAccount for UI access (one-time)
+kubectl create sa argo-admin -n argo
+kubectl create clusterrolebinding argo-admin --clusterrole=admin --serviceaccount=argo:argo-admin
+
+# Get a token (valid 24h)
+kubectl create token argo-admin -n argo --duration=24h
+
+# Paste the token into the Argo UI login page
+```
 
 **Any environment:**
 
 ```bash
-# Port-forward to access Argo UI
-kubectl -n argo port-forward svc/argo-server 2746:2746
-# Then open http://localhost:2746
-
 # List recent workflows
 kubectl get workflows -n argo --sort-by=.metadata.creationTimestamp --no-headers | tail -5
 ```
@@ -197,6 +226,7 @@ kubectl get workflows -n argo --sort-by=.metadata.creationTimestamp --no-headers
 src/ingestion/
 │
 ├── up.sh / down.sh / cleanup.sh    # Cluster lifecycle
+├── run-init.sh                      # Initialize after secrets applied
 ├── run-sync.sh                      # Manual pipeline run
 ├── update-connectors.sh             # Re-upload manifests
 ├── update-connections.sh            # Re-apply connections
@@ -216,6 +246,14 @@ src/ingestion/
 │   ├── example-tenant.yaml.example  #   Template (tracked)
 │   ├── example-tenant.yaml          #   Real credentials (gitignored)
 │   └── .airbyte-state.yaml          #   Airbyte IDs registry (gitignored, auto-generated)
+│
+├── secrets/                         # K8s Secrets (all gitignored, examples tracked)
+│   ├── apply.sh                     #   Apply all secrets (infra + connectors)
+│   ├── clickhouse.yaml.example      #   ClickHouse password
+│   ├── airbyte.yaml.example         #   Airbyte admin credentials
+│   └── connectors/                  #   Per-connector secrets
+│       ├── m365.yaml.example        #     M365 OAuth credentials
+│       └── zoom.yaml.example        #     Zoom OAuth credentials
 │
 ├── dbt/                             # Shared dbt project
 │   ├── dbt_project.yml
@@ -248,9 +286,9 @@ src/ingestion/
 │   └── wait-for-services.sh        #   kubectl wait for pods
 │
 └── tools/
-    ├── toolbox/                     # insight-toolbox Docker image
+    ├── toolbox/                     # insight-toolbox Docker image (ghcr.io/cyberfabric/insight-toolbox)
     │   ├── Dockerfile               #   python + dbt + kubectl + yq
-    │   └── build.sh                 #   Build + load into Kind
+    │   └── build.sh                 #   Build + push to GHCR (or load into Kind)
     └── declarative-connector/       # Local connector debugging
         └── source.sh               #   check / discover / read
 ```
@@ -258,36 +296,33 @@ src/ingestion/
 ## Airbyte State
 
 All Airbyte resource IDs (definitions, sources, destinations, connections) are tracked in
-`connections/.airbyte-state.yaml`. This file is auto-generated and gitignored — it's specific
-to the current Airbyte instance.
+per-tenant state files under `connections/.state/`. These files are auto-generated and
+gitignored — they're specific to the current Airbyte instance.
 
 ```yaml
-# connections/.airbyte-state.yaml (auto-generated)
-workspace_id: "8564ee19-..."
-definitions:
-  m365: "f8b1f832-..."
-  zoom: "1227c334-..."
+# connections/.state/virtuozzo.yaml (auto-generated per tenant)
+workspace_id: "4f79767b-..."
+shared_destination_id: "731c8d42-..."
+connectors:
+  m365-m365-main:
+    definition_id: "046ef483-..."
+    source_id: "60c560e8-..."
+    connection_id: "0220d2fe-..."
 tenants:
-  example-tenant:
-    destinations:
-      m365: "09e5fc84-..."
-      zoom: "cb676fc0-..."
+  virtuozzo:
     sources:
-      m365: "591af227-..."
-      zoom: "73dab641-..."
+      m365-m365-main: "60c560e8-..."
     connections:
-      m365: "b4a78d7b-..."
-      zoom: "d04a508a-..."
+      m365-m365-main: "0220d2fe-..."
+definitions:
+  m365-m365-main: "046ef483-..."
 ```
 
-Scripts read/write this state automatically. If state gets out of sync:
-
-```bash
-./scripts/sync-airbyte-state.sh    # re-fetch all IDs from Airbyte API
-```
+Scripts read/write state per-tenant automatically. Each tenant config (`connections/<tenant>.yaml`)
+produces its own state file (`connections/.state/<tenant>.yaml`).
 
 **Storage backend**:
-- **Local (host)**: file `connections/.airbyte-state.yaml`
+- **Local (host)**: files in `connections/.state/`
 - **In-cluster (K8s)**: ConfigMap `airbyte-state` in namespace `data`
 - Scripts auto-detect the backend
 
@@ -304,12 +339,22 @@ Scripts read/write this state automatically. If state gets out of sync:
        schema.yml              # Source definition + tests
    ```
 
-2. Add credentials to tenant config:
+2. Create K8s Secret with connector credentials:
    ```yaml
-   # connections/my-tenant.yaml
-   connectors:
-     new_connector:
-       api_key: "..."
+   # secrets/connectors/new-connector.yaml
+   apiVersion: v1
+   kind: Secret
+   metadata:
+     name: insight-new-connector-main
+     labels:
+       app.kubernetes.io/part-of: insight
+     annotations:
+       insight.cyberfabric.com/connector: new_connector
+       insight.cyberfabric.com/source-id: new-connector-main
+   type: Opaque
+   stringData:
+     api_key: "..."
+     # All parameters required by connector spec
    ```
 
 3. Deploy:
@@ -321,18 +366,129 @@ Scripts read/write this state automatically. If state gets out of sync:
 
 ## Adding a New Tenant
 
-1. Copy example config:
+1. Create tenant config:
    ```bash
-   cp connections/example-tenant.yaml.example connections/acme.yaml
+   cat > connections/acme.yaml <<EOF
+   tenant_id: acme
+   EOF
    ```
 
-2. Fill in credentials and set `tenant_id: acme`
+2. Create K8s Secrets for each connector (see `secrets/connectors/*.yaml.example`)
 
 3. Deploy:
    ```bash
-   ./update-connections.sh acme
-   ./update-workflows.sh acme
+   ./secrets/apply.sh --connectors-only
+   ./run-init.sh
    ```
+
+## Production Deployment
+
+### Prerequisites
+
+A running K8s cluster with `kubectl` access. Set environment:
+
+```bash
+export ENV=production
+export KUBECONFIG=/path/to/your/kubeconfig
+```
+
+### Step 1: Deploy Services
+
+```bash
+./up.sh   # Uses ENV=production, applies production Helm values
+```
+
+### Step 2: Set Up GHCR Image Pull
+
+Argo workflow templates use `ghcr.io/cyberfabric/insight-toolbox:latest` for dbt jobs.
+The image is private, so the cluster needs a pull secret.
+
+```bash
+# 1. Create a GitHub Personal Access Token (PAT) at https://github.com/settings/tokens
+#    Required scopes: read:packages (to pull), write:packages (to push updates)
+
+# 2. Create pull secret in argo and data namespaces
+kubectl create secret docker-registry ghcr-pull \
+  --docker-server=https://ghcr.io \
+  --docker-username=YOUR_GITHUB_USERNAME \
+  --docker-password=YOUR_PAT \
+  -n argo
+
+kubectl create secret docker-registry ghcr-pull \
+  --docker-server=https://ghcr.io \
+  --docker-username=YOUR_GITHUB_USERNAME \
+  --docker-password=YOUR_PAT \
+  -n data
+
+# 3. Patch default service account so all pods can pull
+kubectl patch serviceaccount default -n argo -p '{"imagePullSecrets": [{"name": "ghcr-pull"}]}'
+kubectl patch serviceaccount default -n data -p '{"imagePullSecrets": [{"name": "ghcr-pull"}]}'
+```
+
+To rebuild and push the toolbox image (after dbt model changes):
+```bash
+cd src/ingestion
+docker buildx build --platform linux/amd64 \
+  -t ghcr.io/cyberfabric/insight-toolbox:latest \
+  -f tools/toolbox/Dockerfile --push .
+```
+
+### Step 3: Create and Apply Secrets
+
+All credentials are stored in K8s Secrets. Example templates live in `secrets/`:
+
+```bash
+# Copy example templates and fill in real credentials
+cp secrets/clickhouse.yaml.example secrets/clickhouse.yaml
+cp secrets/connectors/m365.yaml.example secrets/connectors/m365.yaml
+cp secrets/connectors/zoom.yaml.example secrets/connectors/zoom.yaml
+# Edit each .yaml file with real credentials
+```
+
+Apply all secrets at once:
+
+```bash
+./secrets/apply.sh                    # All (infra + connectors)
+./secrets/apply.sh --infra-only       # Only infrastructure secrets
+./secrets/apply.sh --connectors-only  # Only connector secrets
+```
+
+### Step 4: Initialize
+
+```bash
+./run-init.sh   # Creates databases, registers connectors, applies connections, syncs workflows
+```
+
+### Required Secrets Summary
+
+| Secret | Namespace | Keys | Created by |
+|--------|-----------|------|------------|
+| `clickhouse-credentials` | `data` + `argo` | `username`, `password` | `secrets/apply.sh` |
+| `airbyte-auth-secrets` | `airbyte` | `instance-admin-password`, ... | Helm chart (auto) |
+| `insight-{connector}-{source-id}` | `data` | Connector-specific | `secrets/apply.sh` |
+
+### Password Rotation
+
+To change ClickHouse password:
+
+```bash
+# 1. Update Secret file
+vim secrets/clickhouse.yaml   # set new password
+
+# 2. Apply to cluster (both data and argo namespaces)
+./secrets/apply.sh --infra-only
+
+# 3. Restart ClickHouse to pick up new password
+kubectl rollout restart deployment/clickhouse -n data
+kubectl rollout status deployment/clickhouse -n data
+
+# 4. Update Airbyte destination + connections with new password
+./scripts/apply-connections.sh example-tenant
+```
+
+ClickHouse uses `strategy: Recreate` — the old pod is terminated before the new one starts. This avoids PVC conflicts (ReadWriteOnce) and ensures the new password takes effect immediately.
+
+`apply-connections.sh` always updates the destination password from K8s Secret on every run. Existing connections are reused (they reference the destination by ID).
 
 ## Environment
 
@@ -340,4 +496,4 @@ Scripts read/write this state automatically. If state gets out of sync:
 |----------|---------|-------------|
 | `ENV` | `local` | `local` (Kind) or `production` (existing K8s cluster) |
 | `KUBECONFIG` | `~/.kube/kind-ingestion` | Path to kubeconfig |
-| `TOOLBOX_IMAGE` | `insight-toolbox:local` | Docker image for toolbox |
+| `TOOLBOX_IMAGE` | `insight-toolbox:local` | Docker image for toolbox (production: `ghcr.io/cyberfabric/insight-toolbox:latest`) |

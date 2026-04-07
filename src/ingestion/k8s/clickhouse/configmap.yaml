@@ -25,16 +25,3 @@ data:
             <cluster>default</cluster>
         </macros>
     </clickhouse>
-  default.xml: |
-    <clickhouse>
-        <users>
-            <default>
-                <password>clickhouse</password>
-                <networks>
-                    <ip>::/0</ip>
-                </networks>
-                <profile>default</profile>
-                <access_management>1</access_management>
-            </default>
-        </users>
-    </clickhouse>

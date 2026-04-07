@@ -1,42 +1,7 @@
-# Connector package descriptor
 name: claude-api
-version: "1.0"
-type: nocode
-
-# Silver layer targets this connector populates
-silver_targets:
-  - class_ai_api_usage
-
-# Stream definitions mapping to Bronze tables
-streams:
-  - name: claude_api_messages_usage
-    bronze_table: claude_api_messages_usage
-    primary_key: [unique]
-    cursor_field: date
-
-  - name: claude_api_cost_report
-    bronze_table: claude_api_cost_report
-    primary_key: [unique]
-    cursor_field: date
-
-  - name: claude_api_keys
-    bronze_table: claude_api_keys
-    primary_key: [id]
-    cursor_field: null                # Full refresh
-
-  - name: claude_api_workspaces
-    bronze_table: claude_api_workspaces
-    primary_key: [id]
-    cursor_field: null                # Full refresh
-
-  - name: claude_api_invites
-    bronze_table: claude_api_invites
-    primary_key: [id]
-    cursor_field: null                # Full refresh
-
-  # Framework-injected monitoring stream (not defined in connector.yaml;
-  # owned by Airbyte platform per DESIGN.md §4 Collection Runs Monitoring)
-  - name: claude_api_collection_runs
-    bronze_table: claude_api_collection_runs
-    primary_key: [run_id]
-    cursor_field: null                # Monitoring table
+version: '1.0'
+schedule: 0 2 * * *
+dbt_select: tag:claude-api+
+workflow: sync
+connection:
+  namespace: bronze_claude_api

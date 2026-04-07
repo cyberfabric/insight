@@ -84,10 +84,20 @@ print()
 for a in j.get('attempts',[]):
     attempt = a.get('attempt',{})
     print(f'--- Attempt {attempt.get(\"id\",\"?\")} ({attempt.get(\"status\",\"?\")}) ---')
-    logs = a.get('logs',{}).get('logLines',[])
-    if logs:
-        for line in logs:
+    logs_obj = a.get('logs',{})
+    log_lines = logs_obj.get('logLines',[])
+    events = logs_obj.get('events',[])
+    if log_lines:
+        for line in log_lines:
             print(line)
+    elif events:
+        for e in events:
+            ts = e.get('timestamp','')
+            level = e.get('level','info')
+            src = e.get('logSource','')
+            msg = e.get('message','')
+            if msg:
+                print(f'{ts} {src} {level.upper()} {msg}')
     else:
         print('  (no log lines in API response)')
     fail = a.get('failureSummary',{})
@@ -99,8 +109,7 @@ for a in j.get('attempts',[]):
                 print(f'  Internal: {internal[:500]}')
             stack = f.get('stacktrace','')
             if stack:
-                # Print first 30 lines of stack
-                for line in stack.split('\\\\n')[:30]:
+                for line in stack.split('\\n')[:30]:
                     print(f'  {line}')
     print()
 " 2>&1

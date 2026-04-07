@@ -12,7 +12,7 @@ sources:
       - name: cursor_collection_runs
 
 models:
-  - name: to_ai_dev_usage
+  - name: to_cursor_ai_dev_usage
     description: >
       Unified AI dev tool usage events from Cursor.
       Deduplication: yesterday and earlier from daily_resync (finalized costs),

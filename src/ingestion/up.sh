@@ -57,6 +57,14 @@ for ns in airbyte argo data; do
   kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
 done
 
+# --- Secret checks ---
+# Track what's missing so we can report at the end
+MISSING=()
+
+has_secret() {
+  kubectl get secret "$1" -n "$2" &>/dev/null
+}
+
 # --- Ingress controller (local only) ---
 if [[ "$ENV" == "local" ]]; then
   echo "=== Installing ingress-nginx ==="
@@ -69,7 +77,7 @@ if [[ "$ENV" == "local" ]]; then
     --wait --timeout 3m
 fi
 
-# --- Airbyte ---
+# --- Airbyte (no user Secret required — Helm creates internal auth secrets) ---
 echo "=== Deploying Airbyte ==="
 helm repo add airbyte https://airbytehq.github.io/helm-charts 2>/dev/null || true
 helm repo update airbyte
@@ -86,12 +94,33 @@ helm upgrade --install airbyte airbyte/airbyte \
 kubectl scale deployment -n airbyte --all --replicas=1 2>/dev/null || true
 kubectl scale statefulset -n airbyte --all --replicas=1 2>/dev/null || true
 
-# --- ClickHouse ---
-echo "=== Deploying ClickHouse ==="
-kubectl apply -f k8s/clickhouse/
-kubectl scale deployment/clickhouse -n data --replicas=1 2>/dev/null || true
+# --- Copy Airbyte auth secret to argo namespace (for JWT minting in workflow steps) ---
+echo "=== Syncing Airbyte auth secret to argo namespace ==="
+if kubectl get secret airbyte-auth-secrets -n airbyte &>/dev/null; then
+  kubectl get secret airbyte-auth-secrets -n airbyte -o json \
+    | python3 -c "import sys,json; s=json.load(sys.stdin); print(json.dumps({'apiVersion':'v1','kind':'Secret','type':'Opaque','metadata':{'name':'airbyte-auth-secrets','namespace':'argo'},'data':s['data']}))" \
+    | kubectl apply -f -
+else
+  echo "  WARNING: airbyte-auth-secrets not found in airbyte namespace (Airbyte may still be starting)"
+fi
 
-# --- Argo Workflows ---
+# --- ClickHouse (requires clickhouse-credentials Secret) ---
+if has_secret clickhouse-credentials data; then
+  echo "=== Deploying ClickHouse ==="
+  kubectl apply -f k8s/clickhouse/
+  kubectl scale deployment/clickhouse -n data --replicas=1 2>/dev/null || true
+else
+  echo "=== SKIP: ClickHouse — Secret 'clickhouse-credentials' not found in namespace 'data' ==="
+  echo "  Create it:"
+  echo "    kubectl create secret generic clickhouse-credentials -n data --from-literal=password='YOUR_PASSWORD'"
+  echo "  Or copy and apply the example:"
+  echo "    cp secrets/clickhouse.yaml.example secrets/clickhouse.yaml"
+  echo "    kubectl apply -f secrets/clickhouse.yaml -n data"
+  echo "    kubectl apply -f secrets/clickhouse.yaml -n argo"
+  MISSING+=("clickhouse-credentials (namespace: data)")
+fi
+
+# --- Argo Workflows (no user Secret required for server auth-mode) ---
 echo "=== Deploying Argo Workflows ==="
 helm repo add argo https://argoproj.github.io/argo-helm 2>/dev/null || true
 helm repo update argo
@@ -109,73 +138,42 @@ kubectl apply -f k8s/argo/rbac.yaml
 echo "=== Applying WorkflowTemplates ==="
 kubectl apply -f workflows/templates/
 
-# --- Wait for services ---
+# --- Wait for services that were deployed ---
 echo "=== Waiting for services ==="
-kubectl wait --for=condition=ready pod -l app=clickhouse -n data --timeout=120s
+if has_secret clickhouse-credentials data; then
+  kubectl wait --for=condition=ready pod -l app=clickhouse -n data --timeout=120s
+fi
 kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=argo-workflows-server -n argo --timeout=120s
 
-# --- ClickHouse init ---
-echo "=== Initializing ClickHouse ==="
-kubectl exec -n data deploy/clickhouse -- \
-  clickhouse-client --password clickhouse \
-  --query "CREATE DATABASE IF NOT EXISTS silver" 2>/dev/null || true
-
-# --- Run init inside cluster via toolbox ---
-echo "=== Initializing (toolbox job) ==="
-kubectl delete job ingestion-init -n data --ignore-not-found 2>/dev/null
-
-# Grant toolbox access to airbyte secrets + argo resources
-kubectl create clusterrolebinding toolbox-admin \
-  --clusterrole=cluster-admin \
-  --serviceaccount=data:default \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-kubectl apply -f - <<EOF
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: ingestion-init
-  namespace: data
-spec:
-  backoffLimit: 1
-  ttlSecondsAfterFinished: 300
-  template:
-    spec:
-      restartPolicy: Never
-      containers:
-        - name: init
-          image: ${TOOLBOX_IMAGE}
-          imagePullPolicy: Never
-          command: [bash, /ingestion/scripts/init.sh]
-          env:
-            - name: KUBECONFIG
-              value: ""
-            - name: AIRBYTE_API
-              value: "http://airbyte-airbyte-server-svc.airbyte.svc.cluster.local:8001"
-EOF
-
-echo "  Waiting for init job..."
-kubectl wait --for=condition=complete job/ingestion-init -n data --timeout=300s 2>&1 || {
-  echo "  Init job failed. Logs:" >&2
-  kubectl logs job/ingestion-init -n data --tail=30 2>&1 || true
-  echo "  (continuing — you can re-run init manually)" >&2
-}
-
 # --- Airbyte port-forward for local access ---
-echo "=== Starting Airbyte port-forward ==="
-pkill -f 'port-forward.*airbyte' 2>/dev/null || true
-kubectl -n airbyte port-forward svc/airbyte-airbyte-server-svc 8000:8001 >/dev/null 2>&1 &
+if [[ "$ENV" == "local" ]]; then
+  echo "=== Starting Airbyte port-forward ==="
+  pkill -f 'port-forward.*airbyte' 2>/dev/null || true
+  kubectl -n airbyte port-forward svc/airbyte-airbyte-server-svc 8000:8001 >/dev/null 2>&1 &
+fi
 
-echo "=== Ready ==="
+# --- Summary ---
 echo ""
-echo "KUBECONFIG: ${KUBECONFIG}"
-echo "To use:     export KUBECONFIG=${KUBECONFIG}"
+echo "════════════════════════════════════════════════"
+echo "  KUBECONFIG: ${KUBECONFIG}"
+echo "  To use:     export KUBECONFIG=${KUBECONFIG}"
 echo ""
-echo "Services:"
-echo "  Airbyte:    http://localhost:8000"
-echo "  Argo UI:    http://localhost:30500"
-echo "  ClickHouse: http://localhost:30123  (user: default, password: clickhouse)"
-echo ""
-echo "Airbyte credentials:"
-echo "  Email:    admin@example.com"
-echo "  Password: $(kubectl get secret -n airbyte airbyte-auth-secrets -o jsonpath='{.data.instance-admin-password}' | base64 -d 2>/dev/null || echo 'unknown')"
+
+if [[ ${#MISSING[@]} -gt 0 ]]; then
+  echo "  ⚠ Missing secrets:"
+  for m in "${MISSING[@]}"; do
+    echo "    - $m"
+  done
+  echo ""
+  echo "  Create the missing secrets and re-run ./up.sh"
+  echo "  Or use: ./secrets/apply.sh"
+else
+  echo "  Services:"
+  echo "    Airbyte:    http://localhost:8000"
+  echo "    Argo UI:    http://localhost:30500"
+  echo "    ClickHouse: http://localhost:30123"
+  echo ""
+  echo "  All services deployed. Next step:"
+  echo "    ./run-init.sh"
+fi
+echo "════════════════════════════════════════════════"

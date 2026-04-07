@@ -25,6 +25,10 @@ postgresql:
     size: 50Gi
     # storageClassName: gp3  # Uncomment and set for your cloud provider
 
+global:
+  auth:
+    enabled: true
+
 # Ingress — configure for your environment
 ingress:
   enabled: true

@@ -1,25 +1,7 @@
 name: m365
-version: "1.0"
-type: nocode
-
-# Orchestration
-schedule: "0 2 * * *"
-dbt_select: "tag:m365 tag:silver"
+version: '1.0'
+schedule: 0 2 * * *
+dbt_select: tag:m365+
 workflow: sync
-
-# Connection config — streams to sync
 connection:
-  namespace: "bronze_m365"
-  streams:
-    - name: email_activity
-      sync_mode: incremental_append
-    - name: teams_activity
-      sync_mode: incremental_append
-    - name: onedrive_activity
-      sync_mode: incremental_append
-    - name: sharepoint_activity
-      sync_mode: incremental_append
-
-# Silver targets produced by dbt
-silver_targets:
-  - class_comms_events
+  namespace: bronze_m365

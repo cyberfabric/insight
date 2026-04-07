@@ -235,7 +235,7 @@ The connector **MUST** extract daily Claude Code usage records from the `GET /v1
 
 The connector **MUST** support incremental sync for code usage using a date-based cursor (`date` field). On each run, only new days since the last cursor position are fetched. On first run, the connector fetches from a configurable `start_date` (default: 90 days ago) forward to today.
 
-**Rationale**: Incremental sync avoids re-fetching the entire usage history on each run. The fixed lookback window is configurable via `start_date` for organizations needing deeper history. Adaptive backfill (probing backward until N empty days) is not supported by the Airbyte declarative framework.
+**Rationale**: Incremental sync avoids re-fetching the entire usage history on each run. The fixed lookback window is configurable via `start_date` for organizations needing deeper history.
 
 **Actors**: `cpt-insightspec-actor-claude-team-operator`
 

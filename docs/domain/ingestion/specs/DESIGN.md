@@ -82,6 +82,7 @@ This layer replaces the previously designed custom Orchestrator and custom Conne
 |-----|----------|
 | [ADR-0001](ADR/0001-kestra-over-airflow.md) `cpt-insightspec-adr-ing-kestra-over-airflow` | Use Kestra over Airflow — YAML-first, no Python dependency (superseded) |
 | [ADR-0002](ADR/0002-argo-over-kestra.md) `cpt-insightspec-adr-argo-over-kestra` | Use Argo Workflows over Kestra — K8s-native, no external DB dependency |
+| [ADR-0003](ADR/0003-k8s-secrets-credentials.md) `cpt-insightspec-adr-k8s-secrets-credentials` | Use K8s Secrets as primary credential source — vendor-neutral, dev/prod parity |
 
 ### 1.3 Architecture Layers
 
@@ -178,6 +179,12 @@ Every record is tagged with `tenant_id` at the connector level -- before data le
 When creating a connector package, the author knows which Silver tables (`class_{domain}`) the connector will populate. The descriptor YAML declares these targets explicitly.
 
 **Why**: Enables package-level validation and dependency tracking.
+
+#### Airbyte Resource Identity by ID
+
+All automation scripts identify Airbyte resources (source definitions, sources, destinations, connections, builder projects) exclusively by their Airbyte-assigned UUID stored in the state file. Name-based matching is prohibited because multiple resources can share the same name, and names are not stable across Airbyte reinstalls. If a stored ID is no longer valid (Airbyte returns 404), the resource is recreated and the new ID is saved.
+
+**Why**: Prevents stale reference errors after Airbyte reinstalls and avoids ambiguity when multiple resources share a name.
 
 ### 2.2 Constraints
 
@@ -649,8 +656,42 @@ Key deployment decisions:
 - External database for Airbyte metadata (PostgreSQL required by Airbyte, managed internally by abctl)
 - Helm charts: Airbyte via `abctl`, Argo via `argo/argo-workflows`
 - ClickHouse deployed via K8s manifests (`src/ingestion/k8s/clickhouse/`)
-- Secrets managed via Kubernetes Secrets
+- All credentials managed via Kubernetes Secrets (see §4.1.1)
 - Service access via NodePort: Airbyte (8000), Argo UI (30500), ClickHouse (30123)
+
+#### 4.1.1 Infrastructure Secrets
+
+All infrastructure and connector credentials are stored in Kubernetes Secrets. No credentials are hardcoded in production manifests.
+
+| Secret | Namespace | Purpose | Required Keys | Created by |
+|--------|-----------|---------|---------------|------------|
+| `clickhouse-credentials` | `data` + `argo` | ClickHouse `default` user password | `username`, `password` | `secrets/apply.sh` |
+| `airbyte-auth-secrets` | `airbyte` | Airbyte internal auth | `instance-admin-password`, `instance-admin-client-id`, `instance-admin-client-secret`, `jwt-signature-secret` | Helm chart (auto) |
+| `insight-{connector}-{source-id}` | `data` | Per-connector credentials (see [ADR-0003](ADR/0003-k8s-secrets-credentials.md)) | Connector-specific (e.g. `azure_client_id`, `azure_client_secret`) | `secrets/apply.sh` |
+
+Argo UI uses `--auth-mode=client` in production — authentication via K8s ServiceAccount Bearer tokens, no Secret required.
+
+**Resolution order** (all scripts):
+1. Read from K8s Secret — sole credential source for all environments
+2. If Secret missing → skip connector with error (no inline fallback)
+3. ClickHouse password: read from env var `CLICKHOUSE_PASSWORD` (injected from Secret by K8s)
+
+**Connector credentials** use label-based discovery: `app.kubernetes.io/part-of: insight` label + `insight.cyberfabric.com/connector` annotation. See [ADR-0003](ADR/0003-k8s-secrets-credentials.md) for details.
+
+#### Credential Resolution Rules
+
+1. **K8s Secrets are the sole credential source.** Connector parameters — API keys, OAuth secrets, start dates, any configuration required by the connector spec — are stored exclusively in K8s Secrets. Tenant YAML files contain only `tenant_id`.
+
+2. **Secret annotations define connector binding.** Each Secret carries:
+   - Label `app.kubernetes.io/part-of: insight` — for discovery
+   - Annotation `insight.cyberfabric.com/connector` — connector name (must match `descriptor.yaml` `name` field)
+   - Annotation `insight.cyberfabric.com/source-id` — unique instance identifier
+
+3. **No inline credential fallback.** Scripts do not fall back to reading credentials from tenant YAML. If a Secret is missing, the connector is skipped with an error.
+
+4. **Destination password sync.** `apply-connections.sh` always updates the ClickHouse destination password from the K8s Secret on every run. This ensures password rotation takes effect without recreating connections.
+
+5. **Password rotation procedure.** Update Secret → apply to cluster → restart ClickHouse (Deployment uses `strategy: Recreate` to avoid PVC ReadWriteOnce conflicts) → run `apply-connections.sh` to sync Airbyte destination password.
 
 ### 4.2 Local Development (Kind K8s Cluster)
 

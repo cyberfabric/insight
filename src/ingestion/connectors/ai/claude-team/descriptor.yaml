@@ -1,43 +1,7 @@
-# Connector package descriptor
 name: claude-team
-version: "1.0"
-type: nocode
-
-# Silver layer targets this connector populates
-silver_targets:
-  - class_ai_dev_usage
-  - class_ai_tool_usage
-
-# Stream definitions mapping to Bronze tables
-streams:
-  - name: claude_team_users
-    bronze_table: claude_team_users
-    primary_key: [id]
-    cursor_field: null                # Full refresh (current-state snapshot)
-
-  - name: claude_team_code_usage
-    bronze_table: claude_team_code_usage
-    primary_key: [unique]
-    cursor_field: date
-
-  - name: claude_team_workspaces
-    bronze_table: claude_team_workspaces
-    primary_key: [id]
-    cursor_field: null                # Full refresh
-
-  - name: claude_team_workspace_members
-    bronze_table: claude_team_workspace_members
-    primary_key: [unique]
-    cursor_field: null                # Full refresh
-
-  - name: claude_team_invites
-    bronze_table: claude_team_invites
-    primary_key: [id]
-    cursor_field: null                # Full refresh
-
-  # Framework-injected monitoring stream (not defined in connector.yaml;
-  # owned by Airbyte platform per DESIGN.md §4 Collection Runs Monitoring)
-  - name: claude_team_collection_runs
-    bronze_table: claude_team_collection_runs
-    primary_key: [run_id]
-    cursor_field: null                # Monitoring table
+version: '1.0'
+schedule: 0 2 * * *
+dbt_select: tag:claude-team+
+workflow: sync
+connection:
+  namespace: bronze_claude_team

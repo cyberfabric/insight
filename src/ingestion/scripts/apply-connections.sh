@@ -34,10 +34,8 @@ def save_state():
 state_dir = os.path.join(connections_dir, ".state")
 os.makedirs(state_dir, exist_ok=True)
 
-# Derive state file name from config file name (not tenant_id)
 config_basename = os.path.splitext(os.path.basename(tenant_config_path))[0]
 
-# Load tenant config
 with open(tenant_config_path) as f:
     tenant = yaml.safe_load(f)
 
@@ -45,13 +43,17 @@ tenant_id = tenant["tenant_id"]
 dest_config = tenant.get("destination", {})
 state_path = os.path.join(state_dir, f"{config_basename}.yaml")
 
-# Load existing state
 state = {}
 if os.path.exists(state_path):
     with open(state_path) as f:
         state = yaml.safe_load(f) or {}
 
 headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+class ApiError(Exception):
+    def __init__(self, code, message):
+        self.code = code
+        self.message = message
 
 def api(method, path, data=None):
     body = json.dumps(data).encode() if data else None
@@ -63,26 +65,86 @@ def api(method, path, data=None):
     except urllib.error.HTTPError as e:
         err = e.read().decode()
         print(f"  API {e.code}: {err[:200]}", file=sys.stderr)
-        return None
+        raise ApiError(e.code, err)
 
-def find_or_create(resource_type, list_path, list_key, create_path, create_data, id_key, name_field, name_value):
-    """Find existing resource by name or create new one."""
-    existing = api("POST", list_path, {"workspaceId": workspace_id})
-    if existing:
-        for item in existing.get(list_key, []):
-            if item.get("name") == name_value:
-                print(f"  Found existing {resource_type}: {item[id_key]}")
-                return item[id_key]
+def api_get(path, data):
+    """GET resource by ID. Returns dict, None if 404, or exits on other errors."""
+    try:
+        return api("POST", path, data)
+    except ApiError as e:
+        if e.code == 404:
+            return None
+        print(f"  ERROR: Airbyte API returned {e.code} (expected 200 or 404)", file=sys.stderr)
+        sys.exit(1)
 
-    result = api("POST", create_path, create_data)
-    if result and id_key in result:
-        print(f"  Created {resource_type}: {result[id_key]}")
-        return result[id_key]
+# --- K8s Secret discovery ---
+import subprocess, base64
 
-    print(f"  ERROR: could not create {resource_type}", file=sys.stderr)
-    return None
+def discover_secrets():
+    """Discover Insight connector Secrets by label in 'data' namespace."""
+    result = subprocess.run(
+        ["kubectl", "get", "secrets", "-n", "data",
+         "-l", "app.kubernetes.io/part-of=insight", "-o", "json"],
+        capture_output=True, text=True, timeout=30
+    )
+    if result.returncode != 0:
+        print(f"  ERROR: kubectl get secrets failed: {result.stderr.strip()}", file=sys.stderr)
+        sys.exit(1)
 
-# --- Lookup ClickHouse definition ID (shared across connectors) ---
+    secrets = []
+    items = json.loads(result.stdout).get("items", [])
+    for item in items:
+        annotations = item.get("metadata", {}).get("annotations", {})
+        connector = annotations.get("insight.cyberfabric.com/connector")
+        if not connector:
+            continue
+        source_id = annotations.get("insight.cyberfabric.com/source-id")
+        if not source_id:
+            print(f"  ERROR: Secret '{item['metadata']['name']}' missing annotation insight.cyberfabric.com/source-id", file=sys.stderr)
+            sys.exit(1)
+        data = {}
+        for k, v in item.get("data", {}).items():
+            try:
+                raw = base64.b64decode(v).decode()
+            except Exception:
+                raw = v
+            # Parse JSON arrays/objects stored as strings in K8s Secrets
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, (list, dict)):
+                    data[k] = parsed
+                else:
+                    data[k] = raw
+            except (json.JSONDecodeError, TypeError):
+                data[k] = raw
+        secrets.append({
+            "connector": connector,
+            "source_id": source_id,
+            "data": data,
+            "name": item["metadata"]["name"],
+        })
+    return secrets
+
+def resolve_clickhouse_password():
+    """Read password from env var, then K8s Secret. Fails if neither available."""
+    env_pass = os.environ.get("CLICKHOUSE_PASSWORD")
+    if env_pass:
+        return env_pass
+    result = subprocess.run(
+        ["kubectl", "get", "secret", "clickhouse-credentials", "-n", "data",
+         "-o", "jsonpath={.data.password}"],
+        capture_output=True, text=True, timeout=10
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        print("ERROR: clickhouse-credentials Secret not found in namespace 'data'", file=sys.stderr)
+        print("  Run: ./secrets/apply.sh --infra-only", file=sys.stderr)
+        sys.exit(1)
+    return base64.b64decode(result.stdout.strip()).decode()
+
+ch_password = resolve_clickhouse_password()
+
+# --- ClickHouse destination definition ID ---
+# Definitions are Airbyte built-in — lookup by name is OK here (not user resources)
 ch_def_id = state.get("clickhouse_definition_id")
 if not ch_def_id:
     defs = api("POST", "/api/v1/destination_definitions/list", {"workspaceId": workspace_id})
@@ -96,217 +158,227 @@ if not ch_def_id:
     sys.exit(1)
 state["clickhouse_definition_id"] = ch_def_id
 
-# --- Per-connector sources + connections ---
+# --- Shared ClickHouse destination ---
+shared_dest_name = "clickhouse"
+shared_dest_id = state.get("shared_destination_id")
+ch_config = {
+    "host": dest_config.get("host", "clickhouse.data.svc.cluster.local"),
+    "port": str(dest_config.get("port", 8123)),
+    "database": "default",
+    "username": dest_config.get("username", "default"),
+    "password": ch_password,
+    "protocol": "http",
+    "enable_json": True,
+}
+
+if shared_dest_id:
+    # Verify by ID — if 404, recreate
+    existing = api_get("/api/v1/destinations/get", {"destinationId": shared_dest_id})
+    if existing and "destinationId" in existing:
+        # Always update password to stay in sync with K8s Secret
+        api("POST", "/api/v1/destinations/update", {
+            "destinationId": shared_dest_id,
+            "name": shared_dest_name,
+            "connectionConfiguration": ch_config,
+        })
+        print(f"  Shared destination updated: {shared_dest_id}")
+    else:
+        print(f"  Shared destination {shared_dest_id} gone from Airbyte, recreating...")
+        shared_dest_id = None
+
+if not shared_dest_id:
+    result = api("POST", "/api/v1/destinations/create", {
+        "workspaceId": workspace_id,
+        "name": shared_dest_name,
+        "destinationDefinitionId": ch_def_id,
+        "connectionConfiguration": ch_config,
+    })
+    if result and "destinationId" in result:
+        shared_dest_id = result["destinationId"]
+        print(f"  Shared destination created: {shared_dest_id}")
+    else:
+        print(f"  ERROR: could not create shared ClickHouse destination: {result}", file=sys.stderr)
+        sys.exit(1)
+state["shared_destination_id"] = shared_dest_id
+
+# --- Discover K8s Secrets ---
 state.setdefault("connectors", {})
 conn_state_all = state["connectors"]
 
-for connector_name, creds in tenant.get("connectors", {}).items():
-    print(f"  Connector: {connector_name}")
+all_secrets = discover_secrets()
+if all_secrets:
+    print(f"  Discovered {len(all_secrets)} K8s Secret(s): {', '.join(s['name'] for s in all_secrets)}")
+else:
+    print(f"  No K8s Secrets found (label app.kubernetes.io/part-of=insight)")
 
-    # Find descriptor
-    descriptor_path = None
+secrets_by_connector = {}
+for s in all_secrets:
+    secrets_by_connector.setdefault(s["connector"], []).append(s)
+
+# --- Build connector instances from K8s Secrets (sole source of truth) ---
+# Active connectors are determined entirely by K8s Secrets, not by tenant YAML.
+# Tenant YAML provides only tenant_id.
+connector_instances = []
+for connector_name, matching_secrets in secrets_by_connector.items():
+    for secret in matching_secrets:
+        sid = secret["source_id"]
+        config = dict(secret["data"])
+        config["insight_tenant_id"] = tenant_id
+        config["insight_source_id"] = sid
+        connector_instances.append((connector_name, sid, config))
+        print(f"  Connector: {connector_name} (source: {sid}, from Secret '{secret['name']}')")
+
+# --- Per-connector sources + connections (ID-based only) ---
+for connector_name, source_id_label, config in connector_instances:
+
+    # Find descriptor by connector name
+    descriptor = None
     for p in pathlib.Path(connectors_dir).rglob("descriptor.yaml"):
         with open(p) as f:
             desc = yaml.safe_load(f)
         if desc.get("name") == connector_name:
-            descriptor_path = p
+            descriptor = desc
             break
-
-    if not descriptor_path:
+    if not descriptor:
         print(f"    SKIP: no descriptor for {connector_name}")
         continue
 
-    with open(descriptor_path) as f:
-        descriptor = yaml.safe_load(f)
+    state_key = f"{connector_name}-{source_id_label}"
+    conn_state = state["connectors"].setdefault(state_key, {})
 
-    conn_state = state["connectors"].setdefault(connector_name, {})
-
-    # Create ClickHouse database for this connector
+    # Create ClickHouse database
     db_name = descriptor.get("connection", {}).get("namespace", f"bronze_{connector_name}")
     print(f"    Creating database: {db_name}")
-    os.system(f'kubectl exec -n data deploy/clickhouse -- clickhouse-client --password clickhouse --query "CREATE DATABASE IF NOT EXISTS {db_name}" 2>/dev/null')
+    subprocess.run(
+        ["kubectl", "exec", "-n", "data", "deploy/clickhouse", "--",
+         "clickhouse-client", "--password", ch_password,
+         "--query", f"CREATE DATABASE IF NOT EXISTS {db_name}"],
+        capture_output=True, timeout=30
+    )
 
-    # Create/find per-connector destination (database = bronze_{name})
-    dest_name = f"clickhouse-{connector_name}"
-    dest_id = conn_state.get("destination_id")
-    if not dest_id:
-        existing = api("POST", "/api/v1/destinations/list", {"workspaceId": workspace_id})
-        if existing:
-            for d in existing.get("destinations", []):
-                if d["name"] == dest_name:
-                    dest_id = d["destinationId"]
-                    print(f"    Destination found: {dest_id}")
-                    break
-    if not dest_id:
-        result = api("POST", "/api/v1/destinations/create", {
-            "workspaceId": workspace_id,
-            "name": dest_name,
-            "destinationDefinitionId": ch_def_id,
-            "connectionConfiguration": {
-                "host": dest_config.get("host", "clickhouse.data.svc.cluster.local"),
-                "port": str(dest_config.get("port", 8123)),
-                "database": db_name,
-                "username": dest_config.get("username", "default"),
-                "password": dest_config.get("password", "clickhouse"),
-                "protocol": "http",
-                "enable_json": True,
-            }
-        })
-        if result and "destinationId" in result:
-            dest_id = result["destinationId"]
-            print(f"    Destination created: {dest_id}")
-        else:
-            print(f"    ERROR: could not create destination for {connector_name}: {result}", file=sys.stderr)
-            continue
-    conn_state["destination_id"] = dest_id
-
-    # Find source definition ID — from state first, then API fallback
-    old_def_id = conn_state.get("definition_id")
-    def_id = state.get("definitions", {}).get(connector_name)
-    if def_id:
-        print(f"    Definition from state: {def_id[:12]}...")
-    else:
-        # Fallback: search API (exact name match, latest if duplicates)
+    # --- Source definition ID (from state, then from definitions state) ---
+    def_id = conn_state.get("definition_id") or state.get("definitions", {}).get(connector_name)
+    if not def_id:
+        # Definitions are Airbyte built-in — name lookup is OK
         defs = api("POST", "/api/v1/source_definitions/list", {"workspaceId": workspace_id})
         if defs:
-            exact = [d["sourceDefinitionId"] for d in defs.get("sourceDefinitions", []) if d["name"] == connector_name]
-            if exact:
-                def_id = exact[-1]
-                if len(exact) > 1:
-                    print(f"    NOTE: {len(exact)} definitions named '{connector_name}', using latest")
-            else:
-                for d in defs.get("sourceDefinitions", []):
-                    if d["name"].lower() == connector_name.lower():
-                        def_id = d["sourceDefinitionId"]
-                        break
-    if not def_id:
-        print(f"    SKIP: source definition not found for {connector_name} (run upload-manifests first)")
-        continue
+            for d in defs.get("sourceDefinitions", []):
+                if d["name"] == connector_name:
+                    def_id = d["sourceDefinitionId"]
+        if not def_id:
+            print(f"    SKIP: source definition not found for {connector_name}")
+            continue
     conn_state["definition_id"] = def_id
 
-    # Create/find source — recreate if definition changed
-    source_name = f"{connector_name}-{tenant_id}"
+    # --- Source (ID-based: state → verify → create if missing) ---
+    source_name = f"{connector_name}-{source_id_label}-{tenant_id}"
     source_id = conn_state.get("source_id")
-    source_recreated = False
 
-    # Check if existing source uses outdated definition
-    if source_id and old_def_id and old_def_id != def_id:
-        print(f"    Definition changed ({old_def_id[:8]}→{def_id[:8]}), recreating source...")
-        # Delete old connection first (depends on source)
-        old_conn_id = conn_state.get("connection_id")
-        if old_conn_id:
-            api("POST", "/api/v1/connections/delete", {"connectionId": old_conn_id})
-            conn_state.pop("connection_id", None)
-        # Delete old source
-        api("POST", "/api/v1/sources/delete", {"sourceId": source_id})
-        source_id = None
-        conn_state.pop("source_id", None)
-        source_recreated = True
-
-    if not source_id:
-        config = dict(creds)
-        if "insight_tenant_id" not in config or config["insight_tenant_id"] == "${tenant_id}":
-            config["insight_tenant_id"] = tenant_id
-
-        source_id = find_or_create(
-            "source",
-            "/api/v1/sources/list", "sources",
-            "/api/v1/sources/create",
-            {
-                "workspaceId": workspace_id,
+    if source_id:
+        # Verify source exists in Airbyte
+        existing = api_get("/api/v1/sources/get", {"sourceId": source_id})
+        if not existing or "sourceId" not in existing:
+            print(f"    Source {source_id} gone from Airbyte, recreating...")
+            # Also delete stale connection
+            old_conn = conn_state.pop("connection_id", None)
+            if old_conn:
+                api("POST", "/api/v1/connections/delete", {"connectionId": old_conn})
+            source_id = None
+            conn_state.pop("source_id", None)
+        else:
+            # Update source config (credentials may have changed)
+            api("POST", "/api/v1/sources/update", {
+                "sourceId": source_id,
                 "name": source_name,
-                "sourceDefinitionId": def_id,
                 "connectionConfiguration": config,
-            },
-            "sourceId", "name", source_name
-        )
+            })
+            print(f"    Source updated: {source_id}")
+
     if not source_id:
-        print(f"    ERROR: no source created for {connector_name}")
-        continue
+        result = api("POST", "/api/v1/sources/create", {
+            "workspaceId": workspace_id,
+            "name": source_name,
+            "sourceDefinitionId": def_id,
+            "connectionConfiguration": config,
+        })
+        if result and "sourceId" in result:
+            source_id = result["sourceId"]
+            print(f"    Source created: {source_id}")
+        else:
+            print(f"    ERROR: could not create source for {connector_name}: {result}", file=sys.stderr)
+            continue
     conn_state["source_id"] = source_id
 
-    # Create/find connection
-    connection_config = descriptor.get("connection", {})
-    connection_name = f"{connector_name}-to-clickhouse-{tenant_id}"
+    # --- Connection (ID-based: state → verify → create if missing) ---
+    connection_name = f"{connector_name}-{source_id_label}-to-clickhouse-{tenant_id}"
     connection_id = conn_state.get("connection_id")
 
-    if not connection_id:
-        configured_streams = connection_config.get("streams", [])
-        configured_names = {s["name"] for s in configured_streams}
+    if connection_id:
+        existing = api_get("/api/v1/connections/get", {"connectionId": connection_id})
+        if not existing or "connectionId" not in existing:
+            print(f"    Connection {connection_id} gone from Airbyte, recreating...")
+            connection_id = None
+            conn_state.pop("connection_id", None)
+        else:
+            print(f"    Connection exists: {connection_id}")
 
-        # Discover real schema from source
+    if not connection_id:
         print(f"    Discovering schema from source...")
         discover_result = api("POST", "/api/v1/sources/discover_schema", {
             "sourceId": source_id,
             "disable_cache": True,
         })
 
-        # Build catalog from discovered schema + configured streams
         sync_catalog = {"streams": []}
         if discover_result and "catalog" in discover_result:
             for entry in discover_result["catalog"].get("streams", []):
-                # Discover returns {"stream": {...}, "config": {...}}
                 stream_def = entry.get("stream", entry)
                 stream_name = stream_def.get("name", "")
-                # Include all streams if no explicit list, otherwise filter
-                if configured_names and stream_name not in configured_names:
-                    continue
-
                 supported = stream_def.get("supportedSyncModes", ["full_refresh"])
                 sync_mode = "incremental" if "incremental" in supported else "full_refresh"
-                # Always use append_dedup — ClickHouse destination v2 NPEs on overwrite with no cursor
                 dest_sync_mode = "append_dedup"
-
                 stream_config = {
                     "syncMode": sync_mode,
                     "destinationSyncMode": dest_sync_mode,
                     "selected": True,
                 }
-                # Use source-defined primary key and cursor if available
                 if stream_def.get("sourceDefinedPrimaryKey"):
                     stream_config["primaryKey"] = stream_def["sourceDefinedPrimaryKey"]
                 if stream_def.get("defaultCursorField"):
                     stream_config["cursorField"] = stream_def["defaultCursorField"]
-
-                sync_catalog["streams"].append({
-                    "stream": stream_def,
-                    "config": stream_config,
-                })
+                sync_catalog["streams"].append({"stream": stream_def, "config": stream_config})
                 print(f"      Stream: {stream_name} ({sync_mode})")
-        else:
-            print(f"    WARNING: discover failed, creating connection without catalog")
 
-        connection_id = find_or_create(
-            "connection",
-            "/api/v1/connections/list", "connections",
-            "/api/v1/connections/create",
-            {
-                "sourceId": source_id,
-                "destinationId": dest_id,
-                "name": connection_name,
-                "namespaceDefinition": "destination",
-                "status": "active",
-                "syncCatalog": sync_catalog,
-            },
-            "connectionId", "name", connection_name
-        )
+        result = api("POST", "/api/v1/connections/create", {
+            "sourceId": source_id,
+            "destinationId": shared_dest_id,
+            "name": connection_name,
+            "namespaceDefinition": "customformat",
+            "namespaceFormat": db_name,
+            "status": "active",
+            "syncCatalog": sync_catalog,
+        })
+        if result and "connectionId" in result:
+            connection_id = result["connectionId"]
+            print(f"    Connection created: {connection_id}")
+        else:
+            print(f"    ERROR: could not create connection: {result}", file=sys.stderr)
+
     if connection_id:
         conn_state["connection_id"] = connection_id
-        print(f"    Connection: {connection_id}")
 
-# Save tenant state into .airbyte-state.yaml
+# Save state
 state["workspace_id"] = workspace_id
 for cn, cs in conn_state_all.items():
-    for key in ("destination_id", "source_id", "connection_id"):
+    for key in ("source_id", "connection_id"):
         if key in cs:
-            section = key.replace("_id", "s")  # destination_id → destinations
+            section = key.replace("_id", "s")
             state.setdefault("tenants", {}).setdefault(tenant_id, {}).setdefault(section, {})[cn] = cs[key]
     if "definition_id" in cs:
         state.setdefault("definitions", {})[cn] = cs["definition_id"]
 
 save_state()
 
-# Sync ConfigMap if in-cluster
 if os.path.exists("/var/run/secrets/kubernetes.io/serviceaccount/token"):
     os.system(f'kubectl create configmap airbyte-state --from-file=state.yaml={state_path} -n data --dry-run=client -o yaml | kubectl apply -f - 2>/dev/null')
 

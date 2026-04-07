@@ -328,6 +328,18 @@ name = "ADR-0002: Argo Workflows over Kestra"
 traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/ingestion/specs/ADR/0003-k8s-secrets-credentials.md"
+name = "ADR-0003: K8s Secrets as Credential Source"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "FEATURE"
+path = "docs/domain/ingestion/specs/feature-k8s-secret-credentials/FEATURE.md"
+name = "K8s Secret Credential Resolution"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
 kind = "DESIGN"
 path = "docs/domain/airbyte-connector/specs/DESIGN.md"
 name = "Airbyte Connector Development Guide"
