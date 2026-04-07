@@ -35,9 +35,9 @@ class SourceBitbucketCloud(AbstractSource):
         import requests
         from source_bitbucket_cloud.clients.auth import rest_headers
 
-        email = config["email"]
-        token = config["token"]
-        workspaces = config.get("workspaces", [])
+        email = config["bitbucket_email"]
+        token = config["bitbucket_token"]
+        workspaces = config.get("bitbucket_workspaces", [])
         headers = rest_headers(email, token)
 
         try:
@@ -59,16 +59,15 @@ class SourceBitbucketCloud(AbstractSource):
             return False, str(e)
 
     def streams(self, config: Mapping[str, Any]) -> List[Stream]:
-        email = config["email"]
-        token = config["token"]
+        email = config["bitbucket_email"]
+        token = config["bitbucket_token"]
         tenant_id = config["insight_tenant_id"]
         source_id = config["insight_source_id"]
-        workspaces = config["workspaces"]
-        start_date = config.get("start_date")
-        rate_limit_threshold = config.get("rate_limit_threshold", 100)
+        workspaces = config["bitbucket_workspaces"]
+        start_date = config.get("bitbucket_start_date")
         skip_forks = config.get("skip_forks", True)
         max_workers = config.get("max_workers", 3)
-        rate_limiter = RateLimiter(threshold=rate_limit_threshold)
+        rate_limiter = RateLimiter(threshold=100)
 
         shared_kwargs = {
             "email": email,

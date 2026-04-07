@@ -11,7 +11,6 @@ from source_bitbucket_cloud.clients.concurrent import retry_request
 from source_bitbucket_cloud.streams.base import (
     BitbucketCloudRestStream,
     _is_fatal,
-    _make_pk,
     _make_unique_key,
     _now_iso,
     check_rest_response,
@@ -260,7 +259,6 @@ class CommitsStream(BitbucketCloudRestStream):
 
                 pk_parts = [workspace, repo_slug, commit.get("hash", "")]
                 record = {
-                    "pk": _make_pk(self._tenant_id, self._source_id, *pk_parts),
                     "unique_key": _make_unique_key(self._tenant_id, self._source_id, *pk_parts),
                     "commit_hash": commit.get("hash", ""),
                     "message": commit.get("message"),
@@ -342,7 +340,6 @@ class CommitsStream(BitbucketCloudRestStream):
             "type": "object",
             "additionalProperties": True,
             "properties": {
-                "pk": {"type": "string"},
                 "tenant_id": {"type": "string"},
                 "source_id": {"type": "string"},
                 "unique_key": {"type": "string"},

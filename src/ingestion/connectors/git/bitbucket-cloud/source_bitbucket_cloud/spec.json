@@ -4,7 +4,7 @@
     "$schema": "http://json-schema.org/draft-07/schema#",
     "title": "Bitbucket Cloud Source Spec",
     "type": "object",
-    "required": ["insight_tenant_id", "insight_source_id", "email", "token", "workspaces"],
+    "required": ["insight_tenant_id", "insight_source_id", "bitbucket_email", "bitbucket_token", "bitbucket_workspaces"],
     "additionalProperties": false,
     "properties": {
       "insight_tenant_id": {
@@ -19,20 +19,20 @@
         "description": "Stable identifier for this connector instance (e.g., bitbucket-cloud-acme-prod).",
         "order": 1
       },
-      "email": {
+      "bitbucket_email": {
         "type": "string",
         "title": "Bitbucket Email",
         "description": "Bitbucket account email address used for API token authentication.",
         "order": 2
       },
-      "token": {
+      "bitbucket_token": {
         "type": "string",
         "title": "API Token",
         "description": "Bitbucket Cloud API token with scopes (Repository: Read, Pull requests: Read). Created at Settings > API tokens.",
         "airbyte_secret": true,
         "order": 3
       },
-      "workspaces": {
+      "bitbucket_workspaces": {
         "type": "array",
         "title": "Workspaces",
         "description": "List of Bitbucket workspace slugs to collect data from.",
@@ -40,36 +40,20 @@
         "minItems": 1,
         "order": 4
       },
-      "start_date": {
+      "bitbucket_start_date": {
         "type": "string",
         "title": "Start Date",
-        "description": "ISO date (YYYY-MM-DD). Limits first full run to commits on or after this date. Leave empty for no limit.",
+        "description": "Start date in YYYY-MM-DD format. Limits first full run to commits on or after this date. Leave empty for no limit.",
         "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+        "format": "date",
         "order": 5
-      },
-      "page_size": {
-        "type": "integer",
-        "title": "Page Size",
-        "description": "Number of items per API page (max 100).",
-        "default": 100,
-        "minimum": 1,
-        "maximum": 100,
-        "order": 6
-      },
-      "rate_limit_threshold": {
-        "type": "integer",
-        "title": "Rate Limit Threshold",
-        "description": "Proactive backoff when remaining requests drop below this value.",
-        "default": 100,
-        "minimum": 0,
-        "order": 7
       },
       "skip_forks": {
         "type": "boolean",
         "title": "Skip Forks",
         "description": "Skip forked repositories.",
         "default": true,
-        "order": 8
+        "order": 6
       },
       "max_workers": {
         "type": "integer",
@@ -78,7 +62,7 @@
         "default": 3,
         "minimum": 1,
         "maximum": 10,
-        "order": 9
+        "order": 7
       }
     }
   }

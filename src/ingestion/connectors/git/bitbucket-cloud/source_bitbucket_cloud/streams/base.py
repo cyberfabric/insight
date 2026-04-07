@@ -63,11 +63,6 @@ def _is_fatal(exc: Exception) -> bool:
     return False
 
 
-def _make_pk(tenant_id: str, source_id: str, *parts: str) -> str:
-    suffix = ":".join(parts)
-    return f"urn:bitbucket_cloud:{tenant_id}:{source_id}:{suffix}"
-
-
 def _make_unique_key(tenant_id: str, source_id: str, *natural_key_parts: str) -> str:
     return f"{tenant_id}-{source_id}-{'-'.join(natural_key_parts)}"
 
@@ -76,7 +71,7 @@ class BitbucketCloudRestStream(HttpStream, ABC):
     """Base for Bitbucket Cloud REST API v2.0 streams."""
 
     url_base = "https://api.bitbucket.org/2.0/"
-    primary_key = "pk"
+    primary_key = "unique_key"
 
     def __init__(
         self,
@@ -186,6 +181,5 @@ class BitbucketCloudRestStream(HttpStream, ABC):
         record["data_source"] = "insight_bitbucket_cloud"
         record["collected_at"] = _now_iso()
         if pk_parts:
-            record["pk"] = _make_pk(self._tenant_id, self._source_id, *pk_parts)
             record["unique_key"] = _make_unique_key(self._tenant_id, self._source_id, *pk_parts)
         return record

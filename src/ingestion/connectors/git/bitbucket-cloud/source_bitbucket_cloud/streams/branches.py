@@ -5,7 +5,6 @@ from typing import Any, Iterable, Mapping, Optional
 
 from source_bitbucket_cloud.streams.base import (
     BitbucketCloudRestStream,
-    _make_pk,
     check_rest_response,
 )
 from source_bitbucket_cloud.streams.repositories import RepositoriesStream
@@ -98,7 +97,6 @@ class BranchesStream(BitbucketCloudRestStream):
             "type": "object",
             "additionalProperties": True,
             "properties": {
-                "pk": {"type": "string"},
                 "tenant_id": {"type": "string"},
                 "source_id": {"type": "string"},
                 "unique_key": {"type": "string"},
