@@ -40,6 +40,7 @@ This document defines mandatory naming patterns and data types for columns that 
 - [7. MariaDB-Specific Conventions](#7-mariadb-specific-conventions)
   - [UUID Type](#uuid-type)
   - [DATETIME Precision](#datetime-precision)
+  - [Timezone](#timezone)
   - [Character Sets](#character-sets)
 - [8. Boolean Fields](#8-boolean-fields)
 - [9. Soft-Delete](#9-soft-delete)
@@ -184,6 +185,7 @@ Present on virtually every MariaDB table:
 
 - Always `DATETIME(3)` (millisecond precision) to match the API's ISO-8601 `.SSS` format.
 - `DATETIME` over `TIMESTAMP` — wider range (no 2038 problem), no implicit timezone conversion, predictable behaviour.
+- All `DATETIME(3)` values are stored in **UTC**. MariaDB `DATETIME` has no timezone semantics — application code is responsible for converting to UTC before write and from UTC after read. Set `time_zone = '+00:00'` in the MariaDB connection string to ensure `CURRENT_TIMESTAMP` and `NOW()` return UTC.
 - `created_at` is immutable after insert.
 
 ### 4.2 Temporal Validity (Effective Ranges)
@@ -310,6 +312,10 @@ Use `DATETIME(3)` (millisecond precision) for all timestamp columns to match the
 created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
 ```
+
+### Timezone
+
+All connections **MUST** set `time_zone = '+00:00'` to ensure `CURRENT_TIMESTAMP`, `NOW()`, and default values produce UTC. `DATETIME` has no timezone semantics — without this setting, server-local time is used.
 
 ### Character Sets
 

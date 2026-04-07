@@ -134,6 +134,7 @@ Adopt the six conventions documented below as mandatory for all internal Insight
 - Millisecond precision matches the API's ISO-8601 `.SSS` format -- no precision loss on round-trip
 - No 2038 problem (TIMESTAMP wraps; DATETIME does not)
 - No implicit timezone conversion -- application controls UTC explicitly
+- All `DATETIME(3)` values **MUST** be stored in UTC -- this is an application-level responsibility since `DATETIME` has no built-in timezone semantics. MariaDB connection string should include `SET time_zone = '+00:00'` to ensure `CURRENT_TIMESTAMP` and `NOW()` return UTC
 - Standard defaults: `DEFAULT CURRENT_TIMESTAMP(3)` and `ON UPDATE CURRENT_TIMESTAMP(3)` for `created_at`/`updated_at`
 
 ### D5: ClickHouse Enum Strategy -- LowCardinality(String)
