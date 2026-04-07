@@ -77,6 +77,9 @@ class CommitsStream(GitHubGraphQLStream):
         # Use cursor from state or start_date for initial run
         since = s.get("cursor_value") or self._start_date
         if since:
+            # GitTimestamp requires full ISO 8601; bare YYYY-MM-DD needs T00:00:00Z
+            if len(since) == 10:
+                since = f"{since}T00:00:00Z"
             variables["since"] = since
         return variables
 
