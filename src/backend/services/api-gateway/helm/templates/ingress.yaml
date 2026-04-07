@@ -1,4 +1,5 @@
 {{- if .Values.ingress.enabled }}
+{{- $host := required "ingress.host must be set when ingress.enabled is true" .Values.ingress.host }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

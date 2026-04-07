@@ -41,6 +41,7 @@ authDisabled: false
 gateway:
   prefixPath: "/api/v1"
   corsEnabled: true
+  enableDocs: false     # Set true for dev; disabled by default for production
   rateLimit:
     rps: 100
     burst: 50

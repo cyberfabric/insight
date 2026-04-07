@@ -16,6 +16,11 @@ spec:
       labels:
         app.kubernetes.io/name: api-gateway
         app.kubernetes.io/instance: {{ .Release.Name }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if not .Values.authDisabled }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
     spec:
       containers:
         - name: api-gateway

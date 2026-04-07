@@ -10,4 +10,4 @@ data:
   APP__modules__api-gateway__config__auth_disabled: "{{ .Values.authDisabled }}"
   APP__modules__api-gateway__config__prefix_path: "{{ .Values.gateway.prefixPath }}"
   APP__modules__api-gateway__config__cors_enabled: "{{ .Values.gateway.corsEnabled }}"
-  APP__modules__api-gateway__config__enable_docs: "true"
+  APP__modules__api-gateway__config__enable_docs: "{{ .Values.gateway.enableDocs }}"
