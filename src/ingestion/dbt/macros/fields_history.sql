@@ -63,6 +63,19 @@ SELECT
     updated_at
 FROM consecutive
 WHERE curr_{{ f }} != prev_{{ f }}
+UNION ALL
+{% endfor %}
+
+{% for f in all_fields %}
+SELECT
+    entity_id, tenant_id, source_id,
+    '{{ f }}' AS field_name,
+    '' AS old_value,
+    {{ f }} AS new_value,
+    updated_at
+FROM versioned
+WHERE version_num = 1
+  AND {{ f }} != ''
 {{ 'UNION ALL' if not loop.last }}
 {% endfor %}
 

@@ -7,7 +7,7 @@ ingestion:
       port: 30123
       schema: default
       user: default
-      password: "clickhouse"
+      password: "{{ env_var('CLICKHOUSE_PASSWORD') }}"
       secure: false
     k8s:
       type: clickhouse
@@ -15,5 +15,5 @@ ingestion:
       port: 8123
       schema: default
       user: default
-      password: "clickhouse"
+      password: "{{ env_var('CLICKHOUSE_PASSWORD') }}"
       secure: false
