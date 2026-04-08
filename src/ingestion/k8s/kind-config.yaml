@@ -6,10 +6,6 @@ name: ingestion
 nodes:
   - role: control-plane
     extraPortMappings:
-      # Airbyte UI (via ingress-nginx)
-      - containerPort: 80
-        hostPort: 8000
-        protocol: TCP
       # Argo UI
       - containerPort: 30500
         hostPort: 30500

@@ -31,7 +31,3 @@ global:
       lastName: Local
       email: admin@example.com
       password: admin123
-
-# No ingress — use kubectl port-forward or NodePort for local access
-ingress:
-  enabled: false

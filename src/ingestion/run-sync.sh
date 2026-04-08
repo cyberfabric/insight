@@ -9,12 +9,22 @@ TENANT="${2:?Usage: $0 <connector> <tenant_id>}"
 
 export KUBECONFIG="${KUBECONFIG:-${HOME}/.kube/kind-ingestion}"
 
+# Resolve tenant_id from tenant config file (file uses dashes, tenant_id may use underscores)
+TENANT_ID=$(python3 -c "
+import yaml, sys
+try:
+    t = yaml.safe_load(open('connections/${TENANT}.yaml'))
+    print(t.get('tenant_id', '${TENANT}'))
+except Exception:
+    print('${TENANT}')
+" 2>/dev/null)
+
 # Read connection_id from state (check per-tenant state files and main state)
 CONNECTION_ID=$(python3 -c "
 import yaml, glob, sys
 
 connector = '${CONNECTOR}'
-tenant = '${TENANT}'
+tenant = '${TENANT_ID}'
 
 # Search in per-tenant state files first, then main state
 state_files = glob.glob('connections/.state/*.yaml') + ['connections/.airbyte-state.yaml']

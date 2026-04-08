@@ -1,0 +1,2 @@
+# Ignore Python source code in connectors — dbt models are .sql only
+**/*.py

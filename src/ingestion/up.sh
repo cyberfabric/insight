@@ -65,18 +65,6 @@ has_secret() {
   kubectl get secret "$1" -n "$2" &>/dev/null
 }
 
-# --- Ingress controller (local only) ---
-if [[ "$ENV" == "local" ]]; then
-  echo "=== Installing ingress-nginx ==="
-  helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx 2>/dev/null || true
-  helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
-    --namespace ingress-nginx --create-namespace \
-    --set controller.hostPort.enabled=true \
-    --set controller.service.type=ClusterIP \
-    --set controller.watchIngressWithoutClass=true \
-    --wait --timeout 3m
-fi
-
 # --- Airbyte (no user Secret required — Helm creates internal auth secrets) ---
 echo "=== Deploying Airbyte ==="
 helm repo add airbyte https://airbytehq.github.io/helm-charts 2>/dev/null || true
@@ -149,7 +137,7 @@ kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=argo-workflows-
 if [[ "$ENV" == "local" ]]; then
   echo "=== Starting Airbyte port-forward ==="
   pkill -f 'port-forward.*airbyte' 2>/dev/null || true
-  kubectl -n airbyte port-forward svc/airbyte-airbyte-server-svc 8000:8001 >/dev/null 2>&1 &
+  kubectl -n airbyte port-forward svc/airbyte-airbyte-server-svc 8001:8001 >/dev/null 2>&1 &
 fi
 
 # --- Summary ---
@@ -169,7 +157,7 @@ if [[ ${#MISSING[@]} -gt 0 ]]; then
   echo "  Or use: ./secrets/apply.sh"
 else
   echo "  Services:"
-  echo "    Airbyte:    http://localhost:8000"
+  echo "    Airbyte:    http://localhost:8001"
   echo "    Argo UI:    http://localhost:30500"
   echo "    ClickHouse: http://localhost:30123"
   echo ""

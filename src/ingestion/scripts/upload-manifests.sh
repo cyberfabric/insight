@@ -11,7 +11,7 @@ if [[ -z "${AIRBYTE_TOKEN:-}" ]]; then
   source ./scripts/resolve-airbyte-env.sh
 fi
 
-AIRBYTE_URL="${AIRBYTE_API:-http://localhost:8000}"
+AIRBYTE_URL="${AIRBYTE_API:-http://localhost:8001}"
 CONNECTORS_DIR="./connectors"
 
 source ./scripts/airbyte-state.sh
@@ -21,6 +21,17 @@ upload_connector() {
   local connector_dir="${CONNECTORS_DIR}/${connector}"
   local manifest_path="${connector_dir}/connector.yaml"
   local descriptor_path="${connector_dir}/descriptor.yaml"
+
+  # Auto-detect connector type and route accordingly
+  if [[ -f "$descriptor_path" ]]; then
+    local conn_type
+    conn_type=$(yq -r '.type // "nocode"' "$descriptor_path")
+    if [[ "$conn_type" == "cdk" ]]; then
+      echo "  CDK connector detected — delegating to build-connector.sh"
+      "${SCRIPT_DIR}/build-connector.sh" "$connector"
+      return $?
+    fi
+  fi
 
   if [[ ! -f "$manifest_path" ]]; then
     echo "  SKIP: no manifest at ${manifest_path}"
@@ -137,13 +148,14 @@ PYTHON
 }
 
 if [[ "${1:-}" == "--all" ]]; then
-  manifests=$(find "$CONNECTORS_DIR" -name "connector.yaml" 2>/dev/null)
-  if [[ -z "$manifests" ]]; then
-    echo "  No connector manifests found"
+  # Find all connectors by descriptor.yaml (covers both nocode and CDK)
+  descriptors=$(find "$CONNECTORS_DIR" -name "descriptor.yaml" 2>/dev/null)
+  if [[ -z "$descriptors" ]]; then
+    echo "  No connectors found"
     exit 0
   fi
-  for manifest in $manifests; do
-    connector_dir=$(dirname "$manifest")
+  for desc in $descriptors; do
+    connector_dir=$(dirname "$desc")
     connector="${connector_dir#${CONNECTORS_DIR}/}"
     upload_connector "$connector"
   done

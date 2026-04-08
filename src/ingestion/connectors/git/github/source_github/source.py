@@ -35,8 +35,8 @@ class SourceGitHub(AbstractSource):
         import requests
         from source_github.clients.auth import rest_headers
 
-        token = config["token"]
-        organizations = config.get("organizations", [])
+        token = config["github_token"]
+        organizations = config.get("github_organizations", [])
         headers = rest_headers(token)
 
         try:
@@ -60,17 +60,17 @@ class SourceGitHub(AbstractSource):
             return False, str(e)
 
     def streams(self, config: Mapping[str, Any]) -> List[Stream]:
-        token = config["token"]
+        token = config["github_token"]
         tenant_id = config["insight_tenant_id"]
         source_id = config["insight_source_id"]
-        organizations = config["organizations"]
-        start_date = config.get("start_date")
-        page_size_commits = config.get("page_size_graphql_commits", 100)
-        page_size_prs = config.get("page_size_graphql_prs", 50)
-        rate_limit_threshold = config.get("rate_limit_threshold", 200)
-        skip_archived = config.get("skip_archived", True)
-        skip_forks = config.get("skip_forks", True)
-        max_workers = config.get("max_workers", 5)
+        organizations = config["github_organizations"]
+        start_date = config.get("github_start_date")
+        page_size_commits = config.get("github_page_size_graphql_commits", 100)
+        page_size_prs = config.get("github_page_size_graphql_prs", 50)
+        rate_limit_threshold = config.get("github_rate_limit_threshold", 200)
+        skip_archived = config.get("github_skip_archived", True)
+        skip_forks = config.get("github_skip_forks", True)
+        max_workers = config.get("github_max_workers", 5)
         rate_limiter = RateLimiter(threshold=rate_limit_threshold)
 
         shared_kwargs = {

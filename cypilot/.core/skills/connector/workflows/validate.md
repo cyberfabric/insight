@@ -35,13 +35,17 @@ Read connector package files and verify each item:
 - [ ] `parse_response()` injects `tenant_id`, `source_id`, `unique_key`
 - [ ] `unique_key` includes `tenant_id` and `source_id`
 - [ ] `spec.json` has `insight_tenant_id` and `insight_source_id` as required
+- [ ] All config fields in `spec.json` use source-specific prefixes (`insight_*`, `github_*`, `jira_*`, etc.)
+- [ ] No bare field names (`token`, `client_id`, `tenant_id`, `start_date`, etc.) in `connectionSpecification.properties`
 
 ### Descriptor
 - [ ] `name` matches directory name
 - [ ] `connection.namespace` = `bronze_<name>`
-- [ ] `dbt_select` includes both connector tag and `tag:silver`
+- [ ] `dbt_select` includes connector tag with `+` suffix (e.g., `tag:m365+`)
 - [ ] `schedule` is valid cron expression
-- [ ] `connection.streams` lists all streams from manifest
+- [ ] `workflow` field is present
+- [ ] No `streams` block (streams are owned by Airbyte connector, discovered via `airbyte discover`)
+- [ ] No `silver_targets` block (Silver targets are determined by dbt model tags via `dbt_select`)
 
 ### dbt Models
 - [ ] Model name follows `<connector>__<domain>.sql` pattern
@@ -69,7 +73,7 @@ Read connector package files and verify each item:
 === Connector Validation: <name> ===
 
   Structure:    PASS (4/4)
-  Manifest:     PASS (12/12)  or  CDK: PASS (3/3)
+  Manifest:     PASS (12/12)  or  CDK: PASS (5/5)
   Descriptor:   PASS (5/5)
   dbt Models:   PASS (7/7)
   dbt Schema:   PASS (4/4)

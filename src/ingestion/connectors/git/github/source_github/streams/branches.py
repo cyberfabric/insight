@@ -2,7 +2,7 @@
 
 from typing import Any, Iterable, List, Mapping, Optional
 
-from source_github.streams.base import GitHubRestStream, _make_pk, _make_unique_key, check_rest_response
+from source_github.streams.base import GitHubRestStream, _make_unique_key, check_rest_response
 from source_github.streams.repositories import RepositoriesStream
 
 
@@ -61,10 +61,6 @@ class BranchesStream(GitHubRestStream):
         repo = stream_slice["repo"]
         for branch in branches:
             branch_name = branch.get("name", "")
-            branch["pk"] = _make_pk(
-                self._tenant_id, self._source_id,
-                owner, repo, branch_name,
-            )
             branch["unique_key"] = _make_unique_key(
                 self._tenant_id, self._source_id,
                 owner, repo, branch_name,
@@ -81,7 +77,6 @@ class BranchesStream(GitHubRestStream):
             "type": "object",
             "additionalProperties": True,
             "properties": {
-                "pk": {"type": "string"},
                 "tenant_id": {"type": "string"},
                 "source_id": {"type": "string"},
                 "unique_key": {"type": "string"},

@@ -64,11 +64,6 @@ def _is_fatal(exc: Exception) -> bool:
     return False
 
 
-def _make_pk(tenant_id: str, source_id: str, *parts: str) -> str:
-    suffix = ":".join(parts)
-    return f"urn:github:{tenant_id}:{source_id}:{suffix}"
-
-
 def _make_unique_key(tenant_id: str, source_id: str, *natural_key_parts: str) -> str:
     return f"{tenant_id}-{source_id}-{'-'.join(natural_key_parts)}"
 
@@ -77,7 +72,7 @@ class GitHubRestStream(HttpStream, ABC):
     """Base for GitHub REST API v3 streams."""
 
     url_base = "https://api.github.com/"
-    primary_key = "pk"
+    primary_key = "unique_key"
 
     def __init__(
         self,
@@ -159,14 +154,11 @@ class GitHubRestStream(HttpStream, ABC):
         if remaining and reset:
             self._rate_limiter.update_rest(int(remaining), float(reset))
 
-    def _add_envelope(self, record: dict, pk_parts: Optional[list] = None) -> dict:
+    def _add_envelope(self, record: dict) -> dict:
         record["tenant_id"] = self._tenant_id
         record["source_id"] = self._source_id
         record["data_source"] = "insight_github"
         record["collected_at"] = _now_iso()
-        if pk_parts:
-            record["pk"] = _make_pk(self._tenant_id, self._source_id, *pk_parts)
-            record["unique_key"] = _make_unique_key(self._tenant_id, self._source_id, *pk_parts)
         return record
 
 
@@ -174,7 +166,7 @@ class GitHubGraphQLStream(HttpStream, ABC):
     """Base for GitHub GraphQL API v4 streams."""
 
     url_base = "https://api.github.com/"
-    primary_key = "pk"
+    primary_key = "unique_key"
     http_method = "POST"
 
     def __init__(
@@ -281,12 +273,9 @@ class GitHubGraphQLStream(HttpStream, ABC):
                 reset_dt = datetime.fromtimestamp(float(hdr_reset), tz=timezone.utc)
                 self._rate_limiter.update_graphql(int(hdr_remaining), reset_dt.isoformat())
 
-    def _add_envelope(self, record: dict, pk_parts: Optional[list] = None) -> dict:
+    def _add_envelope(self, record: dict) -> dict:
         record["tenant_id"] = self._tenant_id
         record["source_id"] = self._source_id
         record["data_source"] = "insight_github"
         record["collected_at"] = _now_iso()
-        if pk_parts:
-            record["pk"] = _make_pk(self._tenant_id, self._source_id, *pk_parts)
-            record["unique_key"] = _make_unique_key(self._tenant_id, self._source_id, *pk_parts)
         return record

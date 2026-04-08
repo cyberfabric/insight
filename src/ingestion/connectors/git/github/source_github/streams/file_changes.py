@@ -7,7 +7,7 @@ import requests as req
 
 from source_github.clients.auth import rest_headers
 from source_github.clients.concurrent import fetch_parallel_with_slices, retry_request
-from source_github.streams.base import GitHubRestStream, _is_fatal, _make_pk, _make_unique_key, _now_iso, check_rest_response
+from source_github.streams.base import GitHubRestStream, _is_fatal, _make_unique_key, _now_iso, check_rest_response
 from source_github.streams.commits import CommitsStream
 from source_github.streams.pull_requests import PullRequestsStream
 
@@ -226,7 +226,6 @@ class FileChangesStream(GitHubRestStream):
             for f in files:
                 filename = f.get("filename", "")
                 records.append({
-                    "pk": _make_pk(self._tenant_id, self._source_id, owner, repo, f"pr{pr_number}", filename),
                     "unique_key": _make_unique_key(self._tenant_id, self._source_id, owner, repo, f"pr{pr_number}", filename),
                     "tenant_id": self._tenant_id,
                     "source_id": self._source_id,
@@ -284,7 +283,6 @@ class FileChangesStream(GitHubRestStream):
             for f in files:
                 filename = f.get("filename", "")
                 records.append({
-                    "pk": _make_pk(self._tenant_id, self._source_id, owner, repo, sha, filename),
                     "unique_key": _make_unique_key(self._tenant_id, self._source_id, owner, repo, sha, filename),
                     "tenant_id": self._tenant_id,
                     "source_id": self._source_id,
@@ -334,7 +332,6 @@ class FileChangesStream(GitHubRestStream):
             "type": "object",
             "additionalProperties": True,
             "properties": {
-                "pk": {"type": "string"},
                 "tenant_id": {"type": "string"},
                 "source_id": {"type": "string"},
                 "unique_key": {"type": "string"},

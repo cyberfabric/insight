@@ -1,5 +1,5 @@
 # Helm values for argo/argo-workflows chart — production
-# Adjust resources, auth, and ingress for your environment
+# Adjust resources and auth for your environment
 
 server:
   extraArgs:
@@ -9,10 +9,6 @@ server:
     requests:
       memory: 256Mi
       cpu: 200m
-  # ingress:
-  #   enabled: true
-  #   hosts:
-  #     - argo.internal.example.com
 
 controller:
   workflowNamespaces:

@@ -23,9 +23,19 @@ Parse the user's command and route to the appropriate workflow:
 | `/connector test <name>` | [test.md](workflows/test.md) | Test connector (check, discover, read) |
 | `/connector schema <name>` | [schema.md](workflows/schema.md) | Generate JSON schema from real data |
 | `/connector validate <name>` | [validate.md](workflows/validate.md) | Validate package against spec |
+| `/connector build <name>` | Direct | Build CDK connector (Docker → Kind → Airbyte definition) |
 | `/connector deploy <name>` | [deploy.md](workflows/deploy.md) | Deploy to Airbyte + Argo |
+| `/connector reset <name> <tenant>` | Direct | Delete connection/source/definition, drop Bronze tables, clean state |
 | `/connector workflow <name>` | [workflow.md](workflows/workflow.md) | Create/customize Argo workflow templates |
 | `/connector logs [job-id\|latest]` | Direct | Show Airbyte job or Argo workflow logs |
+
+## CDK Build
+
+For `/connector build <name>`, run `{INGESTION_DIR}/scripts/build-connector.sh {CONNECTOR_PATH}`. This builds the Docker image, loads it into Kind, and registers/updates the Airbyte source definition. Only for `type: cdk` connectors.
+
+## Connector Reset
+
+For `/connector reset <name> <tenant>`, run `{INGESTION_DIR}/scripts/reset-connector.sh {CONNECTOR_NAME} <tenant>`. This deletes the Airbyte connection, source, and definition, drops the Bronze database in ClickHouse, and cleans state files. Use when schema has breaking changes or a full re-sync is needed.
 
 ## Airbyte Logs
 
@@ -140,7 +150,7 @@ Quick test: `kubectl exec -n data deploy/clickhouse -- clickhouse-client --passw
 
 | Environment | How to get credentials |
 |-------------|----------------------|
-| Local (Kind) | API at `http://localhost:8000`, token via `{INGESTION_DIR}/scripts/resolve-airbyte-env.sh` |
+| Local (Kind) | API at `http://localhost:8001`, token via `{INGESTION_DIR}/scripts/resolve-airbyte-env.sh` |
 | In-cluster | API at `http://airbyte-airbyte-server-svc.airbyte.svc.cluster.local:8001` |
 | Any cluster | `source {INGESTION_DIR}/scripts/resolve-airbyte-env.sh` → sets `AIRBYTE_API`, `AIRBYTE_TOKEN`, `WORKSPACE_ID` |
 

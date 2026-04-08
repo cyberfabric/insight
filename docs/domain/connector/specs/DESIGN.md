@@ -328,7 +328,7 @@ Provides the orchestration and connection metadata that links the extraction com
 
 ##### Responsibility scope
 
-Declares: connector name and version, cron schedule, workflow template, `dbt_select` expression, connection namespace (`bronze_{name}`), and stream name filter list.
+Declares: connector name and version, cron schedule, workflow template, `dbt_select` expression, and connection namespace (`bronze_{name}`). Does NOT declare streams or Silver targets -- stream definitions and sync modes are owned by the Airbyte connector (manifest or CDK source) and discovered automatically via `airbyte discover`.
 
 ##### Responsibility boundaries
 
@@ -960,12 +960,24 @@ Field reference:
 | `dbt_select` | Yes | dbt selector for transformations (use `+` suffix for downstream, e.g., `tag:m365+`) |
 | `connection.namespace` | Yes | ClickHouse database per connector (`bronze_{name}`, e.g., `bronze_m365`) |
 
+**Prohibited fields** (MUST NOT appear in `descriptor.yaml`):
+
+| Field | Reason |
+|-------|--------|
+| `streams` | Stream definitions are owned by the Airbyte connector (manifest or CDK source). `apply-connections.sh` discovers streams via Airbyte `discover` command. Duplicating them in the descriptor creates drift risk and maintenance burden. |
+| `silver_targets` | Silver table targets are determined by dbt model tags (`dbt_select`), not by an explicit list. The dbt DAG is the source of truth for which Silver tables a connector populates. |
+
 ### 4.11 Connector Package Structure
 
 ```
 connectors/{category}/{name}/
-  connector.yaml              # Airbyte declarative manifest (nocode)
-  descriptor.yaml             # Schedule, streams, dbt_select, workflow, connection config
+  connector.yaml              # Airbyte declarative manifest (nocode only)
+  Dockerfile                  # Docker build (CDK only)
+  source_{name}/              # Python source code (CDK only)
+    source.py                 #   AbstractSource implementation
+    spec.json                 #   Connection specification
+    streams/                  #   Stream implementations
+  descriptor.yaml             # Schedule, dbt_select, workflow, connection namespace (no streams)
   README.md                   # Connector documentation and K8s Secret fields
   schemas/                    # Generated JSON schemas per stream
     {stream_name}.json
@@ -1000,6 +1012,8 @@ Credentials are never stored in the connector package:
 
 ### 4.12 Development Workflow
 
+#### Nocode (declarative YAML)
+
 | Step | Command | What it does |
 |------|---------|-------------|
 | 1 | Create directory | `connectors/{category}/{name}/` with `connector.yaml`, `descriptor.yaml`, `README.md` |
@@ -1012,6 +1026,28 @@ Credentials are never stored in the connector package:
 | 8 | Generate catalog | `./scripts/generate-catalog.sh {name}` -- saves configured catalog |
 | 9 | Read | `./tools/declarative-connector/source.sh read {cat}/{name} dev` |
 | 10 | Verify | Every record has `tenant_id`, `source_id`, `unique_key` |
+
+#### CDK (Python)
+
+| Step | Command | What it does |
+|------|---------|-------------|
+| 1 | Create directory | `connectors/{category}/{name}/` with `Dockerfile`, `source_{name}/`, `descriptor.yaml` |
+| 2 | Write source | Implement `AbstractSource` with `check`, `streams`. Inject `tenant_id`, `source_id`, `unique_key` in records |
+| 3 | Write spec | `source_{name}/spec.json` with `insight_tenant_id`, `insight_source_id` required, prefixed config fields |
+| 4 | Create K8s Secret | Copy from `secrets/connectors/{name}.yaml.example`, fill in real values, apply |
+| 5 | Build + register | `./scripts/build-connector.sh {cat}/{name}` — Docker build → Kind load → Airbyte definition |
+| 6 | Create connection | `./scripts/apply-connections.sh <tenant>` — source + connection via discover |
+| 7 | Sync | `./run-sync.sh {name} <tenant>` — Argo workflow (sync + dbt) |
+| 8 | Verify | Every record has `tenant_id`, `source_id`, `unique_key` |
+
+#### Reset (breaking changes)
+
+| Step | Command | What it does |
+|------|---------|-------------|
+| 1 | Reset | `./scripts/reset-connector.sh {name} <tenant>` — deletes connection, source, definition; drops Bronze tables; cleans state |
+| 2 | Rebuild | `./scripts/build-connector.sh {cat}/{name}` (CDK) or `./scripts/upload-manifests.sh {cat}/{name}` (nocode) |
+| 3 | Reconnect | `./scripts/apply-connections.sh <tenant>` |
+| 4 | Re-sync | `./run-sync.sh {name} <tenant>` |
 
 ### 4.13 dbt Model Rules
 

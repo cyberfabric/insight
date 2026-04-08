@@ -13,7 +13,7 @@ set -euo pipefail
 if [[ -f /var/run/secrets/kubernetes.io/serviceaccount/token ]]; then
   export AIRBYTE_API="${AIRBYTE_API:-http://airbyte-airbyte-server-svc.airbyte.svc.cluster.local:8001}"
 else
-  export AIRBYTE_API="${AIRBYTE_API:-http://localhost:8000}"
+  export AIRBYTE_API="${AIRBYTE_API:-http://localhost:8001}"
 fi
 
 # Read secrets

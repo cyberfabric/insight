@@ -16,7 +16,9 @@ Registers connector in Airbyte, creates connections, and sets up Argo workflows.
 - Tenant config (`connections/<tenant>.yaml` with `tenant_id`) and K8s Secrets with credentials
 - Cluster running (`./up.sh` completed)
 
-## Phase 1: Upload Manifest
+## Phase 1: Register Connector
+
+### Nocode (declarative YAML)
 
 ```bash
 ./update-connectors.sh
@@ -25,9 +27,18 @@ Registers connector in Airbyte, creates connections, and sets up Argo workflows.
 This updates the existing definition in Airbyte in-place (same definition ID).
 If the connector is new, it creates a builder project and publishes a new definition.
 
+### CDK (Python)
+
+```bash
+./scripts/build-connector.sh {category}/{name}
+```
+
+This builds the Docker image, loads it into Kind, and registers/updates the Airbyte source definition.
+`update-connectors.sh --all` also auto-detects CDK connectors and delegates to `build-connector.sh`.
+
 **Important**:
-- `upload-manifests.sh` updates definitions in-place — no duplicate IDs
-- After upload, definition ID is saved to per-tenant state (`connections/.state/<tenant>.yaml`)
+- `upload-manifests.sh` auto-detects connector type from `descriptor.yaml` (`type: cdk` vs `nocode`)
+- Definition IDs are saved to state (`connections/.airbyte-state.yaml`)
 - All subsequent scripts read IDs from state, not by name lookup
 
 ## Phase 2: Create/Update Connections
@@ -87,6 +98,13 @@ Common sync failures:
 - **NPE getCursor**: cursor field missing from schema → re-run `generate-schema.sh`, update manifest, re-deploy
 - **Destination check failed**: ClickHouse database doesn't exist → `apply-connections.sh` creates it
 - **Source config validation error**: definition mismatch → re-upload manifest, re-run `update-connections.sh`
+- **Breaking schema change** (e.g., renamed primary key): reset and re-deploy:
+  ```bash
+  ./scripts/reset-connector.sh <name> <tenant>
+  ./scripts/build-connector.sh <path>          # CDK
+  ./scripts/apply-connections.sh <tenant>
+  ./run-sync.sh <name> <tenant>
+  ```
 
 ## Phase 5: Verify Data
 

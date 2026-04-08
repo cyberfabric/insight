@@ -18,7 +18,7 @@ apply_tenant() {
   local tenant_config="$1"
 
   python3 - "$tenant_config" "$CONNECTORS_DIR" "$CONNECTIONS_DIR" \
-    "${AIRBYTE_API:-http://localhost:8000}" "$AIRBYTE_TOKEN" "$WORKSPACE_ID" \
+    "${AIRBYTE_API:-http://localhost:8001}" "$AIRBYTE_TOKEN" "$WORKSPACE_ID" \
     "${CONNECTIONS_DIR}/.airbyte-state.yaml" <<'PYTHON'
 import sys, os, json, yaml, urllib.request, urllib.error, pathlib
 
@@ -336,7 +336,7 @@ for connector_name, source_id_label, config in connector_instances:
                 stream_name = stream_def.get("name", "")
                 supported = stream_def.get("supportedSyncModes", ["full_refresh"])
                 sync_mode = "incremental" if "incremental" in supported else "full_refresh"
-                dest_sync_mode = "append_dedup"
+                dest_sync_mode = "append_dedup" if sync_mode == "incremental" else "append"
                 stream_config = {
                     "syncMode": sync_mode,
                     "destinationSyncMode": dest_sync_mode,

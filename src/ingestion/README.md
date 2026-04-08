@@ -131,9 +131,16 @@ cp secrets/connectors/m365.yaml.example secrets/connectors/m365.yaml
 | Command | Description |
 |---------|-------------|
 | `./run-sync.sh <connector> <tenant>` | Run sync + dbt pipeline now |
-| `./update-connectors.sh` | Re-upload connector manifests to Airbyte |
+| `./update-connectors.sh` | Re-upload all connector manifests/images to Airbyte (auto-detects nocode vs CDK) |
 | `./update-connections.sh [tenant]` | Re-create sources, destinations, connections |
 | `./update-workflows.sh [tenant]` | Regenerate CronWorkflow schedules |
+
+### CDK Connectors
+
+| Command | Description |
+|---------|-------------|
+| `./scripts/build-connector.sh <path>` | Build Docker image, load into Kind, register/update Airbyte definition |
+| `./scripts/reset-connector.sh <name> <tenant>` | Delete connection + source + definition, drop Bronze tables, clean state |
 
 ### Examples
 
@@ -141,14 +148,20 @@ cp secrets/connectors/m365.yaml.example secrets/connectors/m365.yaml
 # Run M365 sync for example_tenant
 ./run-sync.sh m365 example-tenant
 
-# Update after editing connector.yaml
+# Update after editing connector.yaml (nocode) or Python source (CDK)
 ./update-connectors.sh
+
+# Build/rebuild a CDK connector (Docker image + Airbyte definition)
+./scripts/build-connector.sh git/github
 
 # Update after changing tenant credentials
 ./update-connections.sh example-tenant
 
 # Update after changing schedule in descriptor.yaml
 ./update-workflows.sh
+
+# Reset a connector (breaking schema change, full re-sync)
+./scripts/reset-connector.sh github example-tenant
 
 # Monitor workflows
 open http://localhost:30500
@@ -160,7 +173,7 @@ After `./up.sh`:
 
 | Service | URL | Credentials |
 |---------|-----|-------------|
-| Airbyte | http://localhost:8000 | Printed by `up.sh` |
+| Airbyte | http://localhost:8001 | Printed by `up.sh` |
 | Argo UI | http://localhost:30500 | No auth (local) |
 | ClickHouse | http://localhost:30123 | `default` / `clickhouse` |
 
@@ -182,7 +195,7 @@ kubectl exec -n data deploy/clickhouse -- clickhouse-client --password "$(kubect
 
 ### Airbyte Credentials
 
-**Local (Kind):** API at `http://localhost:8000`. Token and workspace ID are resolved automatically.
+**Local (Kind):** API at `http://localhost:8001`. Token and workspace ID are resolved automatically.
 
 **Any environment:**
 
@@ -280,7 +293,9 @@ src/ingestion/
 │   ├── resolve-airbyte-env.sh       #   JWT token + workspace resolution
 │   ├── airbyte-state.sh             #   State library (state_get/state_set)
 │   ├── sync-airbyte-state.sh        #   Sync state from Airbyte API
-│   ├── upload-manifests.sh          #   Register connectors via API
+│   ├── upload-manifests.sh          #   Register connectors via API (nocode + CDK)
+│   ├── build-connector.sh           #   Build CDK connector (Docker → Kind → Airbyte)
+│   ├── reset-connector.sh           #   Reset connector (delete all + drop tables + clean state)
 │   ├── apply-connections.sh         #   Create sources/destinations/connections
 │   ├── sync-flows.sh               #   Generate + apply CronWorkflows
 │   └── wait-for-services.sh        #   kubectl wait for pods
@@ -328,41 +343,57 @@ produces its own state file (`connections/.state/<tenant>.yaml`).
 
 ## Adding a New Connector
 
-1. Create the Insight Connector package:
+### Nocode (declarative YAML)
+
+1. Create package:
    ```
    connectors/{category}/{name}/
-     connector.yaml            # Airbyte manifest
-     descriptor.yaml           # name, schedule, streams, dbt_select, workflow
-     credentials.yaml.example  # Required credentials (template)
-     dbt/
-       to_{domain}.sql         # Transformation
-       schema.yml              # Source definition + tests
+     connector.yaml            # Airbyte declarative manifest
+     descriptor.yaml           # name, schedule, dbt_select, workflow, connection namespace
+     dbt/                      # Bronze → Silver models
    ```
 
-2. Create K8s Secret with connector credentials:
-   ```yaml
-   # secrets/connectors/new-connector.yaml
-   apiVersion: v1
-   kind: Secret
-   metadata:
-     name: insight-new-connector-main
-     labels:
-       app.kubernetes.io/part-of: insight
-     annotations:
-       insight.cyberfabric.com/connector: new_connector
-       insight.cyberfabric.com/source-id: new-connector-main
-   type: Opaque
-   stringData:
-     api_key: "..."
-     # All parameters required by connector spec
+2. Create K8s Secret (see [Connector Credentials](#connector-credentials-via-k8s-secrets)):
+   ```bash
+   cp secrets/connectors/m365.yaml.example secrets/connectors/new-connector.yaml
+   # Edit with real credentials, then apply
+   ./secrets/apply.sh --connectors-only
    ```
 
 3. Deploy:
    ```bash
-   ./update-connectors.sh
+   ./update-connectors.sh          # Registers manifest in Airbyte
    ./update-connections.sh my-tenant
    ./update-workflows.sh my-tenant
    ```
+
+### CDK (Python)
+
+1. Create package:
+   ```
+   connectors/{category}/{name}/
+     Dockerfile                # Airbyte Python CDK image
+     source_{name}/            # Python source code
+       source.py, spec.json, streams/
+     descriptor.yaml           # type: cdk, name, schedule, dbt_select, workflow
+     dbt/                      # Bronze → Silver models
+   ```
+
+2. Create K8s Secret and apply (same as nocode).
+
+3. Deploy:
+   ```bash
+   ./scripts/build-connector.sh {category}/{name}   # Build image + register definition
+   ./scripts/apply-connections.sh my-tenant          # Create source + connection
+   ./update-workflows.sh my-tenant
+   ```
+
+### Reset (breaking schema change)
+
+```bash
+./scripts/reset-connector.sh <name> <tenant>   # Delete everything + drop Bronze tables
+# Then re-deploy using the steps above
+```
 
 ## Adding a New Tenant
 

@@ -4,7 +4,7 @@
     "$schema": "http://json-schema.org/draft-07/schema#",
     "title": "GitHub Source",
     "type": "object",
-    "required": ["insight_tenant_id", "insight_source_id", "token", "organizations"],
+    "required": ["insight_tenant_id", "insight_source_id", "github_token", "github_organizations"],
     "additionalProperties": true,
     "properties": {
       "insight_tenant_id": {
@@ -20,14 +20,14 @@
         "examples": ["github-acme-prod"],
         "order": 1
       },
-      "token": {
+      "github_token": {
         "type": "string",
         "title": "Access Token",
         "description": "GitHub Personal Access Token or GitHub App installation token. Required scopes: repo, read:org, read:user.",
         "airbyte_secret": true,
         "order": 2
       },
-      "organizations": {
+      "github_organizations": {
         "type": "array",
         "items": { "type": "string" },
         "title": "Organizations",
@@ -35,7 +35,7 @@
         "minItems": 1,
         "order": 3
       },
-      "start_date": {
+      "github_start_date": {
         "type": "string",
         "title": "Start Date",
         "description": "UTC date for initial collection (ISO 8601). Commits before this date are skipped on the first run. Default: no limit.",
@@ -43,7 +43,7 @@
         "examples": ["2024-01-01T00:00:00Z"],
         "order": 4
       },
-      "page_size_graphql_commits": {
+      "github_page_size_graphql_commits": {
         "type": "integer",
         "title": "GraphQL Commits Page Size",
         "description": "Number of commits per GraphQL request (max 100).",
@@ -52,7 +52,7 @@
         "maximum": 100,
         "order": 5
       },
-      "page_size_graphql_prs": {
+      "github_page_size_graphql_prs": {
         "type": "integer",
         "title": "GraphQL PRs Page Size",
         "description": "Number of PRs per GraphQL request (max 50).",
@@ -61,28 +61,28 @@
         "maximum": 50,
         "order": 6
       },
-      "rate_limit_threshold": {
+      "github_rate_limit_threshold": {
         "type": "integer",
         "title": "Rate Limit Threshold",
         "description": "Proactive backoff when remaining API budget drops below this value.",
         "default": 200,
         "order": 7
       },
-      "skip_archived": {
+      "github_skip_archived": {
         "type": "boolean",
         "title": "Skip Archived Repos",
         "description": "Skip archived repositories during collection.",
         "default": true,
         "order": 8
       },
-      "skip_forks": {
+      "github_skip_forks": {
         "type": "boolean",
         "title": "Skip Forked Repos",
         "description": "Skip forked repositories during collection.",
         "default": true,
         "order": 9
       },
-      "max_workers": {
+      "github_max_workers": {
         "type": "integer",
         "title": "Concurrent Workers",
         "description": "Number of parallel threads for child stream fetches (reviews, comments, commit files, PR commits).",

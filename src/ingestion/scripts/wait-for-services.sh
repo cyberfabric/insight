@@ -23,7 +23,7 @@ kubectl wait --for=condition=ready pod \
   # Fallback: poll health endpoint
   printf "  Polling Airbyte health..."
   for i in $(seq 1 60); do
-    if curl -sf "http://localhost:8000/api/v1/health" >/dev/null 2>&1; then
+    if curl -sf "http://localhost:8001/api/v1/health" >/dev/null 2>&1; then
       echo " ok"
       break
     fi
