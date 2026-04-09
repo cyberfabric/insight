@@ -336,7 +336,7 @@ Provides pipeline scheduling, task dependency management, retry handling, and ex
 - Schedule pipeline CronWorkflows with cron expressions
 - Trigger Airbyte syncs via HTTP POST to Airbyte API
 - Poll for sync completion and check status
-- Trigger dbt runs via container steps (`ghcr.io/dbt-labs/dbt-clickhouse`)
+- Trigger dbt runs via container steps (`insight-toolbox`)
 - Enforce task ordering via DAG templates (sync before transform)
 - Retry failed tasks with configurable backoff (`retryStrategy`)
 - Provide Argo UI for monitoring and manual execution
@@ -699,7 +699,7 @@ All services run inside a Kind K8s cluster (`airbyte-abctl`):
 - Airbyte installed via `abctl local install`
 - Argo Workflows installed via Helm chart
 - ClickHouse deployed via K8s manifests (Deployment + Service + PVC + ConfigMap)
-- dbt runs as Argo container steps (`ghcr.io/dbt-labs/dbt-clickhouse`)
+- dbt runs as Argo container steps (`insight-toolbox`)
 
 KUBECONFIG: `~/.kube/kind-ingestion`
 
