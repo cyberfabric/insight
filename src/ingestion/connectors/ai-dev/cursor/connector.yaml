@@ -493,7 +493,6 @@ spec:
     type: object
     required:
       - insight_tenant_id
-      - insight_source_id
       - api_key
     properties:
       insight_tenant_id:
@@ -505,6 +504,7 @@ spec:
         type: string
         title: Insight Source ID
         description: Connector instance identifier for multi-instance deployments
+        default: ""
         order: 1
       api_key:
         type: string
