@@ -28,8 +28,10 @@ class RepositoriesStream(GitHubRestStream):
         self._organizations = organizations
         self._skip_archived = skip_archived
         self._skip_forks = skip_forks
-        self._child_records_path = os.path.join(tempfile.gettempdir(), "insight_repos.jsonl")
-        self._child_records_file: Any = None
+        self._child_records_file = tempfile.NamedTemporaryFile(
+            mode="w", prefix="insight_repos_", suffix=".jsonl", delete=False,
+        )
+        self._child_records_path = self._child_records_file.name
 
     def _path(self, stream_slice: Optional[Mapping[str, Any]] = None, **kwargs) -> str:
         org = (stream_slice or {}).get("org", "")
@@ -52,9 +54,6 @@ class RepositoriesStream(GitHubRestStream):
         repos = response.json()
         if not isinstance(repos, list):
             repos = [repos]
-        # Open child records file on first parse_response call
-        if self._child_records_file is None:
-            self._child_records_file = open(self._child_records_path, "w")
         skipped = 0
         for repo in repos:
             if self._skip_archived and repo.get("archived"):
@@ -86,6 +85,8 @@ class RepositoriesStream(GitHubRestStream):
         """Yield repo records from disk. Zero memory, zero API calls."""
         if self._child_records_file and not self._child_records_file.closed:
             self._child_records_file.close()
+        if not os.path.exists(self._child_records_path):
+            return
         with open(self._child_records_path, "r") as f:
             for line in f:
                 line = line.rstrip("\n")

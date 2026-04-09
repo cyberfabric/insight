@@ -21,8 +21,10 @@ class BranchesStream(GitHubRestStream):
     def __init__(self, parent: RepositoriesStream, **kwargs):
         super().__init__(**kwargs)
         self._parent = parent
-        self._child_records_path = os.path.join(tempfile.gettempdir(), "insight_branches.jsonl")
-        self._child_records_file: Any = None
+        self._child_records_file = tempfile.NamedTemporaryFile(
+            mode="w", prefix="insight_branches_", suffix=".jsonl", delete=False,
+        )
+        self._child_records_path = self._child_records_file.name
 
     def _path(self, stream_slice: Optional[Mapping[str, Any]] = None, **kwargs) -> str:
         s = stream_slice or {}
@@ -56,9 +58,6 @@ class BranchesStream(GitHubRestStream):
         branches = response.json()
         if not isinstance(branches, list):
             branches = [branches]
-        # Open child records file on first parse_response call
-        if self._child_records_file is None:
-            self._child_records_file = open(self._child_records_path, "w")
         for branch in branches:
             branch_name = branch.get("name", "")
             branch["unique_key"] = _make_unique_key(
@@ -84,6 +83,8 @@ class BranchesStream(GitHubRestStream):
         """Yield branch records from disk. Zero memory, zero API calls."""
         if self._child_records_file and not self._child_records_file.closed:
             self._child_records_file.close()
+        if not os.path.exists(self._child_records_path):
+            return
         with open(self._child_records_path, "r") as f:
             for line in f:
                 line = line.rstrip("\n")

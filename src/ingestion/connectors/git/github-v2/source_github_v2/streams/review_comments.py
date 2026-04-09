@@ -196,12 +196,14 @@ class ReviewCommentsStream(GitHubGraphQLStream):
                 logger.warning(f"Thread comment overflow failed ({resp.status_code}), skipping remaining")
                 return
 
-            data = resp.json()
-            if "errors" in data and not data.get("data"):
-                logger.warning(f"Thread comment overflow GraphQL error: {data['errors']}")
+            body = resp.json()
+            self._update_graphql_rate_limit(body, resp)
+            if "errors" in body and not body.get("data"):
+                logger.warning(f"Thread comment overflow GraphQL error: {body['errors']}")
                 return
 
-            node_data = self._safe_get(data, "node") or {}
+            payload = body.get("data", {}) or {}
+            node_data = payload.get("node") or {}
             thread_info = {"isResolved": node_data.get("isResolved", thread.get("isResolved"))}
             overflow_comments = self._safe_get(node_data, "comments", "nodes") or []
             overflow_page = self._safe_get(node_data, "comments", "pageInfo") or {}
@@ -293,7 +295,8 @@ class ReviewCommentsStream(GitHubGraphQLStream):
             raise
         except Exception as exc:
             pk = s.get("partition_key", "?")
-            logger.warning(f"Skipping review_comments slice {pk}: {exc}")
+            logger.error(f"Failed review_comments slice {pk}: {exc}")
+            raise
 
     def get_updated_state(
         self,

@@ -139,7 +139,8 @@ class FileChangesStream(GitHubRestStream):
             raise
         except Exception as exc:
             s = stream_slice or {}
-            logger.warning(f"Skipping file_changes for {s.get('owner')}/{s.get('repo')}/{s.get('sha', '?')[:8]}: {exc}")
+            logger.error(f"Failed file_changes for {s.get('owner')}/{s.get('repo')}/{s.get('sha', '?')[:8]}: {exc}")
+            raise
 
     def get_json_schema(self) -> Mapping[str, Any]:
         return {

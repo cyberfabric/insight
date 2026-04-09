@@ -208,7 +208,8 @@ class CommentsStream(GitHubGraphQLStream):
             raise
         except Exception as exc:
             pk = s.get("partition_key", "?")
-            logger.warning(f"Skipping comments slice {pk}: {exc}")
+            logger.error(f"Failed comments slice {pk}: {exc}")
+            raise
 
     def get_updated_state(
         self,

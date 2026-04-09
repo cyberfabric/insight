@@ -54,8 +54,10 @@ class PullRequestsStream(GitHubGraphQLStream):
         # Disk-backed embedded child data — near-zero memory.
         # Each line is JSON: {commits: {...}, reviews: {...}, comments: {...}, review_threads: {...}}
         # Child streams seek to byte offset stored in child_slice_cache.
-        self._embedded_data_path = os.path.join(tempfile.gettempdir(), "insight_pr_embedded.jsonl")
-        self._embedded_data_file = open(self._embedded_data_path, "w")
+        self._embedded_data_file = tempfile.NamedTemporaryFile(
+            mode="w", prefix="insight_pr_embedded_", suffix=".jsonl", delete=False,
+        )
+        self._embedded_data_path = self._embedded_data_file.name
 
     def _query(self) -> str:
         return self._pr_query
@@ -366,7 +368,7 @@ class PullRequestsStream(GitHubGraphQLStream):
         current_stream_state: MutableMapping[str, Any],
         latest_record: Mapping[str, Any],
     ) -> MutableMapping[str, Any]:
-        partition_key = f"{latest_record.get('repository_owner', '')}/{latest_record.get('repository_name', '')}"
+        partition_key = f"{latest_record.get('repo_owner', '')}/{latest_record.get('repo_name', '')}"
         if partition_key in self._partitions_with_errors:
             return current_stream_state
 

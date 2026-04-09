@@ -1,7 +1,7 @@
 """GraphQL query templates for GitHub API v4.
 
-GraphQL for bulk listing (commits, PRs) and PR commit linkage.
-REST for reviews, comments (simpler pagination).
+Bulk listing (commits, PRs) and PR child entities
+(reviews, comments, review threads, and PR commits).
 """
 
 BULK_COMMIT_QUERY = """

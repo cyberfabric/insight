@@ -73,8 +73,8 @@ class SourceGitHubV2(AbstractSource):
                     )
 
             return True, None
-        except Exception as exc:
-            return False, str(exc)
+        except requests.RequestException as exc:
+            return False, f"GitHub API request failed: {exc}"
 
     def streams(self, config: Mapping[str, Any]) -> List[Stream]:
         """Build the stream dependency graph.

@@ -44,10 +44,11 @@ class CommitsStream(GitHubGraphQLStream):
         self._stop_pagination: bool = False
         self._seen_hashes: dict[str, str] = {}  # sha → "owner/repo"
         self._deferred_state_updates: dict[str, dict] = {}  # partition_key → state entry
-        # Fixed-path temp file for passing commit metadata to file_changes.
-        # Overwritten on each sync — no accumulation across runs.
-        self._commit_meta_path = os.path.join(tempfile.gettempdir(), "insight_commits_meta.tsv")
-        self._commit_meta_file = open(self._commit_meta_path, "w")
+        # Temp file for passing commit metadata to file_changes (near-zero memory).
+        self._commit_meta_file = tempfile.NamedTemporaryFile(
+            mode="w", prefix="insight_commits_meta_", suffix=".tsv", delete=False,
+        )
+        self._commit_meta_path = self._commit_meta_file.name
         self._commit_meta_count: int = 0
         logger.info(f"Commit metadata temp file: {self._commit_meta_path}")
 
@@ -374,8 +375,8 @@ class CommitsStream(GitHubGraphQLStream):
         latest_record: Mapping[str, Any],
     ) -> MutableMapping[str, Any]:
         partition_key = (
-            f"{latest_record.get('repository_owner', '')}/"
-            f"{latest_record.get('repository_name', '')}/"
+            f"{latest_record.get('repo_owner', '')}/"
+            f"{latest_record.get('repo_name', '')}/"
             f"{latest_record.get('branch_name', '')}"
         )
         if partition_key in self._partitions_with_errors:

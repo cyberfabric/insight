@@ -214,7 +214,8 @@ class ReviewsStream(GitHubGraphQLStream):
             raise
         except Exception as exc:
             pk = s.get("partition_key", "?")
-            logger.warning(f"Skipping reviews slice {pk}: {exc}")
+            logger.error(f"Failed reviews slice {pk}: {exc}")
+            raise
 
     def get_updated_state(
         self,

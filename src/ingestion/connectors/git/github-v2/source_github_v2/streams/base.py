@@ -47,7 +47,7 @@ def _is_rate_limit_403(resp) -> bool:
 
 
 def _make_unique_key(tenant_id: str, source_id: str, *natural_key_parts: str) -> str:
-    return f"{tenant_id}-{source_id}-{'-'.join(natural_key_parts)}"
+    return f"{tenant_id}:{source_id}:{':'.join(natural_key_parts)}"
 
 
 class GitHubRestStream(HttpStream, ABC):

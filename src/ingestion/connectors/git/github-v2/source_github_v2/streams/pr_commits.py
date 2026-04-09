@@ -219,7 +219,8 @@ class PRCommitsStream(GitHubGraphQLStream):
             raise
         except Exception as exc:
             pk = s.get("partition_key", "?")
-            logger.warning(f"Skipping pr_commits slice {pk}: {exc}")
+            logger.error(f"Failed pr_commits slice {pk}: {exc}")
+            raise
 
     def get_updated_state(
         self,
