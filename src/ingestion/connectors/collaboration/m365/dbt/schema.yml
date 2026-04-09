@@ -11,10 +11,13 @@ models:
   - name: m365__comms_events
     description: "M365 communication events → staging, feeds class_comms_events"
     columns:
-      - name: tenant_id
+      - name: insight_tenant_id
         tests:
           - not_null
-      - name: source_id
+      - name: insight_source_id
+        tests:
+          - not_null
+      - name: insight_source_type
         tests:
           - not_null
       - name: unique_key

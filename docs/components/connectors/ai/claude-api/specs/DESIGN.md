@@ -636,7 +636,9 @@ The mapping from `created_by` fields and invite emails to `person_id` is handled
 
 | Bronze Field (`claude_api_messages_usage`) | Silver Field (`class_ai_api_usage`) | Transformation |
 |--------------------------------------------|-------------------------------------|---------------|
-| `tenant_id` | `tenant_id` | Pass through |
+| `tenant_id` | `insight_tenant_id` | Rename (Bronze → Silver convention per glossary §3) |
+| `source_id` | `insight_source_id` | Rename (Bronze → Silver convention per glossary §3) |
+| -- | `insight_source_type` | Constant `'claude-api'` |
 | `date` | `report_date` | Rename |
 | `model` | `model` | Pass through |
 | `api_key_id` | `api_key_id` | Pass through |
@@ -656,7 +658,6 @@ The mapping from `created_by` fields and invite emails to `person_id` is handled
 | `data_source` | `data_source` | `'insight_claude_api'` |
 | -- | `provider` | `'anthropic'` (constant) |
 | -- | `person_id` | NULL (no user attribution at API level) |
-| `source_instance_id` | `source_instance_id` | Pass through |
 
 #### Silver/Gold Summary
 

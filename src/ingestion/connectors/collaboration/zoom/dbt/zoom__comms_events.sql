@@ -6,8 +6,9 @@
 ) }}
 
 SELECT
-    p.tenant_id,
-    p.source_id,
+    p.tenant_id AS insight_tenant_id,
+    p.source_id AS insight_source_id,
+    'zoom' AS insight_source_type,
     p.unique_key,
     p.user_name,
     COALESCE(p.email, '') AS user_email,

@@ -17,12 +17,16 @@ models:
       SCD Type 2 fields (valid_from/valid_to) are set as current-state snapshot
       (valid_from = lastChanged, valid_to = NULL).
     columns:
-      - name: tenant_id
-        description: "Tenant isolation identifier"
+      - name: insight_tenant_id
+        description: "Insight tenant isolation identifier (mapped from Bronze tenant_id)"
         tests:
           - not_null
-      - name: source_id
-        description: "Connector instance identifier"
+      - name: insight_source_id
+        description: "Connector instance identifier (mapped from Bronze source_id)"
+        tests:
+          - not_null
+      - name: insight_source_type
+        description: "Source system type (always 'bamboohr')"
         tests:
           - not_null
       - name: unique_key

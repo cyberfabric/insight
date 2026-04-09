@@ -9,8 +9,9 @@
 ) }}
 
 SELECT
-    tenant_id,
-    source_id,
+    tenant_id AS insight_tenant_id,
+    source_id AS insight_source_id,
+    'bamboohr' AS insight_source_type,
     unique_key,
     coalesce(tenant_id, '')                         AS workspace_id,
     -- person_id resolved in Silver Step 2 via Identity Manager

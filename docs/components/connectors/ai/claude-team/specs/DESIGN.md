@@ -223,7 +223,7 @@ src/ingestion/connectors/ai/claude-team/
     +-- schema.yml          # Column documentation + dbt tests
 ```
 
-The dbt model `to_ai_dev_usage.sql` transforms `claude_team_code_usage` Bronze table into the unified `class_ai_dev_usage` Silver table. `tenant_id` MUST be preserved and tested with a `not_null` dbt test. The `data_source` column (set to `'insight_claude_team'` in Bronze) MUST be carried through to Silver as the canonical source discriminator.
+The dbt model `to_ai_dev_usage.sql` transforms `claude_team_code_usage` Bronze table into the unified `class_ai_dev_usage` Silver table. Bronze `tenant_id` is mapped to Silver `insight_tenant_id`, `source_id` to `insight_source_id`, and `insight_source_type` is set to `'claude-team'` (per glossary §3). Both `insight_tenant_id` and `insight_source_id` MUST be tested with `not_null` dbt tests. The `data_source` column (set to `'insight_claude_team'` in Bronze) MUST be carried through to Silver as the canonical source discriminator.
 
 The dbt model `to_ai_tool_usage.sql` is a placeholder -- the Anthropic Admin API does not currently expose web/mobile activity data through a separate endpoint. This model documents the architectural gap and will be implemented when the data becomes available.
 
@@ -786,8 +786,9 @@ The Identity Manager resolves `email`/`actor_identifier` -> canonical `person_id
 
 | Unified field | Claude Team source | Notes |
 |---------------|-------------------|-------|
-| `tenant_id` | `tenant_id` | Framework-injected |
-| `source_id` | `source_id` | Connector instance (Bronze column, mapped from config `insight_source_id`) |
+| `tenant_id` | `insight_tenant_id` | Rename (Bronze → Silver convention per glossary §3) |
+| `source_id` | `insight_source_id` | Rename (Bronze → Silver convention per glossary §3) |
+| -- | `insight_source_type` | Constant `'claude-team'` |
 | `data_source` | `data_source` | Always `insight_claude_team` |
 | `unique_id` | -- | Computed: `concat(date, '\|', actor_identifier, '\|', terminal_type)`. Note: `actor_type` is omitted because the model filters to `actor_type = 'user'` (always constant); Bronze key includes it but Silver does not. |
 | `report_date` | `date` | Rename from `date` |

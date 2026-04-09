@@ -217,7 +217,7 @@ src/ingestion/connectors/ai-dev/cursor/
     └── schema.yml          # Column documentation + dbt tests (tenant_id not_null)
 ```
 
-The dbt model `to_ai_dev_usage.sql` transforms `cursor_daily_usage` and `cursor_usage_events` Bronze tables into the unified `class_ai_dev_usage` Silver table. `tenant_id` MUST be preserved and tested with a `not_null` dbt test. The `data_source` column (already present in Bronze tables as `'insight_cursor'`) MUST be carried through to Silver as the canonical source discriminator — no separate `source` column is needed.
+The dbt model `to_cursor_ai_dev_usage.sql` transforms `cursor_daily_usage` and `cursor_usage_events` Bronze tables into the unified `class_ai_dev_usage` Silver table. Bronze `tenant_id` is mapped to Silver `insight_tenant_id`, `source_id` to `insight_source_id`, and `insight_source_type` is set to `'cursor'` (per glossary §3). Both `insight_tenant_id` and `insight_source_id` MUST be tested with `not_null` dbt tests. The `data_source` column (already present in Bronze tables as `'insight_cursor'`) MUST be carried through to Silver as the canonical source discriminator.
 
 #### Connector Package Descriptor
 
