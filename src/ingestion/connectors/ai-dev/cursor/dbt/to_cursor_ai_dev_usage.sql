@@ -8,6 +8,7 @@ WITH resync AS (
     -- Authoritative data for completed days (yesterday and earlier)
     SELECT
         tenant_id,
+        source_id,
         userEmail                   AS user_email,
         timestamp                   AS event_timestamp,
         kind                        AS event_kind,
@@ -31,6 +32,7 @@ realtime AS (
     -- Near-real-time data for today only
     SELECT
         tenant_id,
+        source_id,
         userEmail                   AS user_email,
         timestamp                   AS event_timestamp,
         kind                        AS event_kind,

@@ -22,6 +22,10 @@ models:
         description: "Tenant isolation field — framework-injected"
         tests:
           - not_null
+      - name: source_id
+        description: "Connector instance identifier — framework-injected"
+        tests:
+          - not_null
       - name: user_email
         description: "User email (identity key for Silver step 2 resolution)"
         tests:

@@ -76,9 +76,9 @@ graph LR
 | `cpt-insightspec-fr-claude-api-workspaces` | `claude_api_workspaces` stream with offset-based pagination, full refresh |
 | `cpt-insightspec-fr-claude-api-invites` | `claude_api_invites` stream with offset-based pagination, full refresh |
 | `cpt-insightspec-fr-claude-api-collection-runs` | `claude_api_collection_runs` monitoring stream (framework-managed) |
-| `cpt-insightspec-fr-claude-api-framework-fields` | `AddFields` transformation injects `tenant_id`, `insight_source_id`, `data_source`, `collected_at`, `_version` |
-| `cpt-insightspec-fr-claude-api-usage-unique-key` | `AddFields` generates composite `unique` key from dimensional columns |
-| `cpt-insightspec-fr-claude-api-cost-unique-key` | `AddFields` generates composite `unique` key from `(date, workspace_id, description)` |
+| `cpt-insightspec-fr-claude-api-framework-fields` | `AddFields` transformation injects `tenant_id`, `source_id`, `data_source`, `collected_at`, `_version` |
+| `cpt-insightspec-fr-claude-api-usage-unique-key` | `AddFields` generates composite `unique_key` key from dimensional columns |
+| `cpt-insightspec-fr-claude-api-cost-unique-key` | `AddFields` generates composite `unique_key` key from `(date, workspace_id, description)` |
 
 #### NFR Allocation
 
@@ -87,7 +87,7 @@ graph LR
 | `cpt-insightspec-nfr-claude-api-auth` | Admin API key auth + version header | `base_requester` | `ApiKeyAuthenticator` with `header: x-api-key`; `request_headers` with `anthropic-version` | Integration test with valid/invalid keys |
 | `cpt-insightspec-nfr-claude-api-rate-limiting` | Exponential backoff on 429 | `error_handler` | `DefaultErrorHandler` with `ExponentialBackoffStrategy` | Unit test retry logic |
 | `cpt-insightspec-nfr-claude-api-data-source` | `data_source = 'insight_claude_api'` on all rows | `AddFields` transformation | Hard-coded constant injected into every stream | Row-level assertion in integration tests |
-| `cpt-insightspec-nfr-claude-api-idempotent` | No duplicates on re-sync | Primary key definitions | `unique` composite key for usage/cost; `id` for dimension tables | Run sync twice; verify row counts unchanged |
+| `cpt-insightspec-nfr-claude-api-idempotent` | No duplicates on re-sync | Primary key definitions | `unique_key` composite key for usage/cost; `id` for dimension tables | Run sync twice; verify row counts unchanged |
 | `cpt-insightspec-nfr-claude-api-freshness` | 48h latency | Scheduler config | Daily schedule; lookback window covers D-2 | SLA monitoring dashboard |
 
 #### Architecture Decision Records
@@ -167,7 +167,7 @@ API keys, workspaces, and invites are small, slowly-changing dimension tables. F
 
 - [ ] `p1` - **ID**: `cpt-insightspec-principle-claude-api-framework-fields`
 
-All streams inject `tenant_id`, `source_instance_id`, `data_source`, and `collected_at` via `AddFields` transformations. This is consistent across all Insight connectors and enables multi-tenant operation. Note: `_version` and `metadata` (full API response JSON) are documented in Bronze table schemas for forward compatibility but are **not implemented** in the declarative manifest — the Airbyte `AddFields` transformation cannot capture the full response payload or generate deduplication versions. These fields may be added by a destination-side post-processing step if needed.
+All streams inject `tenant_id`, `source_id`, `data_source`, and `collected_at` via `AddFields` transformations. The config parameter `insight_tenant_id` is written to Bronze column `tenant_id`; `insight_source_id` is written to Bronze column `source_id`. This is consistent across all Insight connectors and enables multi-tenant operation. Note: `_version` and `metadata` (full API response JSON) are documented in Bronze table schemas for forward compatibility but are **not implemented** in the declarative manifest — the Airbyte `AddFields` transformation cannot capture the full response payload or generate deduplication versions. These fields may be added by a destination-side post-processing step if needed.
 
 ### 2.2 Constraints
 
@@ -318,9 +318,9 @@ SQL transformation that maps `claude_api_messages_usage` Bronze data to the `cla
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `tenant_id` | string | Yes | Tenant isolation identifier (UUID) |
+| `insight_tenant_id` | string | Yes | Insight tenant isolation identifier (UUID) |
+| `insight_source_id` | string | Yes | Connector instance identifier |
 | `admin_api_key` | string (secret) | Yes | Anthropic Admin API key |
-| `insight_source_id` | string | No | Source instance discriminator (default: empty) |
 | `start_date` | string | No | Earliest date to collect (ISO 8601, default: 90 days ago) |
 
 ### 3.4 Internal Dependencies
@@ -444,7 +444,7 @@ sequenceDiagram
 |--------|------|-------------|
 | `tenant_id` | String | Tenant isolation identifier (UUID) -- framework-injected |
 | `source_instance_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
-| `unique` | String | Composite key: `{date}\|{model}\|{api_key_id}\|{workspace_id}\|{service_tier}\|{context_window}` |
+| `unique_key` | String | Composite key: `{date}\|{model}\|{api_key_id}\|{workspace_id}\|{service_tier}\|{context_window}` |
 | `date` | String | Usage date (ISO 8601 date) |
 | `model` | String | Model ID (e.g., `claude-opus-4-6`, `claude-sonnet-4-6`) |
 | `api_key_id` | String | API key identifier |
@@ -464,7 +464,7 @@ sequenceDiagram
 | `_version` | String | Deduplication version |
 | `metadata` | String | Full API response as JSON |
 
-**PK**: `unique`
+**PK**: `unique_key`
 
 **Granularity**: One row per `(date, model, api_key_id, workspace_id, service_tier, context_window)`.
 
@@ -477,8 +477,8 @@ sequenceDiagram
 | Column | Type | Description |
 |--------|------|-------------|
 | `tenant_id` | String | Tenant isolation identifier (UUID) -- framework-injected |
-| `insight_source_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
-| `unique` | String | Composite key: `{date}\|{workspace_id}\|{description}` |
+| `source_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
+| `unique_key` | String | Composite key: `{date}\|{workspace_id}\|{description}` |
 | `date` | String | Cost date (ISO 8601 date) |
 | `workspace_id` | String | Workspace identifier |
 | `description` | String | Cost category description |
@@ -495,7 +495,7 @@ sequenceDiagram
 | `_version` | String | Deduplication version |
 | `metadata` | String | Full API response as JSON |
 
-**PK**: `unique`
+**PK**: `unique_key`
 
 **Granularity**: One row per `(date, workspace_id, description)`.
 
@@ -508,7 +508,7 @@ sequenceDiagram
 | Column | Type | Description |
 |--------|------|-------------|
 | `tenant_id` | String | Tenant isolation identifier (UUID) -- framework-injected |
-| `insight_source_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
+| `source_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
 | `id` | String | API key identifier |
 | `name` | String | API key name |
 | `status` | String | Key status (e.g., `active`, `disabled`) |
@@ -532,7 +532,7 @@ sequenceDiagram
 | Column | Type | Description |
 |--------|------|-------------|
 | `tenant_id` | String | Tenant isolation identifier (UUID) -- framework-injected |
-| `insight_source_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
+| `source_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
 | `id` | String | Workspace identifier |
 | `name` | String | Workspace name |
 | `display_name` | String | Workspace display name |
@@ -555,7 +555,7 @@ sequenceDiagram
 | Column | Type | Description |
 |--------|------|-------------|
 | `tenant_id` | String | Tenant isolation identifier (UUID) -- framework-injected |
-| `insight_source_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
+| `source_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
 | `id` | String | Invite identifier |
 | `email` | String | Invitee email address |
 | `role` | String | Organization role assigned |
@@ -579,7 +579,7 @@ sequenceDiagram
 | Column | Type | Description |
 |--------|------|-------------|
 | `tenant_id` | String | Tenant isolation identifier (UUID) -- framework-injected |
-| `insight_source_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
+| `source_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
 | `run_id` | String | Unique run identifier |
 | `started_at` | String | Run start time (ISO 8601) |
 | `completed_at` | String | Run end time (ISO 8601) |

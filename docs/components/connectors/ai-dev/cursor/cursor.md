@@ -45,7 +45,7 @@ Standalone specification for the Cursor (AI Dev Tool) connector. Expands Source 
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `unique` | String | Primary key |
+| `unique_key` | String | Primary key (`{tenant_id}-{source_id}-{natural_key}`) |
 | `day` | String | Day label |
 | `date` | Int64 | Unix timestamp in milliseconds |
 | `email` | String | User email — identity key |
@@ -79,7 +79,7 @@ Standalone specification for the Cursor (AI Dev Tool) connector. Expands Source 
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `unique` | String | Primary key |
+| `unique_key` | String | Primary key (`{tenant_id}-{source_id}-{natural_key}`) |
 | `userEmail` | String | User email — identity key |
 | `timestamp` | DateTime64(3) | Event timestamp |
 | `kind` | String | Event type: `chat`, `completion`, `agent`, `cmd-k`, etc. |

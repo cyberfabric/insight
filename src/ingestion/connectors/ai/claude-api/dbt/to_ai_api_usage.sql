@@ -5,7 +5,7 @@
 WITH usage AS (
     SELECT
         tenant_id,
-        insight_source_id,
+        source_id,
         date                                        AS report_date,
         model,
         api_key_id,
@@ -49,7 +49,7 @@ workspaces AS (
 
 SELECT
     u.tenant_id,
-    u.insight_source_id,
+    u.source_id,
     -- composite unique id for incremental
     concat(u.report_date, '|', u.model, '|', u.api_key_id, '|',
            u.workspace_id, '|', u.service_tier, '|',

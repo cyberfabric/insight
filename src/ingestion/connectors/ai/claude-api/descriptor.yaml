@@ -1,5 +1,6 @@
 name: claude-api
 version: '1.0'
+type: nocode
 schedule: 0 2 * * *
 dbt_select: tag:claude-api+
 workflow: sync

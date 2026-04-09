@@ -6,7 +6,7 @@
 
 SELECT
     tenant_id,
-    source_instance_id,
+    source_id,
     -- actor_type omitted from key: model filters to actor_type='user' so it's
     -- always constant; Bronze unique key includes it (see connector.yaml)
     concat(date, '|', actor_identifier, '|', terminal_type)

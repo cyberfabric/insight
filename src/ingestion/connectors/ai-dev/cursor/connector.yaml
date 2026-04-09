@@ -15,7 +15,9 @@ definitions:
     type: AddFields
     fields:
       - path: [tenant_id]
-        value: "{{ config['tenant_id'] }}"
+        value: "{{ config['insight_tenant_id'] }}"
+      - path: [source_id]
+        value: "{{ config.get('insight_source_id', '') }}"
 
   post_paginator:
     type: DefaultPaginator
@@ -61,6 +63,8 @@ streams:
         properties:
           tenant_id:
             type: string
+          source_id:
+            type: string
           id:
             type: string
           name:
@@ -71,6 +75,7 @@ streams:
             type: string
           isRemoved:
             type: boolean
+        additionalProperties: true
     retriever:
       type: SimpleRetriever
       requester:
@@ -106,6 +111,8 @@ streams:
         properties:
           tenant_id:
             type: string
+          source_id:
+            type: string
           event_id:
             type: string
           timestamp:
@@ -122,6 +129,7 @@ streams:
             type:
               - string
               - "null"
+        additionalProperties: true
     retriever:
       type: SimpleRetriever
       requester:
@@ -167,7 +175,7 @@ streams:
   - type: DeclarativeStream
     name: cursor_usage_events
     primary_key:
-      - unique
+      - unique_key
     schema_loader:
       type: InlineSchemaLoader
       schema:
@@ -176,7 +184,9 @@ streams:
         properties:
           tenant_id:
             type: string
-          unique:
+          source_id:
+            type: string
+          unique_key:
             type: string
           userEmail:
             type: string
@@ -211,6 +221,7 @@ streams:
                 type: number
               totalCents:
                 type: number
+        additionalProperties: true
     retriever:
       type: SimpleRetriever
       requester:
@@ -238,8 +249,8 @@ streams:
       - type: AddFields
         fields:
           - path:
-              - unique
-            value: "{{ record['userEmail'] }}{{ record['timestamp'] }}"
+              - unique_key
+            value: "{{ config['insight_tenant_id'] }}-{{ config.get('insight_source_id', '') }}-{{ record['userEmail'] }}{{ record['timestamp'] }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: timestamp
@@ -255,7 +266,7 @@ streams:
   - type: DeclarativeStream
     name: cursor_usage_events_daily_resync
     primary_key:
-      - unique
+      - unique_key
     schema_loader:
       type: InlineSchemaLoader
       schema:
@@ -264,7 +275,9 @@ streams:
         properties:
           tenant_id:
             type: string
-          unique:
+          source_id:
+            type: string
+          unique_key:
             type: string
           userEmail:
             type: string
@@ -299,6 +312,7 @@ streams:
                 type: number
               totalCents:
                 type: number
+        additionalProperties: true
     retriever:
       type: SimpleRetriever
       requester:
@@ -326,8 +340,8 @@ streams:
       - type: AddFields
         fields:
           - path:
-              - unique
-            value: "{{ record['userEmail'] }}{{ record['timestamp'] }}"
+              - unique_key
+            value: "{{ config['insight_tenant_id'] }}-{{ config.get('insight_source_id', '') }}-{{ record['userEmail'] }}{{ record['timestamp'] }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: timestamp
@@ -347,7 +361,7 @@ streams:
   - type: DeclarativeStream
     name: cursor_daily_usage
     primary_key:
-      - unique
+      - unique_key
     schema_loader:
       type: InlineSchemaLoader
       schema:
@@ -356,7 +370,9 @@ streams:
         properties:
           tenant_id:
             type: string
-          unique:
+          source_id:
+            type: string
+          unique_key:
             type: string
           userId:
             type: string
@@ -418,6 +434,7 @@ streams:
             type: number
           apiKeyReqs:
             type: number
+        additionalProperties: true
     retriever:
       type: SimpleRetriever
       requester:
@@ -442,8 +459,8 @@ streams:
       - type: AddFields
         fields:
           - path:
-              - unique
-            value: "{{ record['email'] }}{{ record['date'] }}"
+              - unique_key
+            value: "{{ config['insight_tenant_id'] }}-{{ config.get('insight_source_id', '') }}-{{ record['email'] }}{{ record['date'] }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: date
@@ -469,20 +486,26 @@ spec:
     $schema: http://json-schema.org/draft-07/schema#
     type: object
     required:
-      - tenant_id
+      - insight_tenant_id
+      - insight_source_id
       - api_key
     properties:
-      tenant_id:
+      insight_tenant_id:
         type: string
-        title: Tenant ID
-        description: Tenant isolation identifier (UUID)
+        title: Insight Tenant ID
+        description: Insight tenant isolation identifier (UUID)
         order: 0
+      insight_source_id:
+        type: string
+        title: Insight Source ID
+        description: Connector instance identifier for multi-instance deployments
+        order: 1
       api_key:
         type: string
         title: API Key
         description: Cursor team API key
         airbyte_secret: true
-        order: 1
+        order: 2
     additionalProperties: true
 
 metadata:
