@@ -60,7 +60,7 @@ Every emitted record includes `tenant_id` and `source_id` for multi-tenant isola
 |-------------|-----------------|
 | `cpt-insightspec-fr-jira-issue-extraction` | `DeclarativeStream issues` with JQL `HttpRequester`; writes to `jira_issue` |
 | `cpt-insightspec-fr-jira-changelog-extraction` | Changelog fetched via dedicated `SubstreamPartitionRouter` per issue (`/rest/api/3/issue/{key}/changelog`); each changelog entry stored with `items` as JSON array in `jira_issue_history`. **Note**: `issue_jira_id` is NOT available at Bronze level due to `SubstreamPartitionRouter` limitation (can only pass `id_readable` as partition field) — must be resolved via JOIN with `jira_issue` in Silver/dbt |
-| `cpt-insightspec-fr-jira-custom-fields` | All custom fields from the issue response stored as raw JSON in `custom_fields_json` field on `jira_issue`; denormalization to `jira_issue_ext` key-value rows deferred to Silver/dbt layer |
+| `cpt-insightspec-fr-jira-custom-fields` | All custom fields from the issue response stored as raw JSON in `custom_fields_json` field on `jira_issue`; denormalization to `jira_issue_ext` key-value rows deferred to Silver/dbt layer. `jira_fields` stream provides field metadata (`schema.type`) for Silver enrichment of `custom_fields_json` and changelog `items` |
 | `cpt-insightspec-fr-jira-story-points-detection` | All custom fields (including story points) stored in `custom_fields_json`; story points extraction deferred to Silver/dbt layer based on `jira_projects.style` — no connector-level configuration needed |
 | `cpt-insightspec-fr-jira-worklog-extraction` | `DeclarativeStream worklogs` per issue via `SubstreamPartitionRouter` (`/rest/api/3/issue/{key}/worklog`); writes to `jira_worklogs` |
 | `cpt-insightspec-fr-jira-comment-extraction` | `DeclarativeStream comments` per issue via `SubstreamPartitionRouter`; raw ADF JSON stored; conversion deferred to Silver; writes to `jira_comments` |
@@ -100,14 +100,15 @@ Every emitted record includes `tenant_id` and `source_id` for multi-tenant isola
 │  │   Note: custom fields (incl. issue links) in custom_fields_json   │
 │  ├── projects stream (full refresh /project/search)                  │
 │  ├── sprints stream (boards → sprints, full refresh)                 │
-│  └── users stream (full refresh /users/search)                       │
+│  ├── users stream (full refresh /users/search)                       │
+│  └── jira_fields stream (full refresh /field)                        │
 └─────────────────────────────┬───────────────────────────────────────┘
                               │ Airbyte Protocol (RECORD, STATE, LOG)
 ┌─────────────────────────────▼───────────────────────────────────────┐
 │  Bronze Tables (ClickHouse — ReplacingMergeTree)                     │
 │  jira_issue, jira_issue_history, jira_worklogs,                      │
 │  jira_comments, jira_projects, jira_sprints,                         │
-│  jira_user                                                           │
+│  jira_user, jira_fields                                              │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -203,6 +204,7 @@ The connector writes only to Bronze tables. Cross-source unification, enum norma
 | `JiraProject` | Project directory: `id`, `key`, `name`, `lead`, `projectTypeKey`, `style`, `archived` | `jira_projects` |
 | `JiraIssueLink` | Dependency relationship between two issues with typed link | `jira_issue.custom_fields_json` (within `fields.issuelinks`; denormalized to `jira_issue_links` in Silver/dbt) |
 | `JiraUser` | User record: `accountId`, `emailAddress`, `displayName`, `accountType`, `active` | `jira_user` |
+| `JiraField` | Field metadata: `id`, `name`, `schema.type`, `custom` flag | `jira_fields` |
 | `JiraCustomField` | Per-issue custom field value as key-value pair | `jira_issue.custom_fields_json` (JSON column, denormalized to `jira_issue_ext` in Silver/dbt) |
 | `CollectionState` | Cursor state: `last_updated_at` timestamp, run counters | Airbyte platform sync state (no `jira_collection_runs` table) |
 
@@ -214,6 +216,7 @@ These entities map to declarative stream schemas defined as JSON Schema files wi
 - `JiraIssue` 1:N → `JiraChangelog`, `JiraWorklog`, `JiraComment`, `JiraIssueLink`, `JiraCustomField`
 - `JiraInstance` 1:N → `JiraSprint` (via boards)
 - `JiraInstance` 1:N → `JiraUser`
+- `JiraInstance` 1:N → `JiraField`
 
 ### 3.2 Component Model
 
@@ -227,9 +230,9 @@ The single declarative YAML manifest (`connector.yaml`) defines all streams, aut
 
 ##### Responsibility scope
 
-- Defines all stream configurations: issues, issue_history, comments, worklogs, projects, sprints, users. Issue links and custom fields are embedded as JSON columns on `jira_issue`.
+- Defines all stream configurations: issues, issue_history, comments, worklogs, projects, sprints, users, jira_fields. Issue links and custom fields are embedded as JSON columns on `jira_issue`.
 - Configures `ApiKeyAuthenticator` with Basic Auth (email:token base64-encoded).
-- Configures `OffsetIncrement` pagination for most endpoints; `CursorPagination` for JQL search (`nextPageToken`). **Note**: `CursorPagination` does NOT accept a `page_size` parameter — page size is passed as a `request_parameter` (`maxResults`) on the stream requester.
+- Configures named `OffsetIncrement` paginators with hardcoded `page_size` values per endpoint: `paginator` (50, projects/comments), `agile_paginator` (50, boards/sprints), `child_paginator` (100, changelog/worklogs), `user_paginator` (200, user directory). `CursorPagination` for JQL search (`nextPageToken`); page size passed as `request_parameters.maxResults` (not `page_size` on paginator). **Note**: `OffsetIncrement.page_size` does NOT support Jinja templates — only numeric values.
 - Configures `DatetimeBasedCursor` on issue `updated` field for incremental sync.
 - Configures `SubstreamPartitionRouter` for changelog, comments, and worklogs (parent-child stream pattern per issue).
 - Configures `AddFields` transformations for `tenant_id`, `source_id`, and `unique_key` injection on every record (per Connector Framework spec §4.6).
@@ -399,7 +402,7 @@ In Phase 1, Atlassian Document Format (ADF) JSON from Jira Cloud REST API v3 com
 | `insight_source_id` | str | Instance discriminator (e.g., `jira-team-alpha`) |
 | `jira_project_keys` | str | **Required.** Comma-separated project keys — Jira Cloud does not allow unbounded JQL queries |
 | `jira_start_date` | str | Earliest date to sync issues from, `YYYY-MM-DD` (default `2020-01-01`) |
-| `jira_page_size` | int | Page size for JQL search (default 50, max 100) |
+| `jira_page_size` | int | Page size for JQL search only (default 50, max 100). Passed as `request_parameters.maxResults` on the search stream. All other paginators use hardcoded `page_size` values optimized per endpoint API max: `paginator` 50 (projects, comments), `agile_paginator` 50 (boards, sprints), `child_paginator` 100 (changelog, worklogs), `user_paginator` 200 (user directory) |
 
 ---
 
@@ -486,6 +489,10 @@ sequenceDiagram
     API -->> Source: user list
     Source ->> Bronze: UPSERT jira_user
 
+    Source ->> API: GET /rest/api/3/field
+    API -->> Source: field metadata
+    Source ->> Bronze: UPSERT jira_fields
+
     Note over Source: Issue stream (incremental via DatetimeBasedCursor)
     Source ->> API: GET /rest/api/3/search/jql (updated >= cursor, expand=names, fields=*all)
     loop Until all pages exhausted
@@ -555,6 +562,7 @@ All Bronze table schemas are defined in [`jira.md`](../jira.md). The schemas are
 | `jira_projects` | `(tenant_id, source_id, project_id)` | Full refresh each run |
 | `jira_sprints` | `(tenant_id, source_id, sprint_id)` | Full refresh each run. `board_name` and `project_key` removed from Bronze (resolve via JOIN with boards/projects in Silver/dbt) |
 | `jira_user` | `(tenant_id, source_id, account_id)` | Full refresh each run |
+| `jira_fields` | `(tenant_id, source_id, field_id)` | Full refresh each run. Field metadata for Silver enrichment |
 
 All streams use `unique_key` as the primary key in the connector manifest. The `unique_key` value follows the pattern `{tenant_id}-{source_id}-{natural_key}`, where `natural_key` is the stream-specific identifier (e.g., `id` for projects, `accountId` for users, `key` for issues). The composite `(tenant_id, source_id, natural_key)` columns remain as the logical natural key for reference and JOINs.
 
@@ -601,7 +609,7 @@ The connector overlaps the cursor window by 1 hour (`lookback_window: PT1H`) to 
 | Boards | `/rest/agile/1.0/board` | Offset (`startAt`) | Full refresh |
 | Sprints | `/rest/agile/1.0/board/{id}/sprint` | Offset (`startAt`) | Full refresh per board |
 | Users | `/rest/api/3/users/search` | Offset (max 1000/page) | Full refresh |
-| Fields | `/rest/api/3/field` | None (single response) | Full refresh; used for custom field metadata |
+| Fields | `/rest/api/3/field` | None (single response) | Full refresh stream `jira_fields` |
 
 **Rate Limit Handling**:
 
@@ -668,6 +676,8 @@ These mappings are expressed as DPath extractors and `AddFields` transformations
 **Worklog Collection**: Worklogs are fetched per-issue via `SubstreamPartitionRouter` (`/rest/api/3/issue/{key}/worklog`), following the same parent-child stream pattern as comments and changelog. This is an N+1 pattern (one API call per issue), consistent with all other substreams.
 
 **Data Duplication Note (`fields: "*all"`)**: The JQL search uses `fields: "*all"`, which returns all issue fields including inline comments and worklogs (first ~20 entries each). This creates partial duplication with the dedicated comment and worklog substreams. The substreams are authoritative (they paginate through all entries); the inline data in `custom_fields_json` is supplementary and should not be relied upon for completeness.
+
+**Field Metadata Collection**: `jira_fields` is a reference table (1 API call per sync, ~100 rows). It provides `schema.type` metadata needed by dbt Silver models to correctly parse multi-value custom fields and changelog deltas. Fields: `unique_key`, `tenant_id`, `source_id`, `field_id` (from `id`), `name`, `custom` (boolean), `schema_type` (from `schema.type`), `schema_items` (from `schema.items`), `schema_custom` (from `schema.custom`).
 
 **Concurrency Control**: Child stream requests (changelog, comments, worklogs) are limited by `ConcurrencyLevel` (default: 3) in the manifest. This is a static concurrency ceiling that prevents rate limit exhaustion during bulk update windows.
 

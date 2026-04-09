@@ -52,7 +52,7 @@ definitions:
       field_name: startAt
     pagination_strategy:
       type: OffsetIncrement
-      page_size: "{{ config.get('jira_page_size', 50) }}"
+      page_size: 50
 
   search_paginator:
     type: DefaultPaginator
@@ -81,7 +81,7 @@ definitions:
       field_name: startAt
     pagination_strategy:
       type: OffsetIncrement
-      page_size: "{{ config.get('jira_page_size', 50) }}"
+      page_size: 50
 
   child_paginator:
     type: DefaultPaginator
@@ -95,7 +95,21 @@ definitions:
       field_name: startAt
     pagination_strategy:
       type: OffsetIncrement
-      page_size: "{{ config.get('jira_page_size', 50) }}"
+      page_size: 100
+
+  user_paginator:
+    type: DefaultPaginator
+    page_size_option:
+      type: RequestOption
+      inject_into: request_parameter
+      field_name: maxResults
+    page_token_option:
+      type: RequestOption
+      inject_into: request_parameter
+      field_name: startAt
+    pagination_strategy:
+      type: OffsetIncrement
+      page_size: 200
 
   # --- Schemas ---
 
@@ -194,6 +208,21 @@ definitions:
       collected_at: {}
     additionalProperties: true
 
+  jira_fields_schema:
+    type: object
+    $schema: http://json-schema.org/schema#
+    properties:
+      unique_key: {}
+      tenant_id: {}
+      source_id: {}
+      field_id: {}
+      name: {}
+      custom: {}
+      schema_type: {}
+      schema_items: {}
+      schema_custom: {}
+    additionalProperties: true
+
   jira_sprints_schema:
     type: object
     $schema: http://json-schema.org/schema#
@@ -246,7 +275,47 @@ streams:
             type: [object, "null"]
         additionalProperties: true
 
-  # --- Stream 1: jira_projects (Full Refresh) ---
+  # --- Stream 1: jira_fields (Full Refresh, no pagination) ---
+  - type: DeclarativeStream
+    name: jira_fields
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator:
+        type: NoPagination
+      requester:
+        $ref: "#/definitions/base_requester"
+        path: /rest/api/3/field
+    transformations:
+      - $ref: "#/definitions/add_fields"
+      - type: AddFields
+        fields:
+          - path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+          - path: [field_id]
+            value: "{{ record['id'] }}"
+          - path: [name]
+            value: "{{ record.get('name') }}"
+          - path: [custom]
+            value: "{{ record.get('custom') }}"
+          - path: [schema_type]
+            value: "{{ record.get('schema', {}).get('type') }}"
+          - path: [schema_items]
+            value: "{{ record.get('schema', {}).get('items') }}"
+          - path: [schema_custom]
+            value: "{{ record.get('schema', {}).get('custom') }}"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $ref: "#/definitions/jira_fields_schema"
+
+  # --- Stream 2: jira_projects (Full Refresh) ---
   - type: DeclarativeStream
     name: jira_projects
     primary_key:
@@ -289,7 +358,7 @@ streams:
       schema:
         $ref: "#/definitions/jira_projects_schema"
 
-  # --- Stream 2: jira_user (Full Refresh) ---
+  # --- Stream 3: jira_user (Full Refresh) ---
   - type: DeclarativeStream
     name: jira_user
     primary_key:
@@ -302,7 +371,7 @@ streams:
           type: DpathExtractor
           field_path: []
       paginator:
-        $ref: "#/definitions/paginator"
+        $ref: "#/definitions/user_paginator"
       requester:
         $ref: "#/definitions/base_requester"
         path: /rest/api/3/users/search
@@ -327,7 +396,7 @@ streams:
       schema:
         $ref: "#/definitions/jira_user_schema"
 
-  # --- Stream 3: jira_issue (Incremental) ---
+  # --- Stream 4: jira_issue (Incremental) ---
   - type: DeclarativeStream
     name: jira_issue
     primary_key:
@@ -401,7 +470,7 @@ streams:
       schema:
         $ref: "#/definitions/jira_issue_schema"
 
-  # --- Stream 4: jira_issue_history (Substream of jira_issue) ---
+  # --- Stream 5: jira_issue_history (Substream of jira_issue) ---
   - type: DeclarativeStream
     name: jira_issue_history
     primary_key:
@@ -425,7 +494,7 @@ streams:
         parent_stream_configs:
           - type: ParentStreamConfig
             stream:
-              $ref: "#/streams/3"
+              $ref: "#/streams/4"
             parent_key: id_readable
             partition_field: id_readable
     transformations:
@@ -449,7 +518,7 @@ streams:
       schema:
         $ref: "#/definitions/jira_issue_history_schema"
 
-  # --- Stream 5: jira_comments (Substream of jira_issue) ---
+  # --- Stream 6: jira_comments (Substream of jira_issue) ---
   - type: DeclarativeStream
     name: jira_comments
     primary_key:
@@ -473,7 +542,7 @@ streams:
         parent_stream_configs:
           - type: ParentStreamConfig
             stream:
-              $ref: "#/streams/3"
+              $ref: "#/streams/4"
             parent_key: id_readable
             partition_field: id_readable
     transformations:
@@ -499,7 +568,7 @@ streams:
       schema:
         $ref: "#/definitions/jira_comments_schema"
 
-  # --- Stream 6: jira_worklogs (Substream of jira_issue) ---
+  # --- Stream 7: jira_worklogs (Substream of jira_issue) ---
   - type: DeclarativeStream
     name: jira_worklogs
     primary_key:
@@ -523,7 +592,7 @@ streams:
         parent_stream_configs:
           - type: ParentStreamConfig
             stream:
-              $ref: "#/streams/3"
+              $ref: "#/streams/4"
             parent_key: id_readable
             partition_field: id_readable
     transformations:
@@ -551,7 +620,7 @@ streams:
       schema:
         $ref: "#/definitions/jira_worklogs_schema"
 
-  # --- Stream 7: jira_sprints (Substream of _boards) ---
+  # --- Stream 8: jira_sprints (Substream of _boards) ---
   - type: DeclarativeStream
     name: jira_sprints
     primary_key:
