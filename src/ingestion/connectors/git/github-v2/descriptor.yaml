@@ -1,0 +1,9 @@
+name: github-v2
+version: "1.0"
+type: cdk
+schedule: "0 2 * * *"
+workflow: sync
+dbt_select: "tag:github+"
+
+connection:
+  namespace: "bronze_github"

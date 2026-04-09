@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "source-github-insight-v2"
+version = "0.1.0"
+description = "Airbyte source connector for GitHub (CDK-native, ConcurrentSource)"
+requires-python = ">=3.10"
+dependencies = [
+    "airbyte-cdk>=7.16.0",
+    "requests>=2.31.0",
+]
+
+[project.scripts]
+source-github-insight-v2 = "source_github_v2.source:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["source_github_v2*"]
