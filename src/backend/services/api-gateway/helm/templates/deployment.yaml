@@ -41,6 +41,19 @@ spec:
             - secretRef:
                 name: {{ include "insight-api-gateway.fullname" . }}-oidc
             {{- end }}
+          env:
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: clickhouse-credentials
+                  key: password
+                  optional: true
+            - name: CLICKHOUSE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: clickhouse-credentials
+                  key: username
+                  optional: true
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false

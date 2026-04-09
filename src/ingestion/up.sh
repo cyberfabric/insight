@@ -76,6 +76,10 @@ if ! has_secret clickhouse-credentials data; then
   kubectl create secret generic clickhouse-credentials -n argo \
     --from-literal=username=default \
     --from-literal=password="$CH_PASS"
+  # ClickHouse password also needed in insight namespace (for api-gateway)
+  kubectl create secret generic clickhouse-credentials -n insight \
+    --from-literal=username=default \
+    --from-literal=password="$CH_PASS" 2>/dev/null || true
 fi
 echo "  Deploying ClickHouse..."
 kubectl apply -f k8s/clickhouse/

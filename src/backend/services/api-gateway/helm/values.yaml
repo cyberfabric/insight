@@ -34,6 +34,11 @@ oidc:
   redirectUri: ""         # e.g., https://insight.example.com/callback
   # jwksUrl: ""           # Override if JWKS URL differs from {issuer}/v1/keys
 
+# ClickHouse connection
+clickhouse:
+  url: "http://clickhouse.data.svc.cluster.local:8123"
+  database: "gold"
+
 # Set to true to disable authentication (local development only)
 authDisabled: false
 

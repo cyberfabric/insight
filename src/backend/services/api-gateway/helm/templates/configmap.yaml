@@ -10,3 +10,5 @@ data:
   APP__modules__api-gateway__config__prefix_path: "{{ .Values.gateway.prefixPath }}"
   APP__modules__api-gateway__config__cors_enabled: "{{ .Values.gateway.corsEnabled }}"
   APP__modules__api-gateway__config__enable_docs: "{{ .Values.gateway.enableDocs }}"
+  CLICKHOUSE_URL: "{{ .Values.clickhouse.url }}"
+  CLICKHOUSE_DATABASE: "{{ .Values.clickhouse.database }}"
