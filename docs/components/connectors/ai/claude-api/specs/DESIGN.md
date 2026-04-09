@@ -613,6 +613,17 @@ The connector is deployed as a standard Airbyte source connector. The YAML manif
 | `descriptor.yaml` | Platform registry | Connector metadata |
 | `dbt/to_ai_api_usage.sql` | dbt project | Silver transformation |
 | `dbt/schema.yml` | dbt project | Source and model definitions |
+| `secrets/connectors/claude-api.yaml.example` | K8s Secret template | Credential + `insight_source_id` annotation |
+
+#### Migration: `tenant_id` → `insight_tenant_id` (PR #142)
+
+The config spec renamed `tenant_id` → `insight_tenant_id` and added `insight_source_id` as required. This is a breaking change for existing Airbyte sources. Deployment procedure:
+
+1. **K8s Secrets**: ensure each Secret has annotation `insight.cyberfabric.com/source-id` (see `secrets/connectors/claude-api.yaml.example`)
+2. **Register**: run `register.sh` (or `upload-manifests.sh`) to update the Airbyte source definition with the new manifest
+3. **Connect**: run `connect.sh` (or `apply-connections.sh`) to update existing source configs — this auto-injects `insight_tenant_id` and `insight_source_id` from tenant YAML and Secret annotation
+
+Steps must run before the next scheduled sync (`0 2 * * *`). Without step 3, existing sources will fail Airbyte validation.
 
 ---
 

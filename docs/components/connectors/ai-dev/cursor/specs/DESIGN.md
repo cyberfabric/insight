@@ -752,7 +752,7 @@ Package: src/ingestion/connectors/ai-dev/cursor/
 Connection A: cursor-{team_name}-hourly
 ├── Schedule: hourly (via Kestra cron)
 ├── Source image: airbyte/source-declarative-manifest
-├── Source config: {tenant_id, api_key}
+├── Source config: {insight_tenant_id, insight_source_id, api_key}
 ├── Streams: cursor_members, cursor_audit_logs, cursor_usage_events,
 │            cursor_daily_usage, cursor_collection_runs
 ├── Destination: ClickHouse (Bronze)
@@ -761,11 +761,21 @@ Connection A: cursor-{team_name}-hourly
 Connection B: cursor-{team_name}-daily-resync
 ├── Schedule: daily after 12:08 UTC (via Kestra cron)
 ├── Source image: airbyte/source-declarative-manifest
-├── Source config: {tenant_id, api_key}
+├── Source config: {insight_tenant_id, insight_source_id, api_key}
 ├── Streams: cursor_usage_events_daily_resync (only)
 ├── Destination: ClickHouse (Bronze)
 └── State: n/a (always fetches previous day)
 ```
+
+#### Migration: `tenant_id` → `insight_tenant_id` (PR #142)
+
+The config spec renamed `tenant_id` → `insight_tenant_id` and added `insight_source_id` as required. This is a breaking change for existing Airbyte sources. Deployment procedure:
+
+1. **K8s Secrets**: ensure each Secret has annotation `insight.cyberfabric.com/source-id` (see `secrets/connectors/cursor.yaml.example`)
+2. **Register**: run `register.sh` (or `upload-manifests.sh`) to update the Airbyte source definition with the new manifest
+3. **Connect**: run `connect.sh` (or `apply-connections.sh`) to update existing source configs — this auto-injects `insight_tenant_id` and `insight_source_id` from tenant YAML and Secret annotation
+
+Steps must run before the next scheduled sync (`0 2 * * *`). Without step 3, existing sources will fail Airbyte validation.
 
 ## 4. Additional context
 

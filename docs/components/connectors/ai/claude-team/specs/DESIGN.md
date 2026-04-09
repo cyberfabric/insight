@@ -753,13 +753,23 @@ Package: src/ingestion/connectors/ai/claude-team/
 Connection: claude-team-{org_name}-daily
 +-- Schedule: daily (via Kestra cron)
 +-- Source image: airbyte/source-declarative-manifest
-+-- Source config: {tenant_id, admin_api_key}
++-- Source config: {insight_tenant_id, insight_source_id, admin_api_key}
 +-- Streams: claude_team_users, claude_team_code_usage,
 |            claude_team_workspaces, claude_team_workspace_members,
 |            claude_team_invites, claude_team_collection_runs
 +-- Destination: ClickHouse (Bronze)
 +-- State: per-stream cursors (code_usage date cursor)
 ```
+
+#### Migration: `tenant_id` → `insight_tenant_id` (PR #142)
+
+The config spec renamed `tenant_id` → `insight_tenant_id` and added `insight_source_id` as required. This is a breaking change for existing Airbyte sources. Deployment procedure:
+
+1. **K8s Secrets**: ensure each Secret has annotation `insight.cyberfabric.com/source-id` (see `secrets/connectors/claude-team.yaml.example`)
+2. **Register**: run `register.sh` (or `upload-manifests.sh`) to update the Airbyte source definition with the new manifest
+3. **Connect**: run `connect.sh` (or `apply-connections.sh`) to update existing source configs — this auto-injects `insight_tenant_id` and `insight_source_id` from tenant YAML and Secret annotation
+
+Steps must run before the next scheduled sync (`0 2 * * *`). Without step 3, existing sources will fail Airbyte validation.
 
 ## 4. Additional context
 

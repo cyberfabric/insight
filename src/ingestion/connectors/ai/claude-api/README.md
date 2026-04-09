@@ -58,6 +58,18 @@ kubectl apply -f src/ingestion/secrets/connectors/claude-api.yaml
 | `claude_api_workspaces` | Organization workspaces | Full refresh |
 | `claude_api_invites` | Pending invitations | Full refresh |
 
+## Migration
+
+**From `tenant_id` to `insight_tenant_id` spec (PR #142):**
+
+The connector spec changed `tenant_id` → `insight_tenant_id` and added `insight_source_id` as required. After merging:
+
+1. Ensure K8s Secret exists with `insight.cyberfabric.com/source-id` annotation
+2. Run `register.sh` (or `upload-manifests.sh`) to update the Airbyte definition
+3. Run `connect.sh` (or `apply-connections.sh`) to update existing source configs — this auto-injects `insight_tenant_id` and `insight_source_id` from tenant YAML and Secret annotation
+
+Without step 3, existing Airbyte sources will fail validation on next sync.
+
 ## Silver Targets
 
 - `class_ai_api_usage` -- unified AI API usage metrics

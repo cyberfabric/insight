@@ -390,6 +390,8 @@ Repeated collection of the same date range **MUST NOT** create duplicate rows. T
 
 **Breaking Change Policy**: Configuration schema changes require a version bump.
 
+**Migration (PR #142)**: The config spec renamed `tenant_id` → `insight_tenant_id` and added `insight_source_id` as required. This is a breaking change for existing Airbyte sources. Deployment procedure: (1) ensure K8s Secrets have `insight.cyberfabric.com/source-id` annotation, (2) run `register.sh` to update the Airbyte definition, (3) run `connect.sh` to update existing source configs. Step 3 auto-injects `insight_tenant_id` and `insight_source_id` from tenant YAML and Secret annotation. Without step 3, existing sources will fail validation on next sync.
+
 ### 7.2 External Integration Contracts
 
 #### Anthropic Admin API Contract
