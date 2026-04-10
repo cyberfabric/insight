@@ -253,6 +253,59 @@ Single YAML file that defines all streams, authentication, pagination strategies
 - Implements `AddFields` transformations for framework fields and composite unique keys.
 - Declares inline JSON Schema for each stream.
 
+##### Manifest skeleton (structural overview)
+
+```yaml
+definitions:
+  api_key_authenticator:
+    type: ApiKeyAuthenticator
+    api_token: "{{ config['admin_api_key'] }}"
+    header: x-api-key
+
+  tenant_id_injection:
+    type: AddFields
+    fields:
+      - path: [tenant_id]
+        value: "{{ config['insight_tenant_id'] }}"
+      - path: [source_id]
+        value: "{{ config['insight_source_id'] }}"
+      - path: [collected_at]
+        value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+      - path: [data_source]
+        value: insight_claude_api
+
+streams:
+  - type: DeclarativeStream
+    name: claude_api_messages_usage
+    primary_key: [unique_key]
+    # ... schema, retriever, incremental_sync
+  # ... remaining streams follow same pattern
+
+spec:
+  type: Spec
+  connection_specification:
+    type: object
+    required: [insight_tenant_id, insight_source_id, admin_api_key]
+    properties:
+      insight_tenant_id:
+        type: string
+        title: Insight Tenant ID
+        minLength: 1
+        order: 0
+      insight_source_id:
+        type: string
+        title: Insight Source ID
+        minLength: 1
+        order: 1
+      admin_api_key:
+        type: string
+        title: Admin API Key
+        airbyte_secret: true
+        order: 2
+```
+
+This is a structural skeleton -- the full manifest is in `src/ingestion/connectors/ai/claude-api/connector.yaml`.
+
 ##### Responsibility boundaries
 
 - Does NOT implement Silver/Gold transformations (owned by dbt models).
@@ -318,8 +371,8 @@ SQL transformation that maps `claude_api_messages_usage` Bronze data to the `cla
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `insight_tenant_id` | string | Yes | Insight tenant isolation identifier (UUID) |
-| `insight_source_id` | string | Yes | Connector instance identifier |
+| `insight_tenant_id` | string (minLength: 1) | Yes | Insight tenant isolation identifier (UUID) |
+| `insight_source_id` | string (minLength: 1) | Yes | Connector instance identifier |
 | `admin_api_key` | string (secret) | Yes | Anthropic Admin API key |
 | `start_date` | string | No | Earliest date to collect (ISO 8601, default: 90 days ago) |
 

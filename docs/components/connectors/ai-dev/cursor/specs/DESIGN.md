@@ -167,8 +167,8 @@ The `POST /teams/daily-usage-data` endpoint returns rows for all team members fo
 |--------|-------------|
 | `TeamMember` | A user account in the Cursor team. Key: `email`. Contains name, role, removal status. |
 | `AuditEvent` | An administrative/security event. Key: `event_id`. Contains event type, user email, event data (JSON), IP address. |
-| `UsageEvent` | A single AI invocation. Key: `unique_key` (email + timestamp). Contains model, kind, cost, billing flags, and optional `tokenUsage` nested object. |
-| `DailyUsage` | One user's aggregated AI activity for one date. Key: `unique_key` (email + date). Contains request counts, tab metrics, code metrics, model/extension metadata. |
+| `UsageEvent` | A single AI invocation. Key: `unique_key` (`{tenant_id}-{source_id}-{userEmail}\|{timestamp}`). Contains model, kind, cost, billing flags, and optional `tokenUsage` nested object. |
+| `DailyUsage` | One user's aggregated AI activity for one date. Key: `unique_key` (`{tenant_id}-{source_id}-{email}\|{date}`). Contains request counts, tab metrics, code metrics, model/extension metadata. |
 
 **Relationships**:
 
@@ -361,10 +361,12 @@ spec:
       insight_tenant_id:
         type: string
         title: Insight Tenant ID
+        minLength: 1
         order: 0
       insight_source_id:
         type: string
         title: Insight Source ID
+        minLength: 1
         order: 1
       api_key:
         type: string
@@ -457,11 +459,13 @@ properties:
     type: string
     title: Insight Tenant ID
     description: Insight tenant isolation identifier
+    minLength: 1
     order: 0
   insight_source_id:
     type: string
     title: Insight Source ID
     description: Connector instance identifier
+    minLength: 1
     order: 1
   api_key:
     type: string
@@ -598,7 +602,7 @@ These columns are not defined in the manifest schema but are present in all Bron
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key — framework-injected |
-| `source_id` | String | Connector instance identifier — framework-injected, DEFAULT '' |
+| `source_id` | String | Connector instance identifier — framework-injected (from config `insight_source_id`, required) |
 | `id` | String | Cursor internal member ID |
 | `name` | String | Member display name |
 | `email` | String | Member email — primary identity key → `person_id` |
@@ -617,7 +621,7 @@ These columns are not defined in the manifest schema but are present in all Bron
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key — framework-injected |
-| `source_id` | String | Connector instance identifier — framework-injected, DEFAULT '' |
+| `source_id` | String | Connector instance identifier — framework-injected (from config `insight_source_id`, required) |
 | `event_id` | String | Unique audit event identifier — primary key |
 | `timestamp` | String | Event timestamp (ISO 8601) |
 | `user_email` | String | User email — identity key |
@@ -639,7 +643,7 @@ These columns are not defined in the manifest schema but are present in all Bron
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key — framework-injected |
-| `source_id` | String | Connector instance identifier — framework-injected, DEFAULT '' |
+| `source_id` | String | Connector instance identifier — framework-injected (from config `insight_source_id`, required) |
 | `unique_key` | String | Primary key — computed as `userEmail + timestamp` |
 | `userEmail` | String | User email — identity key |
 | `timestamp` | String | Event timestamp (ISO 8601 or epoch ms) |
@@ -678,7 +682,7 @@ Same schema as `cursor_usage_events` (same API endpoint, same fields, same prima
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key — framework-injected |
-| `source_id` | String | Connector instance identifier — framework-injected, DEFAULT '' |
+| `source_id` | String | Connector instance identifier — framework-injected (from config `insight_source_id`, required) |
 | `unique_key` | String | Primary key — computed as `email + date` |
 | `userId` | String | Cursor platform user ID |
 | `email` | String | User email — identity key |
@@ -722,7 +726,7 @@ Same schema as `cursor_usage_events` (same API endpoint, same fields, same prima
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key — framework-injected |
-| `source_id` | String | Connector instance identifier — framework-injected, DEFAULT '' |
+| `source_id` | String | Connector instance identifier — framework-injected (from config `insight_source_id`, required) |
 | `run_id` | String | Unique run identifier |
 | `started_at` | DateTime | Run start time |
 | `completed_at` | DateTime | Run end time |

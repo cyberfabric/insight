@@ -519,11 +519,13 @@ spec:
         type: string
         title: Insight Tenant ID
         description: Insight tenant isolation identifier (UUID)
+        minLength: 1
         order: 0
       insight_source_id:
         type: string
         title: Insight Source ID
         description: Connector instance identifier for multi-instance deployments
+        minLength: 1
         order: 1
       admin_api_key:
         type: string

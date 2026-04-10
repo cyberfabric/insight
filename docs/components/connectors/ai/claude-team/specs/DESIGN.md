@@ -376,15 +376,21 @@ spec:
     type: object
     required: [insight_tenant_id, insight_source_id, admin_api_key]
     properties:
-      tenant_id:
+      insight_tenant_id:
         type: string
-        title: Tenant ID
+        title: Insight Tenant ID
+        minLength: 1
         order: 0
+      insight_source_id:
+        type: string
+        title: Insight Source ID
+        minLength: 1
+        order: 1
       admin_api_key:
         type: string
         title: Admin API Key
         airbyte_secret: true
-        order: 1
+        order: 2
 ```
 
 This is a structural skeleton -- the full manifest is in `src/ingestion/connectors/ai/claude-team/connector.yaml`.
@@ -475,11 +481,13 @@ properties:
     type: string
     title: Insight Tenant ID
     description: Insight tenant isolation identifier
+    minLength: 1
     order: 0
   insight_source_id:
     type: string
     title: Insight Source ID
     description: Connector instance identifier
+    minLength: 1
     order: 1
   admin_api_key:
     type: string
