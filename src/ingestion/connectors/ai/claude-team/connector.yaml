@@ -21,9 +21,9 @@ definitions:
     type: AddFields
     fields:
       - path: [tenant_id]
-        value: "{{ config['tenant_id'] }}"
-      - path: [insight_source_id]
-        value: "{{ config.get('insight_source_id', '') }}"
+        value: "{{ config['insight_tenant_id'] }}"
+      - path: [source_id]
+        value: "{{ config['insight_source_id'] }}"
       - path: [collected_at]
         value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
       - path: [data_source]
@@ -63,7 +63,7 @@ definitions:
     page_token_option:
       type: RequestOption
       inject_into: request_parameter
-      field_name: page
+      field_name: next_page
 
 streams:
   # ── Stream 1: claude_team_users (full refresh, cursor pagination) ──
@@ -76,10 +76,11 @@ streams:
       schema:
         $schema: http://json-schema.org/schema#
         type: object
+        additionalProperties: true
         properties:
           tenant_id:
             type: string
-          insight_source_id:
+          source_id:
             type: string
           id:
             type: string
@@ -139,18 +140,19 @@ streams:
   - type: DeclarativeStream
     name: claude_team_code_usage
     primary_key:
-      - unique
+      - unique_key
     schema_loader:
       type: InlineSchemaLoader
       schema:
         $schema: http://json-schema.org/schema#
         type: object
+        additionalProperties: true
         properties:
           tenant_id:
             type: string
-          insight_source_id:
+          source_id:
             type: string
-          unique:
+          unique_key:
             type: string
           date:
             type: string
@@ -251,8 +253,8 @@ streams:
             value: "{{ record.get('tool_actions', {}) | tojson }}"
           - path: [model_breakdown_json]
             value: "{{ record.get('model_breakdown', []) | tojson }}"
-          - path: [unique]
-            value: "{{ record.get('date', '')[:10] }}|{{ record.get('actor', {}).get('type') or '' }}|{{ record.get('actor', {}).get('api_key_name') or record.get('actor', {}).get('email') or '' }}|{{ record.get('terminal_type') or '' }}"
+          - path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record.get('date', '')[:10] }}|{{ record.get('actor', {}).get('type') or '' }}|{{ record.get('actor', {}).get('api_key_name') or record.get('actor', {}).get('email') or '' }}|{{ record.get('terminal_type') or '' }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: date
@@ -281,10 +283,11 @@ streams:
       schema:
         $schema: http://json-schema.org/schema#
         type: object
+        additionalProperties: true
         properties:
           tenant_id:
             type: string
-          insight_source_id:
+          source_id:
             type: string
           id:
             type: string
@@ -340,18 +343,19 @@ streams:
   - type: DeclarativeStream
     name: claude_team_workspace_members
     primary_key:
-      - unique
+      - unique_key
     schema_loader:
       type: InlineSchemaLoader
       schema:
         $schema: http://json-schema.org/schema#
         type: object
+        additionalProperties: true
         properties:
           tenant_id:
             type: string
-          insight_source_id:
+          source_id:
             type: string
-          unique:
+          unique_key:
             type: string
           type:
             type:
@@ -432,8 +436,8 @@ streams:
         fields:
           - path: [workspace_id]
             value: "{{ stream_partition['workspace_id'] }}"
-          - path: [unique]
-            value: "{{ record.get('user_id', '') }}:{{ stream_partition['workspace_id'] }}"
+          - path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record.get('user_id', '') }}:{{ stream_partition['workspace_id'] }}"
 
   # ── Stream 5: claude_team_invites (full refresh) ──
   - type: DeclarativeStream
@@ -445,10 +449,11 @@ streams:
       schema:
         $schema: http://json-schema.org/schema#
         type: object
+        additionalProperties: true
         properties:
           tenant_id:
             type: string
-          insight_source_id:
+          source_id:
             type: string
           id:
             type: string
@@ -502,25 +507,27 @@ spec:
     $schema: http://json-schema.org/draft-07/schema#
     type: object
     required:
-      - tenant_id
+      - insight_tenant_id
+      - insight_source_id
       - admin_api_key
     properties:
-      tenant_id:
+      insight_tenant_id:
         type: string
-        title: Tenant ID
-        description: Tenant isolation identifier (UUID)
+        title: Insight Tenant ID
+        description: Insight tenant isolation identifier (UUID)
+        minLength: 1
         order: 0
+      insight_source_id:
+        type: string
+        title: Insight Source ID
+        description: Connector instance identifier for multi-instance deployments
+        minLength: 1
+        order: 1
       admin_api_key:
         type: string
         title: Admin API Key
         description: Anthropic Admin API key for Team/Enterprise workspace
         airbyte_secret: true
-        order: 1
-      insight_source_id:
-        type: string
-        title: Source Instance ID
-        description: Optional connector instance identifier for multi-instance deployments
-        default: ""
         order: 2
       start_date:
         type: string

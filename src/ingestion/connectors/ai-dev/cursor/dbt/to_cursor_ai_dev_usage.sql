@@ -7,7 +7,9 @@
 WITH resync AS (
     -- Authoritative data for completed days (yesterday and earlier)
     SELECT
-        tenant_id,
+        tenant_id AS insight_tenant_id,
+        source_id AS insight_source_id,
+        'cursor' AS insight_source_type,
         userEmail                   AS user_email,
         timestamp                   AS event_timestamp,
         kind                        AS event_kind,
@@ -30,7 +32,9 @@ WITH resync AS (
 realtime AS (
     -- Near-real-time data for today only
     SELECT
-        tenant_id,
+        tenant_id AS insight_tenant_id,
+        source_id AS insight_source_id,
+        'cursor' AS insight_source_type,
         userEmail                   AS user_email,
         timestamp                   AS event_timestamp,
         kind                        AS event_kind,

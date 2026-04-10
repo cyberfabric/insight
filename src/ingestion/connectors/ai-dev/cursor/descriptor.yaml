@@ -1,5 +1,6 @@
 name: cursor
 version: '1.0'
+type: nocode
 schedule: 0 2 * * *
 dbt_select: tag:cursor+
 workflow: sync

@@ -18,8 +18,16 @@ models:
       Deduplication: yesterday and earlier from daily_resync (finalized costs),
       today from hourly stream (near-real-time).
     columns:
-      - name: tenant_id
-        description: "Tenant isolation field — framework-injected"
+      - name: insight_tenant_id
+        description: "Insight tenant isolation identifier (mapped from Bronze tenant_id)"
+        tests:
+          - not_null
+      - name: insight_source_id
+        description: "Connector instance identifier (mapped from Bronze source_id)"
+        tests:
+          - not_null
+      - name: insight_source_type
+        description: "Source system type (always 'cursor')"
         tests:
           - not_null
       - name: user_email

@@ -1211,7 +1211,7 @@ Phase 1 seed models derive `insight_tenant_id` (UUID) from the Bronze string `te
 - `seed_persons_from_cursor.sql`, `seed_persons_from_claude_team.sql` — compute the hash
 - `seed_aliases_from_cursor.sql`, `seed_aliases_from_claude_team.sql` — use it in tenant-scoped JOINs
 - `seed_bootstrap_inputs_from_cursor.sql`, `seed_bootstrap_inputs_from_claude_team.sql` — compute the hash
-- `scripts/adhoc/seed_from_cursor_manual.sql`, `scripts/adhoc/seed_from_claude_team_manual.sql` — ad-hoc Play UI testing SQL (point-in-time snapshots, not kept in sync with dbt models)
+- `src/ingestion/scripts/adhoc/seed_from_cursor_manual.sql`, `src/ingestion/scripts/adhoc/seed_from_claude_team_manual.sql` — ad-hoc Play UI testing SQL (point-in-time snapshots, not kept in sync with dbt models)
 
 ## 6. Traceability
 

@@ -4,8 +4,9 @@
 
 WITH usage AS (
     SELECT
-        tenant_id,
-        insight_source_id,
+        tenant_id AS insight_tenant_id,
+        source_id AS insight_source_id,
+        'claude-api' AS insight_source_type,
         date                                        AS report_date,
         model,
         api_key_id,
@@ -48,10 +49,12 @@ workspaces AS (
 )
 
 SELECT
-    u.tenant_id,
+    u.insight_tenant_id,
     u.insight_source_id,
+    u.insight_source_type,
     -- composite unique id for incremental
-    concat(u.report_date, '|', u.model, '|', u.api_key_id, '|',
+    concat(u.insight_tenant_id, '-', u.insight_source_id, '-',
+           u.report_date, '|', u.model, '|', u.api_key_id, '|',
            u.workspace_id, '|', u.service_tier, '|',
            u.context_window)                        AS unique_id,
     u.report_date,
@@ -78,5 +81,5 @@ SELECT
     u.data_source,
     u.collected_at
 FROM usage u
-LEFT JOIN keys k ON u.tenant_id = k.tenant_id AND u.api_key_id = k.id
-LEFT JOIN workspaces w ON u.tenant_id = w.tenant_id AND u.workspace_id = w.id
+LEFT JOIN keys k ON u.insight_tenant_id = k.tenant_id AND u.api_key_id = k.id
+LEFT JOIN workspaces w ON u.insight_tenant_id = w.tenant_id AND u.workspace_id = w.id
