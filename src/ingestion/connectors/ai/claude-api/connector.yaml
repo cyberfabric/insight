@@ -23,7 +23,7 @@ definitions:
       - path: [tenant_id]
         value: "{{ config['insight_tenant_id'] }}"
       - path: [source_id]
-        value: "{{ config.get('insight_source_id', '') }}"
+        value: "{{ config['insight_source_id'] }}"
       - path: [collected_at]
         value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
       - path: [data_source]
@@ -157,7 +157,7 @@ streams:
           - path: [web_search_requests]
             value: "{{ record.get('server_tool_use', {}).get('web_search_requests', 0) }}"
           - path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config.get('insight_source_id', '') }}-{{ stream_interval['start_time'][:10] }}|{{ record.get('model') or '' }}|{{ record.get('api_key_id') or '' }}|{{ record.get('workspace_id') or '' }}|{{ record.get('service_tier') or '' }}|{{ record.get('context_window') or '' }}"
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_interval['start_time'][:10] }}|{{ record.get('model') or '' }}|{{ record.get('api_key_id') or '' }}|{{ record.get('workspace_id') or '' }}|{{ record.get('service_tier') or '' }}|{{ record.get('context_window') or '' }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: date
@@ -274,7 +274,7 @@ streams:
           - path: [date]
             value: "{{ stream_interval['start_time'][:10] }}"
           - path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config.get('insight_source_id', '') }}-{{ stream_interval['start_time'][:10] }}|{{ record.get('workspace_id') or '' }}|{{ record.get('description') or '' }}"
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_interval['start_time'][:10] }}|{{ record.get('workspace_id') or '' }}|{{ record.get('description') or '' }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: date

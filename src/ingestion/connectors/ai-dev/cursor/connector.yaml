@@ -17,7 +17,7 @@ definitions:
       - path: [tenant_id]
         value: "{{ config['insight_tenant_id'] }}"
       - path: [source_id]
-        value: "{{ config.get('insight_source_id', '') }}"
+        value: "{{ config['insight_source_id'] }}"
 
   post_paginator:
     type: DefaultPaginator
@@ -102,7 +102,7 @@ streams:
       - type: AddFields
         fields:
           - path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config.get('insight_source_id', '') }}-{{ record['email'] }}"
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['email'] }}"
 
   # ── Stream 2: cursor_audit_logs (incremental, GET) ──
   - type: DeclarativeStream
@@ -256,7 +256,7 @@ streams:
         fields:
           - path:
               - unique_key
-            value: "{{ config['insight_tenant_id'] }}-{{ config.get('insight_source_id', '') }}-{{ record['userEmail'] }}|{{ record['timestamp'] }}"
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['userEmail'] }}|{{ record['timestamp'] }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: timestamp
@@ -347,7 +347,7 @@ streams:
         fields:
           - path:
               - unique_key
-            value: "{{ config['insight_tenant_id'] }}-{{ config.get('insight_source_id', '') }}-{{ record['userEmail'] }}|{{ record['timestamp'] }}"
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['userEmail'] }}|{{ record['timestamp'] }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: timestamp
@@ -466,7 +466,7 @@ streams:
         fields:
           - path:
               - unique_key
-            value: "{{ config['insight_tenant_id'] }}-{{ config.get('insight_source_id', '') }}-{{ record['email'] }}|{{ record['date'] }}"
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['email'] }}|{{ record['date'] }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: date

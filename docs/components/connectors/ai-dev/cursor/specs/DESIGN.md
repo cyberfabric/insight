@@ -246,12 +246,12 @@ streams:
 
   - name: cursor_usage_events
     bronze_table: cursor_usage_events
-    primary_key: [unique]
+    primary_key: [unique_key]
     cursor_field: timestamp
 
   - name: cursor_daily_usage
     bronze_table: cursor_daily_usage
-    primary_key: [unique]
+    primary_key: [unique_key]
     cursor_field: date
 
   - name: cursor_collection_runs
@@ -299,7 +299,7 @@ check:
 streams:
   - type: DeclarativeStream
     name: cursor_usage_events
-    primary_key: [unique]
+    primary_key: [unique_key]
     schema_loader:
       type: InlineSchemaLoader
       schema:
@@ -343,7 +343,7 @@ streams:
           - path: [tenant_id]
             value: "{{ config['insight_tenant_id'] }}"
           - path: [source_id]
-            value: "{{ config.get('insight_source_id', '') }}"
+            value: "{{ config['insight_source_id'] }}"
           - path: [unique]
             value: "{{ record['userEmail'] }}{{ record['timestamp'] }}"
     incremental_sync:
@@ -476,7 +476,7 @@ transformations:
       - path: [tenant_id]
         value: "{{ config['insight_tenant_id'] }}"
       - path: [source_id]
-        value: "{{ config.get('insight_source_id', '') }}"
+        value: "{{ config['insight_source_id'] }}"
 ```
 
 This transformation is applied to **every stream** in the manifest, ensuring `tenant_id`, `source_id`, `collected_at`, and `data_source` are present in every record before it reaches the destination.

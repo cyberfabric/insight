@@ -250,7 +250,7 @@ streams:
 
   - name: claude_team_code_usage
     bronze_table: claude_team_code_usage
-    primary_key: [unique]
+    primary_key: [unique_key]
     cursor_field: date
 
   - name: claude_team_workspaces
@@ -260,7 +260,7 @@ streams:
 
   - name: claude_team_workspace_members
     bronze_table: claude_team_workspace_members
-    primary_key: [unique]
+    primary_key: [unique_key]
     cursor_field: null
 
   - name: claude_team_invites
@@ -361,9 +361,9 @@ streams:
       - type: AddFields
         fields:
           - path: [tenant_id]
-            value: "{{ config['tenant_id'] }}"
+            value: "{{ config['insight_tenant_id'] }}"
           - path: [source_id]
-            value: "{{ config.get('insight_source_id', '') }}"
+            value: "{{ config['insight_source_id'] }}"
           - path: [collected_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
           - path: [data_source]
@@ -494,7 +494,7 @@ transformations:
       - path: [tenant_id]
         value: "{{ config['insight_tenant_id'] }}"
       - path: [source_id]
-        value: "{{ config.get('insight_source_id', '') }}"
+        value: "{{ config['insight_source_id'] }}"
       - path: [collected_at]
         value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
       - path: [data_source]
@@ -611,7 +611,7 @@ These columns are not defined in the manifest schema but are present in all Bron
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key -- framework-injected |
-| `source_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
+| `source_id` | String | Connector instance identifier -- framework-injected (from config `insight_source_id`, required) |
 | `id` | String | Anthropic platform user ID -- primary key |
 | `type` | String (nullable) | Record type (e.g., `user`) |
 | `email` | String | User email -- primary identity key -> `person_id` |
@@ -632,7 +632,7 @@ One row per user. Current-state only -- no versioning.
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key -- framework-injected |
-| `source_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
+| `source_id` | String | Connector instance identifier -- framework-injected (from config `insight_source_id`, required) |
 | `unique_key` | String | Primary key -- computed composite of date + actor fields + terminal_type |
 | `date` | String | Activity date (`YYYY-MM-DD`) -- cursor for incremental sync |
 | `actor_type` | String (nullable) | Actor type: `api_actor` or `user` -- flattened from `actor.type` |
@@ -665,7 +665,7 @@ One row per `(date, actor_type, actor_identifier, terminal_type)`. Incremental s
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key -- framework-injected |
-| `source_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
+| `source_id` | String | Connector instance identifier -- framework-injected (from config `insight_source_id`, required) |
 | `id` | String | Workspace ID -- primary key |
 | `name` | String | Workspace slug name |
 | `display_name` | String | Human-readable workspace name |
@@ -684,7 +684,7 @@ Full refresh -- one row per workspace.
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key -- framework-injected |
-| `source_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
+| `source_id` | String | Connector instance identifier -- framework-injected (from config `insight_source_id`, required) |
 | `unique_key` | String | Primary key -- computed as `{user_id}:{workspace_id}` |
 | `type` | String (nullable) | Record type (e.g., `workspace_member`) |
 | `user_id` | String | Anthropic user ID |
@@ -702,7 +702,7 @@ Full refresh -- one row per user-workspace pair.
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key -- framework-injected |
-| `source_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
+| `source_id` | String | Connector instance identifier -- framework-injected (from config `insight_source_id`, required) |
 | `id` | String | Invite ID -- primary key |
 | `email` | String | Invited user's email |
 | `role` | String | Invited role |
@@ -722,7 +722,7 @@ Full refresh -- one row per invite.
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key -- framework-injected |
-| `source_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
+| `source_id` | String | Connector instance identifier -- framework-injected (from config `insight_source_id`, required) |
 | `run_id` | String | Unique run identifier -- primary key |
 | `started_at` | DateTime | Run start time |
 | `completed_at` | DateTime | Run end time |
@@ -797,9 +797,9 @@ The Identity Manager resolves `email`/`actor_identifier` -> canonical `person_id
 
 | Unified field | Claude Team source | Notes |
 |---------------|-------------------|-------|
-| `tenant_id` | `insight_tenant_id` | Rename (Bronze → Silver convention per glossary §3) |
-| `source_id` | `insight_source_id` | Rename (Bronze → Silver convention per glossary §3) |
-| -- | `insight_source_type` | Constant `'claude-team'` |
+| `insight_tenant_id` | `tenant_id` | Rename (Bronze → Silver convention per glossary §3) |
+| `insight_source_id` | `source_id` | Rename (Bronze → Silver convention per glossary §3) |
+| `insight_source_type` | -- | Constant `'claude-team'` |
 | `data_source` | `data_source` | Always `insight_claude_team` |
 | `unique_id` | -- | Computed: `concat(date, '\|', actor_identifier, '\|', terminal_type)`. Note: `actor_type` is omitted because the model filters to `actor_type = 'user'` (always constant); Bronze key includes it but Silver does not. |
 | `report_date` | `date` | Rename from `date` |

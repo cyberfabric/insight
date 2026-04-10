@@ -23,7 +23,7 @@ definitions:
       - path: [tenant_id]
         value: "{{ config['insight_tenant_id'] }}"
       - path: [source_id]
-        value: "{{ config.get('insight_source_id', '') }}"
+        value: "{{ config['insight_source_id'] }}"
       - path: [collected_at]
         value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
       - path: [data_source]
@@ -254,7 +254,7 @@ streams:
           - path: [model_breakdown_json]
             value: "{{ record.get('model_breakdown', []) | tojson }}"
           - path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config.get('insight_source_id', '') }}-{{ record.get('date', '')[:10] }}|{{ record.get('actor', {}).get('type') or '' }}|{{ record.get('actor', {}).get('api_key_name') or record.get('actor', {}).get('email') or '' }}|{{ record.get('terminal_type') or '' }}"
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record.get('date', '')[:10] }}|{{ record.get('actor', {}).get('type') or '' }}|{{ record.get('actor', {}).get('api_key_name') or record.get('actor', {}).get('email') or '' }}|{{ record.get('terminal_type') or '' }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: date
@@ -437,7 +437,7 @@ streams:
           - path: [workspace_id]
             value: "{{ stream_partition['workspace_id'] }}"
           - path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config.get('insight_source_id', '') }}-{{ record.get('user_id', '') }}:{{ stream_partition['workspace_id'] }}"
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record.get('user_id', '') }}:{{ stream_partition['workspace_id'] }}"
 
   # ── Stream 5: claude_team_invites (full refresh) ──
   - type: DeclarativeStream
