@@ -143,8 +143,8 @@ class PRCommitsStream(BitbucketCloudRestStream):
             raise
         except Exception as exc:
             pk = s.get("partition_key", "?")
-            logger.error(f"Failed pr_commits slice {pk}: {exc}")
-            raise
+            self._partitions_with_errors.add(pk)
+            logger.error(f"Failed pr_commits slice {pk}, cursor frozen: {exc}")
 
     def get_updated_state(
         self,

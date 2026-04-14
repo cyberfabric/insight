@@ -1,8 +1,5 @@
 """Base stream class for Bitbucket Cloud REST API v2.0.
 
-Designed for ConcurrentSource compatibility:
-- No shared mutable state between stream instances
-- Proper stream_slices / next_page_token contracts
 - Rate-limit back-off handled via CDK retry (no external RateLimiter)
 - Proactive slowdown when Bitbucket signals X-RateLimit-NearLimit
 """

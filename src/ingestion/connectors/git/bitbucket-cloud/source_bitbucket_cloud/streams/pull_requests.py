@@ -1,13 +1,10 @@
 """Bitbucket Cloud pull requests stream (REST, incremental, child of repos)."""
 
-import atexit
-import json
 import logging
-import os
-import tempfile
 from typing import Any, Iterable, Mapping, MutableMapping, Optional
 
 from source_bitbucket_cloud.streams.base import (
+    BitbucketAuthError,
     BitbucketCloudRestStream,
     _make_unique_key,
 )
@@ -38,12 +35,6 @@ class PullRequestsStream(BitbucketCloudRestStream):
         self._partitions_with_errors: set = set()
         self._child_slice_cache: dict[tuple, dict] = {}
         self._current_cursor_value: Optional[str] = None
-        # Disk-backed child slice data — near-zero memory.
-        self._child_data_file = tempfile.NamedTemporaryFile(
-            mode="w", prefix="insight_bb_pr_children_", suffix=".jsonl", delete=False,
-        )
-        self._child_data_path = self._child_data_file.name
-        atexit.register(lambda p=self._child_data_path: os.unlink(p) if os.path.exists(p) else None)
 
     def _path(self, stream_slice: Optional[Mapping[str, Any]] = None, **kwargs) -> str:
         s = stream_slice or {}
@@ -71,10 +62,17 @@ class PullRequestsStream(BitbucketCloudRestStream):
         if stream_slice is None:
             for repo_slice in self.stream_slices(stream_state=stream_state):
                 self._current_cursor_value = None  # reset between slices
-                yield from super().read_records(
-                    sync_mode=sync_mode, stream_slice=repo_slice,
-                    stream_state=stream_state, **kwargs,
-                )
+                try:
+                    yield from super().read_records(
+                        sync_mode=sync_mode, stream_slice=repo_slice,
+                        stream_state=stream_state, **kwargs,
+                    )
+                except BitbucketAuthError:
+                    raise
+                except Exception as exc:
+                    pk = repo_slice.get("partition_key", "?")
+                    self._partitions_with_errors.add(pk)
+                    logger.error(f"Failed pull_requests slice {pk}, cursor frozen: {exc}")
         else:
             yield from super().read_records(
                 sync_mode=sync_mode, stream_slice=stream_slice,

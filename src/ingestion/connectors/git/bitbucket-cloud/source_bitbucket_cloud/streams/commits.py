@@ -16,6 +16,7 @@ import tempfile
 from typing import Any, Iterable, Mapping, MutableMapping, Optional
 
 from source_bitbucket_cloud.streams.base import (
+    BitbucketAuthError,
     BitbucketCloudRestStream,
     _make_unique_key,
     _now_iso,
@@ -51,7 +52,7 @@ class CommitsStream(BitbucketCloudRestStream):
         self._partitions_with_errors: set = set()
         self._current_skipped_siblings: list = []
         self._current_stop_at_sha: Optional[str] = None
-        self._last_partition_key: Optional[str] = None
+
         self._stop_pagination: bool = False
         self._seen_hashes: dict[str, str] = {}  # sha → "workspace/slug"
         self._deferred_state_updates: dict[str, dict] = {}  # partition_key → state entry
@@ -82,10 +83,21 @@ class CommitsStream(BitbucketCloudRestStream):
     def read_records(self, sync_mode=None, stream_slice=None, stream_state=None, **kwargs):
         if stream_slice is None:
             for branch_slice in self.stream_slices(stream_state=stream_state):
-                yield from super().read_records(
-                    sync_mode=sync_mode, stream_slice=branch_slice,
-                    stream_state=stream_state, **kwargs,
-                )
+                try:
+                    yield from super().read_records(
+                        sync_mode=sync_mode, stream_slice=branch_slice,
+                        stream_state=stream_state, **kwargs,
+                    )
+                except BitbucketAuthError:
+                    raise
+                except Exception as exc:
+                    pk = (
+                        f"{branch_slice.get('workspace', '')}/"
+                        f"{branch_slice.get('slug', '')}/"
+                        f"{branch_slice.get('branch', '')}"
+                    )
+                    self._partitions_with_errors.add(pk)
+                    logger.error(f"Failed commits slice {pk}, cursor frozen: {exc}")
         else:
             yield from super().read_records(
                 sync_mode=sync_mode, stream_slice=stream_slice,
@@ -284,9 +296,6 @@ class CommitsStream(BitbucketCloudRestStream):
         default_branch = s.get("default_branch", "")
 
         partition_key = f"{s.get('workspace', '')}/{s.get('slug', '')}/{s.get('branch', '')}"
-        if partition_key != self._last_partition_key:
-            self._partitions_with_errors.discard(self._last_partition_key)
-            self._last_partition_key = partition_key
 
         if response.status_code == 404:
             logger.warning(f"Skipping commits for {partition_key} (404)")

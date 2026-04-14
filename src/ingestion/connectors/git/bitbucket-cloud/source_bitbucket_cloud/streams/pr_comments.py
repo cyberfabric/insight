@@ -57,7 +57,7 @@ class PRCommentsStream(BitbucketCloudRestStream):
             if not (workspace and slug and pr_id):
                 continue
             total += 1
-            if comment_count == 0:
+            if not comment_count:
                 skipped_no_comments += 1
                 continue
             partition_key = f"{workspace}/{slug}/{pr_id}"
@@ -147,8 +147,8 @@ class PRCommentsStream(BitbucketCloudRestStream):
             raise
         except Exception as exc:
             pk = s.get("partition_key", "?")
-            logger.error(f"Failed pr_comments slice {pk}: {exc}")
-            raise
+            self._partitions_with_errors.add(pk)
+            logger.error(f"Failed pr_comments slice {pk}, cursor frozen: {exc}")
 
     def get_updated_state(
         self,

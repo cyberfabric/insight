@@ -7,6 +7,7 @@ CDK handles pagination (next URL), retry, and backoff for each slice.
 """
 
 import logging
+import os
 from typing import Any, Iterable, Mapping, MutableMapping, Optional
 
 from source_bitbucket_cloud.streams.base import (
@@ -48,6 +49,10 @@ class FileChangesStream(BitbucketCloudRestStream):
         meta_path = self._parent.get_commit_meta_path()
         total = 0
         skipped_merge = 0
+
+        if not os.path.exists(meta_path):
+            logger.warning(f"Commit metadata file not found: {meta_path}, skipping file_changes")
+            return
 
         with open(meta_path, "r") as f:
             for line in f:

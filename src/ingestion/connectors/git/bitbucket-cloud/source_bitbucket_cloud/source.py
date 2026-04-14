@@ -1,9 +1,4 @@
-"""Bitbucket Cloud Airbyte source connector (CDK-native, ConcurrentSource-ready).
-
-For now this is a standard AbstractSource that returns HttpStream
-instances. ConcurrentSource + StreamFacade wrapping will be added
-once all streams work correctly in sequential mode.
-"""
+"""Bitbucket Cloud Airbyte source connector (CDK-native)."""
 
 import json
 import logging
