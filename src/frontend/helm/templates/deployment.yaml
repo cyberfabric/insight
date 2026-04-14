@@ -18,6 +18,17 @@ spec:
         - name: frontend
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if or .Values.oidc.issuer .Values.oidc.clientId }}
+          env:
+            {{- if .Values.oidc.issuer }}
+            - name: OIDC_ISSUER
+              value: {{ .Values.oidc.issuer | quote }}
+            {{- end }}
+            {{- if .Values.oidc.clientId }}
+            - name: OIDC_CLIENT_ID
+              value: {{ .Values.oidc.clientId | quote }}
+            {{- end }}
+          {{- end }}
           ports:
             - name: http
               containerPort: 80

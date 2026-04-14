@@ -15,6 +15,10 @@ ingress:
   annotations: {}
   host: ""
 
+oidc:
+  issuer: ""
+  clientId: ""
+
 resources:
   requests:
     cpu: 50m
