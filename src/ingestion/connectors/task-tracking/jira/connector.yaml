@@ -66,6 +66,7 @@ definitions:
       field_name: nextPageToken
     pagination_strategy:
       type: CursorPagination
+      page_size: 50
       cursor_value: "{{ response.get('nextPageToken', '') }}"
       stop_condition: "{{ not response.get('nextPageToken') }}"
 
@@ -117,127 +118,127 @@ definitions:
     type: object
     $schema: http://json-schema.org/schema#
     properties:
-      unique_key: {}
-      tenant_id: {}
-      source_id: {}
-      project_id: {}
-      project_key: {}
-      name: {}
-      lead_account_id: {}
-      project_type: {}
-      style: {}
-      archived: {}
-      collected_at: {}
+      unique_key: {type: ["string", "null"]}
+      tenant_id: {type: ["string", "null"]}
+      source_id: {type: ["string", "null"]}
+      project_id: {type: ["string", "null"]}
+      project_key: {type: ["string", "null"]}
+      name: {type: ["string", "null"]}
+      lead_account_id: {type: ["string", "null"]}
+      project_type: {type: ["string", "null"]}
+      style: {type: ["string", "null"]}
+      archived: {type: ["boolean", "null"]}
+      collected_at: {type: ["string", "null"]}
     additionalProperties: true
 
   jira_user_schema:
     type: object
     $schema: http://json-schema.org/schema#
     properties:
-      unique_key: {}
-      tenant_id: {}
-      source_id: {}
-      account_id: {}
-      email: {}
-      display_name: {}
-      account_type: {}
-      active: {}
+      unique_key: {type: ["string", "null"]}
+      tenant_id: {type: ["string", "null"]}
+      source_id: {type: ["string", "null"]}
+      account_id: {type: ["string", "null"]}
+      email: {type: ["string", "null"]}
+      display_name: {type: ["string", "null"]}
+      account_type: {type: ["string", "null"]}
+      active: {type: ["boolean", "null"]}
     additionalProperties: true
 
   jira_issue_schema:
     type: object
     $schema: http://json-schema.org/schema#
     properties:
-      unique_key: {}
-      tenant_id: {}
-      source_id: {}
-      jira_id: {}
-      id_readable: {}
-      project_key: {}
-      issue_type: {}
-      reporter_id: {}
-      due_date: {}
-      parent_id: {}
-      created: {}
-      updated: {}
-      custom_fields_json: {}
+      unique_key: {type: ["string", "null"]}
+      tenant_id: {type: ["string", "null"]}
+      source_id: {type: ["string", "null"]}
+      jira_id: {type: ["string", "null"]}
+      id_readable: {type: ["string", "null"]}
+      project_key: {type: ["string", "null"]}
+      issue_type: {type: ["string", "null"]}
+      reporter_id: {type: ["string", "null"]}
+      due_date: {type: ["string", "null"]}
+      parent_id: {type: ["string", "null"]}
+      created: {type: ["string", "null"]}
+      updated: {type: ["string", "null"]}
+      custom_fields_json: {type: ["string", "null"]}
     additionalProperties: true
 
   jira_issue_history_schema:
     type: object
     $schema: http://json-schema.org/schema#
     properties:
-      unique_key: {}
-      tenant_id: {}
-      source_id: {}
-      id_readable: {}
-      author_account_id: {}
-      changelog_id: {}
-      created_at: {}
-      items: {}
+      unique_key: {type: ["string", "null"]}
+      tenant_id: {type: ["string", "null"]}
+      source_id: {type: ["string", "null"]}
+      id_readable: {type: ["string", "null"]}
+      author_account_id: {type: ["string", "null"]}
+      changelog_id: {type: ["string", "null"]}
+      created_at: {type: ["string", "null"]}
+      items: {type: ["string", "null"]}
     additionalProperties: true
 
   jira_comments_schema:
     type: object
     $schema: http://json-schema.org/schema#
     properties:
-      unique_key: {}
-      tenant_id: {}
-      source_id: {}
-      comment_id: {}
-      id_readable: {}
-      author_account_id: {}
-      created: {}
-      updated: {}
-      body: {}
+      unique_key: {type: ["string", "null"]}
+      tenant_id: {type: ["string", "null"]}
+      source_id: {type: ["string", "null"]}
+      comment_id: {type: ["string", "null"]}
+      id_readable: {type: ["string", "null"]}
+      author_account_id: {type: ["string", "null"]}
+      created: {type: ["string", "null"]}
+      updated: {type: ["string", "null"]}
+      body: {type: ["string", "null"]}
     additionalProperties: true
 
   jira_worklogs_schema:
     type: object
     $schema: http://json-schema.org/schema#
     properties:
-      unique_key: {}
-      tenant_id: {}
-      source_id: {}
-      worklog_id: {}
-      id_readable: {}
-      author_account_id: {}
-      started: {}
-      time_spent_seconds: {}
-      comment: {}
-      collected_at: {}
+      unique_key: {type: ["string", "null"]}
+      tenant_id: {type: ["string", "null"]}
+      source_id: {type: ["string", "null"]}
+      worklog_id: {type: ["string", "null"]}
+      id_readable: {type: ["string", "null"]}
+      author_account_id: {type: ["string", "null"]}
+      started: {type: ["string", "null"]}
+      time_spent_seconds: {type: ["integer", "null"]}
+      comment: {type: ["string", "null"]}
+      collected_at: {type: ["string", "null"]}
     additionalProperties: true
 
   jira_fields_schema:
     type: object
     $schema: http://json-schema.org/schema#
     properties:
-      unique_key: {}
-      tenant_id: {}
-      source_id: {}
-      field_id: {}
-      name: {}
-      custom: {}
-      schema_type: {}
-      schema_items: {}
-      schema_custom: {}
+      unique_key: {type: ["string", "null"]}
+      tenant_id: {type: ["string", "null"]}
+      source_id: {type: ["string", "null"]}
+      field_id: {type: ["string", "null"]}
+      name: {type: ["string", "null"]}
+      custom: {type: ["boolean", "null"]}
+      schema_type: {type: ["string", "null"]}
+      schema_items: {type: ["string", "null"]}
+      schema_custom: {type: ["string", "null"]}
     additionalProperties: true
 
   jira_sprints_schema:
     type: object
     $schema: http://json-schema.org/schema#
     properties:
-      unique_key: {}
-      tenant_id: {}
-      source_id: {}
-      sprint_id: {}
-      board_id: {}
-      sprint_name: {}
-      state: {}
-      start_date: {}
-      end_date: {}
-      complete_date: {}
-      collected_at: {}
+      unique_key: {type: ["string", "null"]}
+      tenant_id: {type: ["string", "null"]}
+      source_id: {type: ["string", "null"]}
+      sprint_id: {type: ["string", "null"]}
+      board_id: {type: ["string", "null"]}
+      sprint_name: {type: ["string", "null"]}
+      state: {type: ["string", "null"]}
+      start_date: {type: ["string", "null"]}
+      end_date: {type: ["string", "null"]}
+      complete_date: {type: ["string", "null"]}
+      collected_at: {type: ["string", "null"]}
     additionalProperties: true
 
 streams:
@@ -417,7 +418,6 @@ streams:
         request_parameters:
           jql: >-
             project IN ({{ config['jira_project_keys'] }}) AND updated >= "{{ stream_slice.start_time }}" AND updated <= "{{ stream_slice.end_time }}" ORDER BY updated ASC
-          maxResults: "{{ config.get('jira_page_size', 50) }}"
           expand: names
           fields: "*all"
     incremental_sync:
