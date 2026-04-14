@@ -1,9 +1,9 @@
 replicaCount: 1
 
 image:
-  repository: insight-frontend
-  tag: "local"
-  pullPolicy: IfNotPresent
+  repository: ghcr.io/cyberfabric/insight-front
+  tag: "latest"
+  pullPolicy: Always
 
 service:
   type: ClusterIP

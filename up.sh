@@ -105,25 +105,18 @@ fi
 
 # ─── Frontend ────────────────────────────────────────────────────────────────
 if [[ "$COMPONENT" == "all" || "$COMPONENT" == "app" || "$COMPONENT" == "frontend" ]]; then
-  FRONTEND_DIR="$ROOT_DIR/insight-front_symlink"
-  if [[ ! -d "$FRONTEND_DIR" ]]; then
-    echo "WARNING: Frontend directory not found at $FRONTEND_DIR — skipping"
-  else
-    echo "=== Building Frontend ==="
-    docker build -t insight-frontend:local \
-      -f src/frontend/Dockerfile \
-      "$FRONTEND_DIR"
-
-    if [[ "$ENV" == "local" ]]; then
-      kind load docker-image insight-frontend:local --name "${CLUSTER_NAME}"
-    fi
-
-    echo "=== Deploying Frontend ==="
-    helm upgrade --install insight-fe src/frontend/helm/ \
-      --namespace insight \
-      --set image.pullPolicy=IfNotPresent \
-      --wait --timeout 3m
+  FE_IMAGE="ghcr.io/cyberfabric/insight-front:latest"
+  echo "=== Pulling Frontend image ==="
+  docker pull "$FE_IMAGE"
+  if [[ "$ENV" == "local" ]]; then
+    kind load docker-image "$FE_IMAGE" --name "${CLUSTER_NAME}"
   fi
+
+  echo "=== Deploying Frontend ==="
+  helm upgrade --install insight-fe src/frontend/helm/ \
+    --namespace insight \
+    --set image.pullPolicy=IfNotPresent \
+    --wait --timeout 3m
 fi
 
 # ─── Airbyte port-forward (local only) ──────────────────────────────────────
