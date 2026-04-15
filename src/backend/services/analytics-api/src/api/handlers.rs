@@ -15,7 +15,7 @@ use crate::domain::metric::{
 };
 use crate::domain::query::{PageInfo, QueryRequest, QueryResponse};
 use crate::domain::threshold::{
-    self, CreateThresholdRequest, Threshold, UpdateThresholdRequest,
+    CreateThresholdRequest, Threshold, UpdateThresholdRequest,
 };
 use crate::infra::db::entities;
 
@@ -215,15 +215,7 @@ pub async fn query_metric(
     // 1. Load metric definition (must be enabled)
     let metric = find_enabled_metric(&state, ctx.insight_tenant_id, id).await?;
 
-    // 2. Load thresholds for this metric
-    let thresholds = entities::thresholds::Entity::find()
-        .filter(entities::thresholds::Column::MetricId.eq(id))
-        .filter(entities::thresholds::Column::InsightTenantId.eq(ctx.insight_tenant_id))
-        .all(&state.db)
-        .await
-        .map_err(|_| ApiError::internal("failed to load thresholds"))?;
-
-    // 3. Validate $top
+    // 2. Validate $top
     let top = req.top.min(200).max(1);
 
     // 4. Build ClickHouse query from structured metric fields.
@@ -349,37 +341,11 @@ pub async fn query_metric(
 
     // 6. Apply pagination — we fetched top+1 to detect has_next
     let has_next = all_rows.len() > top as usize;
-    let mut items: Vec<serde_json::Value> = if has_next {
+    let items: Vec<serde_json::Value> = if has_next {
         all_rows.into_iter().take(top as usize).collect()
     } else {
         all_rows
     };
-
-    // 7. Evaluate thresholds on each result row
-    for item in &mut items {
-        if let Some(obj) = item.as_object_mut() {
-            let mut threshold_results = serde_json::Map::new();
-            for t in &thresholds {
-                if let Some(val) = obj.get(&t.field_name).and_then(|v| v.as_f64()) {
-                    if threshold::threshold_matches(val, &t.operator, t.value) {
-                        let current = threshold_results
-                            .get(&t.field_name)
-                            .and_then(|v| v.as_str());
-                        if should_upgrade_level(current, &t.level) {
-                            threshold_results.insert(
-                                t.field_name.clone(),
-                                serde_json::Value::String(t.level.clone()),
-                            );
-                        }
-                    }
-                }
-            }
-            obj.insert(
-                "_thresholds".to_owned(),
-                serde_json::Value::Object(threshold_results),
-            );
-        }
-    }
 
     let response = QueryResponse {
         items,
@@ -390,20 +356,6 @@ pub async fn query_metric(
     };
 
     Ok(Json(response))
-}
-
-/// Returns true if `new_level` is higher severity than `current`.
-fn should_upgrade_level(current: Option<&str>, new_level: &str) -> bool {
-    let rank = |l: &str| match l {
-        "critical" => 3,
-        "warning" => 2,
-        "good" => 1,
-        _ => 0,
-    };
-    match current {
-        Some(c) => rank(new_level) > rank(c),
-        None => true,
-    }
 }
 
 /// Simplified OData value extractor.

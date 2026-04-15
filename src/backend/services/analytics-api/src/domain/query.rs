@@ -46,6 +46,5 @@ pub struct QueryResponse {
 #[derive(Debug, Serialize)]
 pub struct PageInfo {
     pub has_next: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
 }

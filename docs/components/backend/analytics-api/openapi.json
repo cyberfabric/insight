@@ -204,7 +204,7 @@
         "operationId": "queryMetric",
         "tags": ["Metrics"],
         "summary": "Execute metric query",
-        "description": "Executes the metric's query_ref against ClickHouse with OData-style filters. Security filters (insight_tenant_id, org_unit scope, membership time range) are injected automatically. The org_unit_id from $filter is validated against the user's AccessScope (IDOR prevention). Each response row includes a _thresholds map with server-evaluated threshold levels.",
+        "description": "Executes the metric's query_ref against ClickHouse with OData-style filters. Security filters (insight_tenant_id, org_unit scope, membership time range) are injected automatically. The org_unit_id from $filter is validated against the user's AccessScope (IDOR prevention).",
         "requestBody": {
           "required": true,
           "content": {
@@ -822,26 +822,11 @@
         "properties": {
           "items": {
             "type": "array",
-            "description": "Result rows. Each row includes metric-specific fields plus a _thresholds map with server-evaluated threshold levels.",
+            "description": "Result rows with dynamic columns from the metric's query_ref.",
             "items": {
               "type": "object",
               "additionalProperties": true,
-              "description": "Dynamic columns from the metric's query_ref. Always includes _thresholds.",
-              "properties": {
-                "_thresholds": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "$ref": "#/components/schemas/ThresholdLevel"
-                  },
-                  "description": "Server-evaluated threshold levels per field. Key = field_name, value = highest matched threshold level.",
-                  "examples": [
-                    {
-                      "focus_time_pct": "warning",
-                      "pr_cycle_time_h": "critical"
-                    }
-                  ]
-                }
-              }
+              "description": "Dynamic columns from the metric's query_ref."
             }
           },
           "page_info": {
