@@ -570,7 +570,7 @@ All tables use `ReplacingMergeTree(_version)` with `_version = toUnixTimestamp64
 
 > **Note**: `jira_issue_ext` and `jira_issue_links` Bronze tables from the original specification ([`jira.md`](../jira.md)) are not populated by the connector in Phase 1. All custom fields and issue links are stored in `custom_fields_json` on `jira_issue` (since `fields: "*all"` returns the full `fields` object including `issuelinks`) and denormalized to separate tables in Silver/dbt. Sync monitoring is handled by the Airbyte platform; `jira_collection_runs` is not implemented at the connector level.
 >
-> **Note on schema types**: All stream schemas use `{}` (any type) for property types instead of specific types (string, integer, etc.). This is intentional because Airbyte `AddFields` transformations may return values with varying types depending on the source data (e.g., a field could be string or number). ClickHouse handles typing at the destination level via column definitions.
+> **Note on schema types**: Stream schemas use explicit typed property definitions (`["string", "null"]`, `["boolean", "null"]`) to enable ClickHouse destination to create tables with correct column types. All schemas include `additionalProperties: true`.
 
 ---
 
