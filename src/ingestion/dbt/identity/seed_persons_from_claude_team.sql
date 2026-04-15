@@ -25,8 +25,8 @@ WITH latest AS (
 
 SELECT
     generateUUIDv7()                                        AS id,
-    -- TEMPORARY: sipHash128 derives UUID from string tenant_id until tenants table exists
-    UUIDNumToString(sipHash128(coalesce(tenant_id, '')))             AS insight_tenant_id,
+    -- TEMPORARY: sipHash128 derives UUID from string tenant_id until tenants table exists (REC-IR-04)
+    toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, ''))))     AS insight_tenant_id,
     coalesce(name, '')                                      AS display_name,
     'claude_team'                                           AS display_name_source,
     'active'                                                AS status,
@@ -56,5 +56,5 @@ SELECT
 FROM latest l
 LEFT ANTI JOIN person.persons ex
     ON lower(trim(l.email)) = lower(ex.email)
-    AND UUIDNumToString(sipHash128(coalesce(l.tenant_id, ''))) = ex.insight_tenant_id
+    AND toUUID(UUIDNumToString(sipHash128(coalesce(l.tenant_id, '')))) = ex.insight_tenant_id
     AND ex.is_deleted = 0

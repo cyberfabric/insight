@@ -20,7 +20,7 @@
 --   5. Set data_source = 'insight_claude_team'
 --
 -- Expected Silver schema (class_ai_tool_usage):
---   tenant_id, insight_source_id, unique_id, report_date, email,
+--   insight_tenant_id, insight_source_id, insight_source_type, unique_id, report_date, email,
 --   client (web/mobile), model, message_count, conversation_count,
 --   input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
 --   person_id (NULL until Silver step 2), provider, data_source, collected_at

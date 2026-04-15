@@ -6,8 +6,9 @@
 ) }}
 
 SELECT
-    tenant_id,
-    source_id,
+    tenant_id AS insight_tenant_id,
+    source_id AS insight_source_id,
+    'm365' AS insight_source_type,
     unique_key,
     userPrincipalName AS user_email,
     sendCount AS emails_sent,

@@ -130,7 +130,8 @@ fi
 if [[ "$ENV" == "local" && ("$COMPONENT" == "all" || "$COMPONENT" == "ingestion") ]]; then
   echo "=== Starting Airbyte port-forward ==="
   pkill -f 'port-forward.*airbyte' 2>/dev/null || true
-  kubectl -n airbyte port-forward svc/airbyte-airbyte-server-svc 8001:8001 >/dev/null 2>&1 &
+  nohup kubectl -n airbyte port-forward svc/airbyte-airbyte-server-svc 8001:8001 >/dev/null 2>&1 &
+  disown
 fi
 
 # ─── Summary ─────────────────────────────────────────────────────────────────

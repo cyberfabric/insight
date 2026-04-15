@@ -1,0 +1,12 @@
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Domain\obj\Debug\net9.0\Insight.Jobs.Domain.GeneratedMSBuildEditorConfig.editorconfig
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Domain\obj\Debug\net9.0\Insight.Jobs.Domain.AssemblyInfoInputs.cache
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Domain\obj\Debug\net9.0\Insight.Jobs.Domain.AssemblyInfo.cs
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Domain\obj\Debug\net9.0\Insight.Jobs.Domain.csproj.CoreCompileInputs.cache
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Domain\obj\Debug\net9.0\Insight.Jobs.Domain.sourcelink.json
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Domain\bin\Debug\net9.0\Insight.Jobs.Domain.deps.json
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Domain\bin\Debug\net9.0\Insight.Jobs.Domain.dll
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Domain\bin\Debug\net9.0\Insight.Jobs.Domain.pdb
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Domain\obj\Debug\net9.0\Insight.Jobs.Domain.dll
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Domain\obj\Debug\net9.0\refint\Insight.Jobs.Domain.dll
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Domain\obj\Debug\net9.0\Insight.Jobs.Domain.pdb
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Domain\obj\Debug\net9.0\ref\Insight.Jobs.Domain.dll

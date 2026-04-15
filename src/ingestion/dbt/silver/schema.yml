@@ -4,14 +4,20 @@ models:
   - name: class_comms_events
     description: "Unified communication events from all sources"
     columns:
-      - name: tenant_id
-        description: "Tenant isolation field"
+      - name: insight_tenant_id
+        description: "Insight tenant isolation field (mapped from Bronze tenant_id)"
         tests:
           - not_null
-      - name: source_id
-        description: "Source instance identifier"
+      - name: insight_source_id
+        description: "Connector instance identifier (mapped from Bronze source_id)"
         tests:
           - not_null
+      - name: insight_source_type
+        description: "Source system type (e.g. zoom, m365)"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['zoom', 'm365']
       - name: unique_key
         description: "Composite deduplication key"
         tests:

@@ -43,8 +43,10 @@ WITH history AS (
 upserts AS (
     {% for f in identity_fields %}
     SELECT
-        tenant_id AS insight_tenant_id,
-        source_id AS insight_source_id,
+        -- TEMPORARY: sipHash128 derives UUID from string tenant_id until tenants table exists (REC-IR-04)
+        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
+        -- TEMPORARY: sipHash128 derives UUID from string source_id until sources table exists
+        toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,
         '{{ source_type }}' AS insight_source_type,
         entity_id AS source_account_id,
         '{{ f.alias_type }}' AS alias_type,
@@ -73,8 +75,10 @@ deactivation_events AS (
 deletes AS (
     {% for f in identity_fields %}
     SELECT
-        d.tenant_id AS insight_tenant_id,
-        d.source_id AS insight_source_id,
+        -- TEMPORARY: sipHash128 derives UUID from string tenant_id until tenants table exists (REC-IR-04)
+        toUUID(UUIDNumToString(sipHash128(coalesce(d.tenant_id, '')))) AS insight_tenant_id,
+        -- TEMPORARY: sipHash128 derives UUID from string source_id until sources table exists
+        toUUID(UUIDNumToString(sipHash128(coalesce(d.source_id, '')))) AS insight_source_id,
         '{{ source_type }}' AS insight_source_type,
         d.entity_id AS source_account_id,
         '{{ f.alias_type }}' AS alias_type,

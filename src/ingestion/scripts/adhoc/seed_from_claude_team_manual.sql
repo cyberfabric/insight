@@ -34,7 +34,7 @@ WITH latest AS (
 )
 SELECT
     generateUUIDv7(),
-    UUIDNumToString(sipHash128(coalesce(tenant_id, ''))),
+    toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))),
     coalesce(name, ''),
     'claude_team',
     'active',
@@ -49,7 +49,7 @@ SELECT
 FROM latest l
 LEFT ANTI JOIN person.persons ex
     ON lower(trim(l.email)) = lower(ex.email)
-    AND UUIDNumToString(sipHash128(coalesce(l.tenant_id, ''))) = ex.insight_tenant_id  -- TEMPORARY: until tenants table
+    AND toUUID(UUIDNumToString(sipHash128(coalesce(l.tenant_id, '')))) = ex.insight_tenant_id  -- TEMPORARY: until tenants table
     AND ex.is_deleted = 0;
 
 
@@ -76,7 +76,7 @@ source AS (
         p.insight_tenant_id
     FROM latest l
     INNER JOIN person.persons p ON lower(trim(l.email)) = lower(p.email)
-        AND UUIDNumToString(sipHash128(coalesce(l.tenant_id, ''))) = p.insight_tenant_id  -- TEMPORARY: until tenants table
+        AND toUUID(UUIDNumToString(sipHash128(coalesce(l.tenant_id, '')))) = p.insight_tenant_id  -- TEMPORARY: until tenants table
 ),
 new_aliases AS (
     SELECT person_id, insight_tenant_id, source_account_id,
@@ -150,7 +150,7 @@ observations AS (
 )
 SELECT
     generateUUIDv7(),
-    UUIDNumToString(sipHash128(coalesce(o.tenant_id, ''))),
+    toUUID(UUIDNumToString(sipHash128(coalesce(o.tenant_id, '')))),
     'claude_team',
     o.source_account_id,
     o.alias_type,

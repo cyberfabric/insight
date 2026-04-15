@@ -240,9 +240,9 @@ Each stream **MUST** use a primary key to ensure that re-running the connector f
 
 - `cursor_members`: key = `email`
 - `cursor_audit_logs`: key = `event_id`
-- `cursor_usage_events`: key = `unique` (computed as `userEmail + timestamp`)
-- `cursor_usage_events_daily_resync`: key = `unique` (same schema as `cursor_usage_events`)
-- `cursor_daily_usage`: key = `unique` (computed as `email + date`)
+- `cursor_usage_events`: key = `unique_key` (computed as `userEmail + timestamp`)
+- `cursor_usage_events_daily_resync`: key = `unique_key` (same schema as `cursor_usage_events`)
+- `cursor_daily_usage`: key = `unique_key` (computed as `email + date`)
 
 **Rationale**: The incremental sync window may overlap with previously fetched dates. Usage events within the billing period are re-fetched on each sync to capture retroactive adjustments. Deduplication ensures idempotent extraction.
 
@@ -316,6 +316,8 @@ Usage event cost fields (`requestsCosts`, `cursorTokenFee`, `totalCents`) **MUST
 **Description**: Four Bronze streams with defined schemas — `cursor_members`, `cursor_audit_logs`, `cursor_usage_events`, `cursor_daily_usage`. Usage streams use `email`/`userEmail` as the identity key and `timestamp`/`date` as cursor fields.
 
 **Breaking Change Policy**: Adding new fields is non-breaking. Removing or renaming fields requires a migration.
+
+**Migration (PR #142)**: The config spec renamed `tenant_id` → `insight_tenant_id` and added `insight_source_id` as required. This is a breaking change for existing Airbyte sources. Deployment procedure: (1) ensure K8s Secrets have `insight.cyberfabric.com/source-id` annotation, (2) run `register.sh` to update the Airbyte definition, (3) run `connect.sh` to update existing source configs. Step 3 auto-injects `insight_tenant_id` and `insight_source_id` from tenant YAML and Secret annotation. Without step 3, existing sources will fail validation on next sync.
 
 ### 7.2 External Integration Contracts
 
@@ -410,7 +412,7 @@ Usage event cost fields (`requestsCosts`, `cursorTokenFee`, `totalCents`) **MUST
 - `email`/`userEmail` is present in every record across all data streams except the monitoring stream (`cursor_collection_runs`), which does not carry user identity fields
 - Pagination is exhausted for all paginated endpoints (no truncated results)
 - Basic authentication works correctly with the team API key
-- `tenant_id` is present in every record emitted by the connector (injected via `AddFields` transformation in the manifest `spec.connection_specification`)
+- `tenant_id` is present in every record (mapped from config `insight_tenant_id` via `AddFields` transformation)
 
 ## 10. Dependencies
 
@@ -472,4 +474,4 @@ The following checklist domains have been evaluated and determined not applicabl
 | **Usability (UX)** | No user-facing interface. Configuration is a single API key field in the Airbyte UI. |
 | **Compliance (COMPL)** | Work emails are personal data under GDPR. Retention, deletion, and access controls are delegated to the Airbyte platform and destination operator. The connector must not store credentials outside the platform's secret management. Data residency is a platform responsibility. |
 | **Maintainability (MAINT)** | Declarative YAML manifest — no custom code to maintain. Schema changes are handled by updating field definitions in the manifest. |
-| **Testing (TEST)** | Connector behaviour must satisfy PRD acceptance criteria (§9). Validation includes: Airbyte framework connection check, schema validation, and connector-specific acceptance tests (verify `tenant_id` presence, stream completeness, pagination exhaustion). No custom unit tests required — the declarative manifest is validated by the framework. |
+| **Testing (TEST)** | Connector behaviour must satisfy PRD acceptance criteria (§9). Validation includes: Airbyte framework connection check, schema validation, and connector-specific acceptance tests (verify `tenant_id` presence (mapped from config `insight_tenant_id`), stream completeness, pagination exhaustion). No custom unit tests required — the declarative manifest is validated by the framework. |

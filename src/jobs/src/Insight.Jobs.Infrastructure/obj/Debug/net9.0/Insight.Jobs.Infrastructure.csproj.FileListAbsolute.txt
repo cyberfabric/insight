@@ -1,0 +1,16 @@
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Infrastructure\obj\Debug\net9.0\Insight.Jobs.Infrastructure.csproj.AssemblyReference.cache
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Infrastructure\obj\Debug\net9.0\Insight.Jobs.Infrastructure.GeneratedMSBuildEditorConfig.editorconfig
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Infrastructure\obj\Debug\net9.0\Insight.Jobs.Infrastructure.AssemblyInfoInputs.cache
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Infrastructure\obj\Debug\net9.0\Insight.Jobs.Infrastructure.AssemblyInfo.cs
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Infrastructure\obj\Debug\net9.0\Insight.Jobs.Infrastructure.csproj.CoreCompileInputs.cache
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Infrastructure\obj\Debug\net9.0\Insight.Jobs.Infrastructure.sourcelink.json
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Infrastructure\bin\Debug\net9.0\Insight.Jobs.Infrastructure.deps.json
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Infrastructure\bin\Debug\net9.0\Insight.Jobs.Infrastructure.dll
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Infrastructure\bin\Debug\net9.0\Insight.Jobs.Infrastructure.pdb
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Infrastructure\bin\Debug\net9.0\Insight.Jobs.Domain.dll
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Infrastructure\bin\Debug\net9.0\Insight.Jobs.Domain.pdb
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Infrastructure\obj\Debug\net9.0\Insight..765550FE.Up2Date
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Infrastructure\obj\Debug\net9.0\Insight.Jobs.Infrastructure.dll
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Infrastructure\obj\Debug\net9.0\refint\Insight.Jobs.Infrastructure.dll
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Infrastructure\obj\Debug\net9.0\Insight.Jobs.Infrastructure.pdb
+N:\_Alemira\Insight\src\jobs\src\Insight.Jobs.Infrastructure\obj\Debug\net9.0\ref\Insight.Jobs.Infrastructure.dll

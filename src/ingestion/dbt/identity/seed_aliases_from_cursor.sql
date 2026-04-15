@@ -15,6 +15,9 @@
     tags=['identity:seed', 'aliases']
 ) }}
 
+-- depends_on: {{ ref('seed_persons_from_cursor') }}
+-- depends_on: {{ ref('seed_persons_from_claude_team') }}
+
 -- Each cursor member emits up to 3 alias rows: email, platform_id, display_name.
 -- Join on email to resolve person_id from the seed_persons_from_cursor output.
 
@@ -24,12 +27,13 @@ WITH source AS (
         cm.name,
         cm.email,
         cm.tenant_id,
+        cm.source_id                                                AS bronze_source_id,
         p.id                                                        AS person_id,
         p.insight_tenant_id
     FROM {{ source('bronze_cursor', 'cursor_members') }} cm
     INNER JOIN {{ ref('seed_persons_from_cursor') }} p
         ON lower(trim(cm.email)) = lower(p.email)
-        AND UUIDNumToString(sipHash128(coalesce(cm.tenant_id, ''))) = p.insight_tenant_id  -- TEMPORARY: until tenants table
+        AND toUUID(UUIDNumToString(sipHash128(coalesce(cm.tenant_id, '')))) = p.insight_tenant_id  -- TEMPORARY: sipHash128 until tenants table (REC-IR-04)
     WHERE cm.email IS NOT NULL AND cm.email != ''
 ),
 
@@ -43,7 +47,7 @@ aliases AS (
         'email'                                                     AS alias_type,
         lower(trim(email))                                          AS alias_value,
         'bronze_cursor.cursor_members.email'                        AS alias_field_name,
-        toUUID('00000000-0000-0000-0000-000000000000')              AS insight_source_id,
+        toUUID(UUIDNumToString(sipHash128(coalesce(bronze_source_id, '')))) AS insight_source_id,  -- TEMPORARY: sipHash128 until sources table (REC-IR-04)
         'cursor'                                                    AS insight_source_type,
         source_account_id,
         toFloat32(1.0)                                              AS confidence,
@@ -68,7 +72,7 @@ aliases AS (
         'platform_id',
         trim(source_account_id),
         'bronze_cursor.cursor_members.id',
-        toUUID('00000000-0000-0000-0000-000000000000'),
+        toUUID(UUIDNumToString(sipHash128(coalesce(bronze_source_id, '')))),  -- TEMPORARY: sipHash128 until sources table (REC-IR-04)
         'cursor',
         source_account_id,
         toFloat32(1.0),
@@ -93,7 +97,7 @@ aliases AS (
         'display_name',
         trim(name),
         'bronze_cursor.cursor_members.name',
-        toUUID('00000000-0000-0000-0000-000000000000'),
+        toUUID(UUIDNumToString(sipHash128(coalesce(bronze_source_id, '')))),  -- TEMPORARY: sipHash128 until sources table (REC-IR-04)
         'cursor',
         source_account_id,
         toFloat32(1.0),

@@ -45,9 +45,10 @@ echo "  Building Docker image..."
 docker build -t "$IMAGE" -f "$DOCKERFILE" "$CONNECTOR_DIR"
 
 # --- Step 2: Load into Kind (local only) ---
-if command -v kind &>/dev/null && kind get clusters 2>/dev/null | grep -q "^ingestion$"; then
-  echo "  Loading into Kind cluster..."
-  kind load docker-image "$IMAGE" --name ingestion
+CLUSTER_NAME="${CLUSTER_NAME:-insight}"
+if command -v kind &>/dev/null && kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
+  echo "  Loading into Kind cluster '${CLUSTER_NAME}'..."
+  kind load docker-image "$IMAGE" --name "$CLUSTER_NAME"
 fi
 
 # --- Step 3: Register/update Airbyte source definition ---

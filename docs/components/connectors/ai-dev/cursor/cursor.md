@@ -45,7 +45,7 @@ Standalone specification for the Cursor (AI Dev Tool) connector. Expands Source 
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `unique` | String | Primary key |
+| `unique_key` | String | Primary key (`{insight_tenant_id}-{insight_source_id}-{email}\|{date}`) |
 | `day` | String | Day label |
 | `date` | Int64 | Unix timestamp in milliseconds |
 | `email` | String | User email — identity key |
@@ -79,7 +79,7 @@ Standalone specification for the Cursor (AI Dev Tool) connector. Expands Source 
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `unique` | String | Primary key |
+| `unique_key` | String | Primary key (`{insight_tenant_id}-{insight_source_id}-{userEmail}\|{timestamp}`) |
 | `userEmail` | String | User email — identity key |
 | `timestamp` | DateTime64(3) | Event timestamp |
 | `kind` | String | Event type: `chat`, `completion`, `agent`, `cmd-k`, etc. |
@@ -97,7 +97,7 @@ Standalone specification for the Cursor (AI Dev Tool) connector. Expands Source 
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `event_unique` | String | Parent event reference — joins to `cursor_events.unique` |
+| `event_unique` | String | Parent event reference — joins to `cursor_events.unique_key` |
 | `inputTokens` | Float64 | Tokens in the prompt |
 | `outputTokens` | Float64 | Tokens in the model response |
 | `cacheReadTokens` | Float64 | Tokens served from prompt cache |

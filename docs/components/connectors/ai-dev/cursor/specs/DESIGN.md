@@ -86,7 +86,7 @@ graph LR
 | `cpt-insightspec-fr-cursor-dual-sync` | Stream `cursor_usage_events_daily_resync` → same endpoint, daily after 12:08 UTC, re-fetches previous day |
 | `cpt-insightspec-fr-cursor-daily-usage` | Stream `cursor_daily_usage` → `POST /teams/daily-usage-data` (incremental) |
 | `cpt-insightspec-fr-cursor-collection-runs` | Stream `cursor_collection_runs` — connector execution log |
-| `cpt-insightspec-fr-cursor-deduplication` | Primary keys: `email` (members), `event_id` (audit), `unique` (events/daily) |
+| `cpt-insightspec-fr-cursor-deduplication` | Primary keys: `email` (members), `event_id` (audit), `unique_key` (events/daily) |
 | `cpt-insightspec-fr-cursor-identity-key` | `email`/`userEmail` present in all streams |
 
 #### NFR Allocation
@@ -167,8 +167,8 @@ The `POST /teams/daily-usage-data` endpoint returns rows for all team members fo
 |--------|-------------|
 | `TeamMember` | A user account in the Cursor team. Key: `email`. Contains name, role, removal status. |
 | `AuditEvent` | An administrative/security event. Key: `event_id`. Contains event type, user email, event data (JSON), IP address. |
-| `UsageEvent` | A single AI invocation. Key: `unique` (email + timestamp). Contains model, kind, cost, billing flags, and optional `tokenUsage` nested object. |
-| `DailyUsage` | One user's aggregated AI activity for one date. Key: `unique` (email + date). Contains request counts, tab metrics, code metrics, model/extension metadata. |
+| `UsageEvent` | A single AI invocation. Key: `unique_key` (`{tenant_id}-{source_id}-{userEmail}\|{timestamp}`). Contains model, kind, cost, billing flags, and optional `tokenUsage` nested object. |
+| `DailyUsage` | One user's aggregated AI activity for one date. Key: `unique_key` (`{tenant_id}-{source_id}-{email}\|{date}`). Contains request counts, tab metrics, code metrics, model/extension metadata. |
 
 **Relationships**:
 
@@ -217,7 +217,7 @@ src/ingestion/connectors/ai-dev/cursor/
     └── schema.yml          # Column documentation + dbt tests (tenant_id not_null)
 ```
 
-The dbt model `to_ai_dev_usage.sql` transforms `cursor_daily_usage` and `cursor_usage_events` Bronze tables into the unified `class_ai_dev_usage` Silver table. `tenant_id` MUST be preserved and tested with a `not_null` dbt test. The `data_source` column (already present in Bronze tables as `'insight_cursor'`) MUST be carried through to Silver as the canonical source discriminator — no separate `source` column is needed.
+The dbt model `to_cursor_ai_dev_usage.sql` transforms `cursor_daily_usage` and `cursor_usage_events` Bronze tables into the unified `class_ai_dev_usage` Silver table. Bronze `tenant_id` is mapped to Silver `insight_tenant_id`, `source_id` to `insight_source_id`, and `insight_source_type` is set to `'cursor'` (per glossary §3). Both `insight_tenant_id` and `insight_source_id` MUST be tested with `not_null` dbt tests. The `data_source` column (already present in Bronze tables as `'insight_cursor'`) MUST be carried through to Silver as the canonical source discriminator.
 
 #### Connector Package Descriptor
 
@@ -246,12 +246,12 @@ streams:
 
   - name: cursor_usage_events
     bronze_table: cursor_usage_events
-    primary_key: [unique]
+    primary_key: [unique_key]
     cursor_field: timestamp
 
   - name: cursor_daily_usage
     bronze_table: cursor_daily_usage
-    primary_key: [unique]
+    primary_key: [unique_key]
     cursor_field: date
 
   - name: cursor_collection_runs
@@ -299,7 +299,7 @@ check:
 streams:
   - type: DeclarativeStream
     name: cursor_usage_events
-    primary_key: [unique]
+    primary_key: [unique_key]
     schema_loader:
       type: InlineSchemaLoader
       schema:
@@ -341,9 +341,11 @@ streams:
       - type: AddFields
         fields:
           - path: [tenant_id]
-            value: "{{ config['tenant_id'] }}"
-          - path: [unique]
-            value: "{{ record['userEmail'] }}{{ record['timestamp'] }}"
+            value: "{{ config['insight_tenant_id'] }}"
+          - path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['userEmail'] }}|{{ record['timestamp'] }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: timestamp
@@ -354,17 +356,23 @@ spec:
   type: Spec
   connection_specification:
     type: object
-    required: [tenant_id, api_key]
+    required: [insight_tenant_id, insight_source_id, api_key]
     properties:
-      tenant_id:
+      insight_tenant_id:
         type: string
-        title: Tenant ID
+        title: Insight Tenant ID
+        minLength: 1
         order: 0
+      insight_source_id:
+        type: string
+        title: Insight Source ID
+        minLength: 1
+        order: 1
       api_key:
         type: string
         title: API Key
         airbyte_secret: true
-        order: 1
+        order: 2
 ```
 
 This is a structural skeleton — the full manifest is in `src/ingestion/connectors/ai-dev/cursor/connector.yaml`.
@@ -381,7 +389,7 @@ Orchestration, scheduling, and state storage are handled by the Airbyte platform
 
 - [ ] `p1` - **ID**: `cpt-insightspec-component-cursor-tenant-id-injection`
 
-Ensures every record emitted by all streams contains `tenant_id` from the connector config. Implemented as an `AddFields` transformation in the manifest, applied to every stream. See §3.3 Source Config Schema for the injection pattern.
+Ensures every record emitted by all streams contains `tenant_id` and `source_id` from the connector config (`insight_tenant_id` → `tenant_id`, `insight_source_id` → `source_id`). Implemented as an `AddFields` transformation in the manifest, applied to every stream. See §3.3 Source Config Schema for the injection pattern.
 
 ### 3.3 API Contracts
 
@@ -431,41 +439,51 @@ The source config (credentials) for the Cursor connector:
 
 ```json
 {
-  "tenant_id": "Tenant isolation identifier (UUID)",
+  "insight_tenant_id": "Insight tenant isolation identifier (UUID)",
+  "insight_source_id": "Connector instance identifier",
   "api_key": "Cursor team API key"
 }
 ```
 
-Both fields are required. `tenant_id` is a platform invariant — every connector must accept it. `api_key` is marked `airbyte_secret: true` — it is never logged or displayed.
+All three fields are required. `insight_tenant_id` is a platform invariant — every connector must accept it. `api_key` is marked `airbyte_secret: true` — it is never logged or displayed.
 
 #### tenant_id Injection
 
-Per the ingestion layer tenant isolation principle (see [Ingestion Layer DESIGN](../../../../domain/ingestion/specs/DESIGN.md)), every record emitted by the connector MUST contain `tenant_id`. This is achieved via an `AddFields` transformation in the manifest:
+Per the ingestion layer tenant isolation principle (see [Ingestion Layer DESIGN](../../../../domain/ingestion/specs/DESIGN.md)), every record emitted by the connector MUST contain `tenant_id`. The config parameter `insight_tenant_id` is mapped to Bronze column `tenant_id`; `insight_source_id` is mapped to Bronze column `source_id`. This is achieved via an `AddFields` transformation in the manifest:
 
 ```yaml
 # In spec.connection_specification:
-required: [tenant_id, api_key]
+required: [insight_tenant_id, insight_source_id, api_key]
 properties:
-  tenant_id:
+  insight_tenant_id:
     type: string
-    title: Tenant ID
-    description: Tenant isolation identifier
+    title: Insight Tenant ID
+    description: Insight tenant isolation identifier
+    minLength: 1
     order: 0
+  insight_source_id:
+    type: string
+    title: Insight Source ID
+    description: Connector instance identifier
+    minLength: 1
+    order: 1
   api_key:
     type: string
     title: API Key
     airbyte_secret: true
-    order: 1
+    order: 2
 
 # In each stream's transformations:
 transformations:
   - type: AddFields
     fields:
       - path: [tenant_id]
-        value: "{{ config['tenant_id'] }}"
+        value: "{{ config['insight_tenant_id'] }}"
+      - path: [source_id]
+        value: "{{ config['insight_source_id'] }}"
 ```
 
-This transformation is applied to **every stream** in the manifest, ensuring `tenant_id` is present in every record before it reaches the destination.
+This transformation is applied to **every stream** in the manifest, ensuring `tenant_id`, `source_id`, `collected_at`, and `data_source` are present in every record before it reaches the destination.
 
 ### 3.4 Internal Dependencies
 
@@ -584,7 +602,7 @@ These columns are not defined in the manifest schema but are present in all Bron
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key — framework-injected |
-| `source_instance_id` | String | Connector instance identifier — framework-injected, DEFAULT '' |
+| `source_id` | String | Connector instance identifier — framework-injected (from config `insight_source_id`, required) |
 | `id` | String | Cursor internal member ID |
 | `name` | String | Member display name |
 | `email` | String | Member email — primary identity key → `person_id` |
@@ -603,7 +621,7 @@ These columns are not defined in the manifest schema but are present in all Bron
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key — framework-injected |
-| `source_instance_id` | String | Connector instance identifier — framework-injected, DEFAULT '' |
+| `source_id` | String | Connector instance identifier — framework-injected (from config `insight_source_id`, required) |
 | `event_id` | String | Unique audit event identifier — primary key |
 | `timestamp` | String | Event timestamp (ISO 8601) |
 | `user_email` | String | User email — identity key |
@@ -625,8 +643,8 @@ These columns are not defined in the manifest schema but are present in all Bron
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key — framework-injected |
-| `source_instance_id` | String | Connector instance identifier — framework-injected, DEFAULT '' |
-| `unique` | String | Primary key — computed as `userEmail + timestamp` |
+| `source_id` | String | Connector instance identifier — framework-injected (from config `insight_source_id`, required) |
+| `unique_key` | String | Primary key — computed as `userEmail + timestamp` |
 | `userEmail` | String | User email — identity key |
 | `timestamp` | String | Event timestamp (ISO 8601 or epoch ms) |
 | `kind` | String | Event type: `chat`, `completion`, `agent`, `cmd-k`, etc. |
@@ -650,7 +668,7 @@ These columns are not defined in the manifest schema but are present in all Bron
 **Notes**:
 
 - `tokenUsage` is preserved as a nested JSON object at Bronze level. The Silver layer is responsible for flattening `inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`, `totalCents` into separate columns. When `tokenUsage` is `null`, the event has no token-level detail — this is **not** the same as zero-cost and must not be treated as such.
-- The `unique` key is computed as a simple concatenation of `userEmail` and `timestamp`. See [ADR-0001](ADR/0001-usage-events-dedup-key.md) for the rationale, accepted collision risk, and Silver-layer mitigation path.
+- The `unique_key` key is computed as a simple concatenation of `userEmail` and `timestamp`. See [ADR-0001](ADR/0001-usage-events-dedup-key.md) for the rationale, accepted collision risk, and Silver-layer mitigation path.
 - The field `isFreeBugbot` is present in the actual API but was absent from the original connector specification (`cursor.md`). Fields `isChargeable` and `isHeadless` appear in the original specification but are **not** returned by the current API — see [API Discrepancies Log](#api-discrepancies-log).
 
 #### Table: `cursor_usage_events_daily_resync`
@@ -664,8 +682,8 @@ Same schema as `cursor_usage_events` (same API endpoint, same fields, same prima
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key — framework-injected |
-| `source_instance_id` | String | Connector instance identifier — framework-injected, DEFAULT '' |
-| `unique` | String | Primary key — computed as `email + date` |
+| `source_id` | String | Connector instance identifier — framework-injected (from config `insight_source_id`, required) |
+| `unique_key` | String | Primary key — computed as `email + date` |
 | `userId` | String | Cursor platform user ID |
 | `email` | String | User email — identity key |
 | `day` | String | Day label (human-readable) |
@@ -708,7 +726,7 @@ Same schema as `cursor_usage_events` (same API endpoint, same fields, same prima
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key — framework-injected |
-| `source_instance_id` | String | Connector instance identifier — framework-injected, DEFAULT '' |
+| `source_id` | String | Connector instance identifier — framework-injected (from config `insight_source_id`, required) |
 | `run_id` | String | Unique run identifier |
 | `started_at` | DateTime | Run start time |
 | `completed_at` | DateTime | Run end time |
@@ -738,7 +756,7 @@ Package: src/ingestion/connectors/ai-dev/cursor/
 Connection A: cursor-{team_name}-hourly
 ├── Schedule: hourly (via Kestra cron)
 ├── Source image: airbyte/source-declarative-manifest
-├── Source config: {tenant_id, api_key}
+├── Source config: {insight_tenant_id, insight_source_id, api_key}
 ├── Streams: cursor_members, cursor_audit_logs, cursor_usage_events,
 │            cursor_daily_usage, cursor_collection_runs
 ├── Destination: ClickHouse (Bronze)
@@ -747,11 +765,21 @@ Connection A: cursor-{team_name}-hourly
 Connection B: cursor-{team_name}-daily-resync
 ├── Schedule: daily after 12:08 UTC (via Kestra cron)
 ├── Source image: airbyte/source-declarative-manifest
-├── Source config: {tenant_id, api_key}
+├── Source config: {insight_tenant_id, insight_source_id, api_key}
 ├── Streams: cursor_usage_events_daily_resync (only)
 ├── Destination: ClickHouse (Bronze)
 └── State: n/a (always fetches previous day)
 ```
+
+#### Migration: `tenant_id` → `insight_tenant_id` (PR #142)
+
+The config spec renamed `tenant_id` → `insight_tenant_id` and added `insight_source_id` as required. This is a breaking change for existing Airbyte sources. Deployment procedure:
+
+1. **K8s Secrets**: ensure each Secret has annotation `insight.cyberfabric.com/source-id` (see `secrets/connectors/cursor.yaml.example`)
+2. **Register**: run `register.sh` (or `upload-manifests.sh`) to update the Airbyte source definition with the new manifest
+3. **Connect**: run `connect.sh` (or `apply-connections.sh`) to update existing source configs — this auto-injects `insight_tenant_id` and `insight_source_id` from tenant YAML and Secret annotation
+
+Steps must run before the next scheduled sync (`0 2 * * *`). Without step 3, existing sources will fail Airbyte validation.
 
 ## 4. Additional context
 
@@ -950,12 +978,12 @@ The following checklist domains have been evaluated and are not applicable for t
 |--------|--------|
 | **PERF (Performance)** | Batch data pipeline with native API pagination. No caching, connection pooling, or latency optimization needed. Rate limit handling (HTTP 429 → 60s retry) is the only performance-related concern, documented in Constraints §2.2. |
 | **SEC (Security)** | Authentication is delegated to the Airbyte framework: the API key is stored as `airbyte_secret`, never logged or exposed. The declarative manifest contains no custom security logic. No user-facing endpoints, no authorization model, no data encryption beyond what the destination provides. |
-| **REL (Reliability)** | Idempotent extraction via deduplication keys (`unique`, `event_id`, `email`). No distributed state, no transactions, no saga patterns. Recovery = re-run the sync; the Airbyte framework manages cursor state and retry. |
+| **REL (Reliability)** | Idempotent extraction via deduplication keys (`unique_key`, `event_id`, `email`). No distributed state, no transactions, no saga patterns. Recovery = re-run the sync; the Airbyte framework manages cursor state and retry. |
 | **OPS (Operations)** | Deployed as a standard Airbyte connection — no custom infrastructure, no IaC, no observability beyond what the Airbyte platform provides (job logs, sync metrics, alerting). Deployment topology documented in §3.8. |
 | **MAINT (Maintainability)** | Declarative YAML manifest with no custom code. Maintenance consists of updating field definitions when the API schema changes. No module structure, dependency injection, or layering needed. |
 | **TEST (Testing)** | Declarative connector validated by the Airbyte framework's built-in checks (connection check, schema validation). No custom code to unit-test. Integration testing = run a sync against the live API. |
 | **COMPL (Compliance)** | Limited but applicable. The connector extracts work emails and AI activity metrics — personal/work-linked data under GDPR. Minimum controls: (1) Data classification: emails are personal data; activity metrics are work-linked. (2) Retention and deletion: responsibility of the Airbyte platform and destination owner. (3) Masking/redaction: recommend destination-level controls if required by policy. (4) GDPR/data residency: data access controls owned by the platform operator; connector does not store data beyond transit. |
-| **UX (Usability)** | No user-facing interface. The only UX surface is the Airbyte connection configuration form (two required fields: `tenant_id` and `api_key`), which is defined by the `spec` section of the manifest. |
+| **UX (Usability)** | No user-facing interface. The only UX surface is the Airbyte connection configuration form (three required fields: `insight_tenant_id`, `insight_source_id`, and `api_key`), which is defined by the `spec` section of the manifest. |
 
 ### Architecture Decision Records
 

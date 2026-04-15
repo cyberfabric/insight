@@ -24,10 +24,10 @@
 ) }}
 
 -- Column set matches bootstrap_inputs_from_history macro output.
--- TEMPORARY: insight_tenant_id derived via sipHash128 until tenants table exists.
+-- TEMPORARY: insight_tenant_id/insight_source_id derived via sipHash128 until tenants/sources tables exist (REC-IR-04).
 
 WITH latest AS (
-    SELECT id AS source_id, email, name, tenant_id
+    SELECT id AS account_id, email, name, tenant_id, source_id
     FROM {{ source('bronze_claude_team', 'claude_team_users') }}
     WHERE email IS NOT NULL AND email != ''
     QUALIFY row_number() OVER (PARTITION BY lower(trim(email)), coalesce(tenant_id, '') ORDER BY _airbyte_extracted_at DESC) = 1
@@ -36,10 +36,10 @@ WITH latest AS (
 observations AS (
     -- email
     SELECT
-        UUIDNumToString(sipHash128(coalesce(tenant_id, '')))        AS insight_tenant_id,
-        toUUID('00000000-0000-0000-0000-000000000000')              AS insight_source_id,
+        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, ''))))        AS insight_tenant_id,
+        toUUID(UUIDNumToString(sipHash128(coalesce(source_id, ''))))        AS insight_source_id,
         'claude_team'                                               AS insight_source_type,
-        source_id                                                   AS source_account_id,
+        account_id                                                  AS source_account_id,
         'email'                                                     AS alias_type,
         email                                                       AS alias_value,
         'bronze_claude_team.claude_team_users.email'                AS alias_field_name,
@@ -51,26 +51,26 @@ observations AS (
 
     -- platform_id (Claude Team user ID)
     SELECT
-        UUIDNumToString(sipHash128(coalesce(tenant_id, ''))),
-        toUUID('00000000-0000-0000-0000-000000000000'),
+        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))),
+        toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))),
         'claude_team',
-        source_id,
+        account_id,
         'platform_id',
-        source_id,
+        account_id,
         'bronze_claude_team.claude_team_users.id',
         'UPSERT',
         now64(3)
     FROM latest
-    WHERE source_id IS NOT NULL AND source_id != ''
+    WHERE account_id IS NOT NULL AND account_id != ''
 
     UNION ALL
 
     -- display_name
     SELECT
-        UUIDNumToString(sipHash128(coalesce(tenant_id, ''))),
-        toUUID('00000000-0000-0000-0000-000000000000'),
+        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))),
+        toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))),
         'claude_team',
-        source_id,
+        account_id,
         'display_name',
         name,
         'bronze_claude_team.claude_team_users.name',

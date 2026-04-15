@@ -29,7 +29,7 @@ INSERT INTO person.persons (
 )
 SELECT
     generateUUIDv7(),
-    UUIDNumToString(sipHash128(coalesce(tenant_id, ''))),
+    toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))),
     coalesce(name, ''),
     'cursor',
     CASE WHEN isRemoved = true THEN 'inactive' ELSE 'active' END,
@@ -47,7 +47,7 @@ QUALIFY row_number() OVER (PARTITION BY lower(trim(email)), coalesce(tenant_id, 
   AND NOT EXISTS (
       SELECT 1 FROM person.persons ex
       WHERE lower(ex.email) = lower(trim(cm.email))
-        AND ex.insight_tenant_id = UUIDNumToString(sipHash128(coalesce(cm.tenant_id, '')))
+        AND ex.insight_tenant_id = toUUID(UUIDNumToString(sipHash128(coalesce(cm.tenant_id, ''))))
         AND ex.is_deleted = 0
   );
 
@@ -69,7 +69,7 @@ WITH source AS (
         p.insight_tenant_id
     FROM bronze_cursor.cursor_members cm
     INNER JOIN person.persons p ON lower(trim(cm.email)) = lower(p.email)
-        AND UUIDNumToString(sipHash128(coalesce(cm.tenant_id, ''))) = p.insight_tenant_id  -- TEMPORARY: until tenants table
+        AND toUUID(UUIDNumToString(sipHash128(coalesce(cm.tenant_id, '')))) = p.insight_tenant_id  -- TEMPORARY: until tenants table
     WHERE cm.email IS NOT NULL AND cm.email != ''
 ),
 new_aliases AS (
@@ -147,7 +147,7 @@ observations AS (
 )
 SELECT
     generateUUIDv7(),
-    UUIDNumToString(sipHash128(coalesce(o.tenant_id, ''))),
+    toUUID(UUIDNumToString(sipHash128(coalesce(o.tenant_id, '')))),
     'cursor',
     o.source_account_id,
     o.alias_type,
