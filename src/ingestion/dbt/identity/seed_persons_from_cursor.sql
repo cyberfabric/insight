@@ -15,8 +15,8 @@
 
 SELECT
     generateUUIDv7()                                        AS id,
-    -- TEMPORARY: sipHash128 derives UUID from string tenant_id until tenants table exists
-    UUIDNumToString(sipHash128(coalesce(tenant_id, '')))             AS insight_tenant_id,
+    -- TEMPORARY: sipHash128 derives UUID from string tenant_id until tenants table exists (REC-IR-04)
+    toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, ''))))     AS insight_tenant_id,
     coalesce(name, '')                                      AS display_name,
     'cursor'                                                AS display_name_source,
     CASE
@@ -53,7 +53,7 @@ QUALIFY row_number() OVER (PARTITION BY lower(trim(email)), coalesce(tenant_id, 
   AND NOT EXISTS (
       SELECT 1 FROM {{ this }} ex
       WHERE lower(ex.email) = lower(trim(cm.email))
-        AND ex.insight_tenant_id = UUIDNumToString(sipHash128(coalesce(cm.tenant_id, '')))
+        AND ex.insight_tenant_id = toUUID(UUIDNumToString(sipHash128(coalesce(cm.tenant_id, ''))))
         AND ex.is_deleted = 0
   )
 {% endif %}

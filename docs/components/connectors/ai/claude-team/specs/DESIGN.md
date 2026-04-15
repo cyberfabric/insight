@@ -83,7 +83,7 @@ graph LR
 | `cpt-insightspec-fr-claude-team-workspace-members-collect` | Stream `claude_team_workspace_members` -> `GET /v1/organizations/workspaces/{id}/members` (substream) |
 | `cpt-insightspec-fr-claude-team-invites-collect` | Stream `claude_team_invites` -> `GET /v1/organizations/invites` (full refresh) |
 | `cpt-insightspec-fr-claude-team-collection-runs` | Stream `claude_team_collection_runs` -- connector execution log |
-| `cpt-insightspec-fr-claude-team-deduplication` | Primary keys: `id` (users/workspaces/invites), `unique` (code_usage/workspace_members), `run_id` (collection_runs) |
+| `cpt-insightspec-fr-claude-team-deduplication` | Primary keys: `id` (users/workspaces/invites), `unique_key` (code_usage/workspace_members), `run_id` (collection_runs) |
 | `cpt-insightspec-fr-claude-team-identity-key` | `email`/`actor_identifier` present in user-facing streams |
 
 #### NFR Allocation
@@ -126,7 +126,7 @@ Each Anthropic Admin API endpoint maps to exactly one stream. `GET /v1/organizat
 
 - [ ] `p2` - **ID**: `cpt-insightspec-principle-claude-team-source-native-schema`
 
-Bronze tables preserve the original Anthropic Admin API field names in their native casing (snake_case) where possible. Framework fields (`tenant_id`, `source_instance_id`, `collected_at`, `data_source`) are injected via `AddFields`. Additionally, the `code_usage` stream derives several flattened fields from nested API objects: `actor_type` and `actor_identifier` (from `actor`), `session_count`, `lines_added`, `lines_removed` (from `core_metrics`), `tool_use_accepted`, `tool_use_rejected` (summed from `tool_actions`), and serializes `core_metrics_json`, `tool_actions_json`, `model_breakdown_json` as JSON strings. All streams compute a `unique` composite key. Nested objects like `data_residency` (workspaces) are serialized to JSON strings via `tojson`. Note: `_version` and `metadata` are documented in Bronze table schemas for forward compatibility but are **not implemented** in the declarative manifest.
+Bronze tables preserve the original Anthropic Admin API field names in their native casing (snake_case) where possible. Framework fields (`tenant_id`, `source_id`, `collected_at`, `data_source`) are injected via `AddFields`. The config parameter `insight_tenant_id` is written to Bronze column `tenant_id`; `insight_source_id` is written to Bronze column `source_id`. Additionally, the `code_usage` stream derives several flattened fields from nested API objects: `actor_type` and `actor_identifier` (from `actor`), `session_count`, `lines_added`, `lines_removed` (from `core_metrics`), `tool_use_accepted`, `tool_use_rejected` (summed from `tool_actions`), and serializes `core_metrics_json`, `tool_actions_json`, `model_breakdown_json` as JSON strings. All streams compute a `unique_key` composite key. Nested objects like `data_residency` (workspaces) are serialized to JSON strings via `tojson`. Note: `_version` and `metadata` are documented in Bronze table schemas for forward compatibility but are **not implemented** in the declarative manifest.
 
 ### 2.2 Constraints
 
@@ -223,7 +223,7 @@ src/ingestion/connectors/ai/claude-team/
     +-- schema.yml          # Column documentation + dbt tests
 ```
 
-The dbt model `to_ai_dev_usage.sql` transforms `claude_team_code_usage` Bronze table into the unified `class_ai_dev_usage` Silver table. `tenant_id` MUST be preserved and tested with a `not_null` dbt test. The `data_source` column (set to `'insight_claude_team'` in Bronze) MUST be carried through to Silver as the canonical source discriminator.
+The dbt model `to_ai_dev_usage.sql` transforms `claude_team_code_usage` Bronze table into the unified `class_ai_dev_usage` Silver table. Bronze `tenant_id` is mapped to Silver `insight_tenant_id`, `source_id` to `insight_source_id`, and `insight_source_type` is set to `'claude-team'` (per glossary §3). Both `insight_tenant_id` and `insight_source_id` MUST be tested with `not_null` dbt tests. The `data_source` column (set to `'insight_claude_team'` in Bronze) MUST be carried through to Silver as the canonical source discriminator.
 
 The dbt model `to_ai_tool_usage.sql` is a placeholder -- the Anthropic Admin API does not currently expose web/mobile activity data through a separate endpoint. This model documents the architectural gap and will be implemented when the data becomes available.
 
@@ -250,7 +250,7 @@ streams:
 
   - name: claude_team_code_usage
     bronze_table: claude_team_code_usage
-    primary_key: [unique]
+    primary_key: [unique_key]
     cursor_field: date
 
   - name: claude_team_workspaces
@@ -260,7 +260,7 @@ streams:
 
   - name: claude_team_workspace_members
     bronze_table: claude_team_workspace_members
-    primary_key: [unique]
+    primary_key: [unique_key]
     cursor_field: null
 
   - name: claude_team_invites
@@ -361,9 +361,9 @@ streams:
       - type: AddFields
         fields:
           - path: [tenant_id]
-            value: "{{ config['tenant_id'] }}"
-          - path: [insight_source_id]
-            value: "{{ config.get('insight_source_id', '') }}"
+            value: "{{ config['insight_tenant_id'] }}"
+          - path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
           - path: [collected_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
           - path: [data_source]
@@ -374,17 +374,23 @@ spec:
   type: Spec
   connection_specification:
     type: object
-    required: [tenant_id, admin_api_key]
+    required: [insight_tenant_id, insight_source_id, admin_api_key]
     properties:
-      tenant_id:
+      insight_tenant_id:
         type: string
-        title: Tenant ID
+        title: Insight Tenant ID
+        minLength: 1
         order: 0
+      insight_source_id:
+        type: string
+        title: Insight Source ID
+        minLength: 1
+        order: 1
       admin_api_key:
         type: string
         title: Admin API Key
         airbyte_secret: true
-        order: 1
+        order: 2
 ```
 
 This is a structural skeleton -- the full manifest is in `src/ingestion/connectors/ai/claude-team/connector.yaml`.
@@ -455,47 +461,55 @@ The source config (credentials) for the Claude Team connector:
 
 ```json
 {
-  "tenant_id": "Tenant isolation identifier (UUID)",
+  "insight_tenant_id": "Insight tenant isolation identifier (UUID)",
+  "insight_source_id": "Connector instance identifier",
   "admin_api_key": "Anthropic Admin API key (Team/Enterprise workspace)"
 }
 ```
 
-Both fields are required. `tenant_id` is a platform invariant -- every connector must accept it. `admin_api_key` is marked `airbyte_secret: true` -- it is never logged or displayed.
+Both fields are required. `insight_tenant_id` is a platform invariant -- every connector must accept it. `admin_api_key` is marked `airbyte_secret: true` -- it is never logged or displayed.
 
 #### tenant_id Injection
 
-Per the ingestion layer tenant isolation principle, every record emitted by the connector MUST contain `tenant_id`. This is achieved via an `AddFields` transformation in the manifest:
+Per the ingestion layer tenant isolation principle, every record emitted by the connector MUST contain `tenant_id`. The config parameter `insight_tenant_id` is mapped to Bronze column `tenant_id`; `insight_source_id` is mapped to Bronze column `source_id`. This is achieved via an `AddFields` transformation in the manifest:
 
 ```yaml
 # In spec.connection_specification:
-required: [tenant_id, admin_api_key]
+required: [insight_tenant_id, insight_source_id, admin_api_key]
 properties:
-  tenant_id:
+  insight_tenant_id:
     type: string
-    title: Tenant ID
-    description: Tenant isolation identifier
+    title: Insight Tenant ID
+    description: Insight tenant isolation identifier
+    minLength: 1
     order: 0
+  insight_source_id:
+    type: string
+    title: Insight Source ID
+    description: Connector instance identifier
+    minLength: 1
+    order: 1
   admin_api_key:
     type: string
     title: Admin API Key
     airbyte_secret: true
-    order: 1
+    order: 2
 
 # In each stream's transformations:
 transformations:
   - type: AddFields
     fields:
       - path: [tenant_id]
-        value: "{{ config['tenant_id'] }}"
-      - path: [insight_source_id]
-        value: "{{ config.get('insight_source_id', '') }}"
+        value: "{{ config['insight_tenant_id'] }}"
+      - path: [source_id]
+        value: "{{ config['insight_source_id'] }}"
       - path: [collected_at]
         value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
       - path: [data_source]
         value: "insight_claude_team"
 ```
 
-This transformation is applied to **every stream** in the manifest, ensuring `tenant_id`, `insight_source_id`, `collected_at`, and `data_source` are present in every record before it reaches the destination.
+This transformation is applied to **every stream** in the manifest, ensuring `tenant_id`, `source_id`, `collected_at`, and `data_source` are present in every record before it reaches the destination.
 
 ### 3.4 Internal Dependencies
 
@@ -605,7 +619,7 @@ These columns are not defined in the manifest schema but are present in all Bron
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key -- framework-injected |
-| `insight_source_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
+| `source_id` | String | Connector instance identifier -- framework-injected (from config `insight_source_id`, required) |
 | `id` | String | Anthropic platform user ID -- primary key |
 | `type` | String (nullable) | Record type (e.g., `user`) |
 | `email` | String | User email -- primary identity key -> `person_id` |
@@ -626,8 +640,8 @@ One row per user. Current-state only -- no versioning.
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key -- framework-injected |
-| `insight_source_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
-| `unique` | String | Primary key -- computed composite of date + actor fields + terminal_type |
+| `source_id` | String | Connector instance identifier -- framework-injected (from config `insight_source_id`, required) |
+| `unique_key` | String | Primary key -- computed composite of date + actor fields + terminal_type |
 | `date` | String | Activity date (`YYYY-MM-DD`) -- cursor for incremental sync |
 | `actor_type` | String (nullable) | Actor type: `api_actor` or `user` -- flattened from `actor.type` |
 | `actor_identifier` | String (nullable) | API key name (for `api_actor`) or email (for `user`) -- flattened from `actor.api_key_name` or `actor.email` |
@@ -659,7 +673,7 @@ One row per `(date, actor_type, actor_identifier, terminal_type)`. Incremental s
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key -- framework-injected |
-| `insight_source_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
+| `source_id` | String | Connector instance identifier -- framework-injected (from config `insight_source_id`, required) |
 | `id` | String | Workspace ID -- primary key |
 | `name` | String | Workspace slug name |
 | `display_name` | String | Human-readable workspace name |
@@ -678,8 +692,8 @@ Full refresh -- one row per workspace.
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key -- framework-injected |
-| `insight_source_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
-| `unique` | String | Primary key -- computed as `{user_id}:{workspace_id}` |
+| `source_id` | String | Connector instance identifier -- framework-injected (from config `insight_source_id`, required) |
+| `unique_key` | String | Primary key -- computed as `{user_id}:{workspace_id}` |
 | `type` | String (nullable) | Record type (e.g., `workspace_member`) |
 | `user_id` | String | Anthropic user ID |
 | `workspace_id` | String | Workspace ID (from parent stream partition) |
@@ -696,7 +710,7 @@ Full refresh -- one row per user-workspace pair.
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key -- framework-injected |
-| `insight_source_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
+| `source_id` | String | Connector instance identifier -- framework-injected (from config `insight_source_id`, required) |
 | `id` | String | Invite ID -- primary key |
 | `email` | String | Invited user's email |
 | `role` | String | Invited role |
@@ -716,7 +730,7 @@ Full refresh -- one row per invite.
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key -- framework-injected |
-| `insight_source_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
+| `source_id` | String | Connector instance identifier -- framework-injected (from config `insight_source_id`, required) |
 | `run_id` | String | Unique run identifier -- primary key |
 | `started_at` | DateTime | Run start time |
 | `completed_at` | DateTime | Run end time |
@@ -747,13 +761,23 @@ Package: src/ingestion/connectors/ai/claude-team/
 Connection: claude-team-{org_name}-daily
 +-- Schedule: daily (via Kestra cron)
 +-- Source image: airbyte/source-declarative-manifest
-+-- Source config: {tenant_id, admin_api_key}
++-- Source config: {insight_tenant_id, insight_source_id, admin_api_key}
 +-- Streams: claude_team_users, claude_team_code_usage,
 |            claude_team_workspaces, claude_team_workspace_members,
 |            claude_team_invites, claude_team_collection_runs
 +-- Destination: ClickHouse (Bronze)
 +-- State: per-stream cursors (code_usage date cursor)
 ```
+
+#### Migration: `tenant_id` → `insight_tenant_id` (PR #142)
+
+The config spec renamed `tenant_id` → `insight_tenant_id` and added `insight_source_id` as required. This is a breaking change for existing Airbyte sources. Deployment procedure:
+
+1. **K8s Secrets**: ensure each Secret has annotation `insight.cyberfabric.com/source-id` (see `secrets/connectors/claude-team.yaml.example`)
+2. **Register**: run `register.sh` (or `upload-manifests.sh`) to update the Airbyte source definition with the new manifest
+3. **Connect**: run `connect.sh` (or `apply-connections.sh`) to update existing source configs — this auto-injects `insight_tenant_id` and `insight_source_id` from tenant YAML and Secret annotation
+
+Steps must run before the next scheduled sync (`0 2 * * *`). Without step 3, existing sources will fail Airbyte validation.
 
 ## 4. Additional context
 
@@ -781,8 +805,9 @@ The Identity Manager resolves `email`/`actor_identifier` -> canonical `person_id
 
 | Unified field | Claude Team source | Notes |
 |---------------|-------------------|-------|
-| `tenant_id` | `tenant_id` | Framework-injected |
-| `source_instance_id` | `source_instance_id` | Connector instance |
+| `insight_tenant_id` | `tenant_id` | Rename (Bronze → Silver convention per glossary §3) |
+| `insight_source_id` | `source_id` | Rename (Bronze → Silver convention per glossary §3) |
+| `insight_source_type` | -- | Constant `'claude-team'` |
 | `data_source` | `data_source` | Always `insight_claude_team` |
 | `unique_id` | -- | Computed: `concat(date, '\|', actor_identifier, '\|', terminal_type)`. Note: `actor_type` is omitted because the model filters to `actor_type = 'user'` (always constant); Bronze key includes it but Silver does not. |
 | `report_date` | `date` | Rename from `date` |
@@ -882,7 +907,7 @@ The following checklist domains have been evaluated and are not applicable for t
 | **MAINT (Maintainability)** | Declarative YAML manifest with no custom code. Maintenance consists of updating field definitions when the API schema changes. |
 | **TEST (Testing)** | Declarative connector validated by the Airbyte framework's built-in checks (connection check, schema validation). No custom code to unit-test. |
 | **COMPL (Compliance)** | The connector extracts work emails and AI activity metrics -- personal/work-linked data under GDPR. Retention, deletion, and access controls are delegated to the Airbyte platform and destination operator. |
-| **UX (Usability)** | No user-facing interface. The only UX surface is the Airbyte connection configuration form (two required fields: `tenant_id` and `admin_api_key`). |
+| **UX (Usability)** | No user-facing interface. The only UX surface is the Airbyte connection configuration form (three required fields: `insight_tenant_id`, `insight_source_id`, and `admin_api_key`). |
 
 ### Architecture Decision Records
 

@@ -21,9 +21,9 @@ definitions:
     type: AddFields
     fields:
       - path: [tenant_id]
-        value: "{{ config['tenant_id'] }}"
-      - path: [insight_source_id]
-        value: "{{ config.get('insight_source_id', '') }}"
+        value: "{{ config['insight_tenant_id'] }}"
+      - path: [source_id]
+        value: "{{ config['insight_source_id'] }}"
       - path: [collected_at]
         value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
       - path: [data_source]
@@ -59,18 +59,19 @@ streams:
   - type: DeclarativeStream
     name: claude_api_messages_usage
     primary_key:
-      - unique
+      - unique_key
     schema_loader:
       type: InlineSchemaLoader
       schema:
         $schema: http://json-schema.org/schema#
         type: object
+        additionalProperties: true
         properties:
           tenant_id:
             type: string
-          insight_source_id:
+          source_id:
             type: string
-          unique:
+          unique_key:
             type: string
           date:
             type: string
@@ -155,8 +156,8 @@ streams:
             value: "{{ record.get('cache_creation', {}).get('ephemeral_1h_input_tokens', 0) }}"
           - path: [web_search_requests]
             value: "{{ record.get('server_tool_use', {}).get('web_search_requests', 0) }}"
-          - path: [unique]
-            value: "{{ stream_interval['start_time'][:10] }}|{{ record.get('model') or '' }}|{{ record.get('api_key_id') or '' }}|{{ record.get('workspace_id') or '' }}|{{ record.get('service_tier') or '' }}|{{ record.get('context_window') or '' }}"
+          - path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_interval['start_time'][:10] }}|{{ record.get('model') or '' }}|{{ record.get('api_key_id') or '' }}|{{ record.get('workspace_id') or '' }}|{{ record.get('service_tier') or '' }}|{{ record.get('context_window') or '' }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: date
@@ -183,18 +184,19 @@ streams:
   - type: DeclarativeStream
     name: claude_api_cost_report
     primary_key:
-      - unique
+      - unique_key
     schema_loader:
       type: InlineSchemaLoader
       schema:
         $schema: http://json-schema.org/schema#
         type: object
+        additionalProperties: true
         properties:
           tenant_id:
             type: string
-          insight_source_id:
+          source_id:
             type: string
-          unique:
+          unique_key:
             type: string
           date:
             type: string
@@ -271,8 +273,8 @@ streams:
         fields:
           - path: [date]
             value: "{{ stream_interval['start_time'][:10] }}"
-          - path: [unique]
-            value: "{{ stream_interval['start_time'][:10] }}|{{ record.get('workspace_id') or '' }}|{{ record.get('description') or '' }}"
+          - path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_interval['start_time'][:10] }}|{{ record.get('workspace_id') or '' }}|{{ record.get('description') or '' }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: date
@@ -305,10 +307,11 @@ streams:
       schema:
         $schema: http://json-schema.org/schema#
         type: object
+        additionalProperties: true
         properties:
           tenant_id:
             type: string
-          insight_source_id:
+          source_id:
             type: string
           id:
             type: string
@@ -384,10 +387,11 @@ streams:
       schema:
         $schema: http://json-schema.org/schema#
         type: object
+        additionalProperties: true
         properties:
           tenant_id:
             type: string
-          insight_source_id:
+          source_id:
             type: string
           id:
             type: string
@@ -449,10 +453,11 @@ streams:
       schema:
         $schema: http://json-schema.org/schema#
         type: object
+        additionalProperties: true
         properties:
           tenant_id:
             type: string
-          insight_source_id:
+          source_id:
             type: string
           id:
             type: string
@@ -506,25 +511,27 @@ spec:
     $schema: http://json-schema.org/draft-07/schema#
     type: object
     required:
-      - tenant_id
+      - insight_tenant_id
+      - insight_source_id
       - admin_api_key
     properties:
-      tenant_id:
+      insight_tenant_id:
         type: string
-        title: Tenant ID
-        description: Tenant isolation identifier (UUID)
+        title: Insight Tenant ID
+        description: Insight tenant isolation identifier (UUID)
+        minLength: 1
         order: 0
+      insight_source_id:
+        type: string
+        title: Insight Source ID
+        description: Connector instance identifier for multi-instance deployments
+        minLength: 1
+        order: 1
       admin_api_key:
         type: string
         title: Admin API Key
         description: Anthropic Admin API key (from Anthropic Console)
         airbyte_secret: true
-        order: 1
-      insight_source_id:
-        type: string
-        title: Source Instance ID
-        description: Optional connector instance identifier for multi-instance deployments
-        default: ""
         order: 2
       start_date:
         type: string

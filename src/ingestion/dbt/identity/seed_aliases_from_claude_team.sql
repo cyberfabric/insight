@@ -19,8 +19,11 @@
     tags=['identity:seed', 'aliases']
 ) }}
 
+-- depends_on: {{ ref('seed_persons_from_claude_team') }}
+-- depends_on: {{ ref('seed_persons_from_cursor') }}
+
 WITH latest AS (
-    SELECT id AS source_id, email, name, tenant_id
+    SELECT id AS account_id, email, name, tenant_id, source_id
     FROM {{ source('bronze_claude_team', 'claude_team_users') }}
     WHERE email IS NOT NULL AND email != ''
     QUALIFY row_number() OVER (PARTITION BY lower(trim(email)), coalesce(tenant_id, '') ORDER BY _airbyte_extracted_at DESC) = 1
@@ -28,14 +31,15 @@ WITH latest AS (
 
 source AS (
     SELECT
-        l.source_id                                                 AS source_account_id,
+        l.account_id                                                AS source_account_id,
         l.name,
         l.email,
+        l.source_id                                                 AS bronze_source_id,
         p.id                                                        AS person_id,
         p.insight_tenant_id
     FROM latest l
     INNER JOIN person.persons p ON lower(trim(l.email)) = lower(p.email)
-        AND UUIDNumToString(sipHash128(coalesce(l.tenant_id, ''))) = p.insight_tenant_id  -- TEMPORARY: until tenants table
+        AND toUUID(UUIDNumToString(sipHash128(coalesce(l.tenant_id, '')))) = p.insight_tenant_id  -- TEMPORARY: sipHash128 until tenants table (REC-IR-04)
 ),
 
 new_aliases AS (
@@ -47,7 +51,7 @@ new_aliases AS (
         'email'                                                     AS alias_type,
         lower(trim(email))                                          AS alias_value,
         'bronze_claude_team.claude_team_users.email'                AS alias_field_name,
-        toUUID('00000000-0000-0000-0000-000000000000')              AS insight_source_id,
+        toUUID(UUIDNumToString(sipHash128(coalesce(bronze_source_id, '')))) AS insight_source_id,  -- TEMPORARY: sipHash128 until sources table (REC-IR-04)
         'claude_team'                                               AS insight_source_type,
         source_account_id,
         toFloat32(1.0)                                              AS confidence,
@@ -72,7 +76,7 @@ new_aliases AS (
         'platform_id',
         trim(source_account_id),
         'bronze_claude_team.claude_team_users.id',
-        toUUID('00000000-0000-0000-0000-000000000000'),
+        toUUID(UUIDNumToString(sipHash128(coalesce(bronze_source_id, '')))),  -- TEMPORARY: sipHash128 until sources table (REC-IR-04)
         'claude_team',
         source_account_id,
         toFloat32(1.0),
@@ -97,7 +101,7 @@ new_aliases AS (
         'display_name',
         trim(name),
         'bronze_claude_team.claude_team_users.name',
-        toUUID('00000000-0000-0000-0000-000000000000'),
+        toUUID(UUIDNumToString(sipHash128(coalesce(bronze_source_id, '')))),  -- TEMPORARY: sipHash128 until sources table (REC-IR-04)
         'claude_team',
         source_account_id,
         toFloat32(1.0),

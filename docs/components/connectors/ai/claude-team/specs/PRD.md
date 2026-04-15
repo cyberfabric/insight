@@ -372,6 +372,8 @@ Bronze table schemas **MUST** remain stable across connector versions. Breaking 
 
 **Breaking Change Policy**: Adding new fields is non-breaking. Removing or renaming fields requires a migration.
 
+**Migration (PR #142)**: The config spec renamed `tenant_id` → `insight_tenant_id` and added `insight_source_id` as required. This is a breaking change for existing Airbyte sources. Deployment procedure: (1) ensure K8s Secrets have `insight.cyberfabric.com/source-id` annotation, (2) run `register.sh` to update the Airbyte definition, (3) run `connect.sh` to update existing source configs. Step 3 auto-injects `insight_tenant_id` and `insight_source_id` from tenant YAML and Secret annotation. Without step 3, existing sources will fail validation on next sync.
+
 ### 7.2 External Integration Contracts
 
 #### Anthropic Admin API
@@ -392,7 +394,7 @@ Bronze table schemas **MUST** remain stable across connector versions. Breaking 
 
 **Authentication**: API key via `x-api-key` header, with required `anthropic-version: 2023-06-01` header.
 
-**Compatibility**: Anthropic Admin API. Response format is JSON with cursor-based pagination. Field additions are non-breaking. Pagination parameter details are documented in [DESIGN.md](./DESIGN.md) §3.3.
+**Compatibility**: Anthropic Admin API. Response format is JSON; pagination varies by stream (cursor-based for users, next-page token for code_usage, offset for workspaces/invites). See [DESIGN.md](./DESIGN.md) §3.3 for details. Field additions are non-breaking. Pagination parameter details are documented in [DESIGN.md](./DESIGN.md) §3.3.
 
 ## 8. Use Cases
 
@@ -469,7 +471,7 @@ Bronze table schemas **MUST** remain stable across connector versions. Breaking 
 - `email` is present in users records; `actor_identifier` is present in code usage records
 - Pagination is exhausted for all paginated endpoints (no truncated results)
 - API key authentication with `x-api-key` header and `anthropic-version: 2023-06-01` works correctly
-- `tenant_id` is present in every record emitted by the connector (injected via `AddFields` transformation)
+- `tenant_id` is present in every record (mapped from config `insight_tenant_id` via `AddFields` transformation)
 - `data_source` is set to `insight_claude_team` in every record
 
 ## 10. Dependencies
@@ -489,7 +491,7 @@ Bronze table schemas **MUST** remain stable across connector versions. Breaking 
 - The Anthropic Admin API response format remains stable across minor versions
 - `email` in the users endpoint and `actor_identifier` in the code usage endpoint are stable, non-null fields for user-type actors
 - Code usage data granularity is one row per `(date, actor_type, actor_identifier, terminal_type)`
-- All endpoints use cursor-based pagination (exact parameter names are configured in the connector manifest)
+- Endpoints use mixed pagination: cursor-based (`after_id`) for users, next-page token for code_usage, offset for workspaces/workspace_members/invites. Parameter names are configured in the connector manifest
 - The `anthropic-version: 2023-06-01` header is required on all requests and will remain stable
 - Workspace members can be fetched by iterating over workspace IDs from the workspaces endpoint
 - Daily usage data is available with D+1 lag (same day or next day)

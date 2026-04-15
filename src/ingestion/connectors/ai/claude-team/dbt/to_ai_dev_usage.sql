@@ -5,11 +5,13 @@
 {{ config(materialized='incremental', unique_key='unique_id') }}
 
 SELECT
-    tenant_id,
-    source_instance_id,
+    tenant_id AS insight_tenant_id,
+    source_id AS insight_source_id,
+    'claude-team' AS insight_source_type,
     -- actor_type omitted from key: model filters to actor_type='user' so it's
     -- always constant; Bronze unique key includes it (see connector.yaml)
-    concat(date, '|', actor_identifier, '|', terminal_type)
+    concat(insight_tenant_id, '-', insight_source_id, '-',
+           date, '|', actor_identifier, '|', terminal_type)
                                                     AS unique_id,
     date                                            AS report_date,
     actor_identifier                                AS email,

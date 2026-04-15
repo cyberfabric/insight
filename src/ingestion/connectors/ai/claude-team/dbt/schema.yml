@@ -18,12 +18,18 @@ models:
       Filters code_usage to actor_type='user', maps actor_identifier as email.
       Feeds class_ai_dev_usage alongside Cursor and Windsurf.
     columns:
-      - name: tenant_id
-        description: "Tenant isolation field — framework-injected"
+      - name: insight_tenant_id
+        description: "Insight tenant isolation identifier (mapped from Bronze tenant_id)"
         tests:
           - not_null
       - name: insight_source_id
-        description: "Connector instance identifier"
+        description: "Connector instance identifier (mapped from Bronze source_id)"
+        tests:
+          - not_null
+      - name: insight_source_type
+        description: "Source system type (always 'claude-team')"
+        tests:
+          - not_null
       - name: unique_id
         description: "Composite dedup key: date|actor_identifier|terminal_type"
         tests:

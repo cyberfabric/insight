@@ -15,7 +15,9 @@ definitions:
     type: AddFields
     fields:
       - path: [tenant_id]
-        value: "{{ config['tenant_id'] }}"
+        value: "{{ config['insight_tenant_id'] }}"
+      - path: [source_id]
+        value: "{{ config['insight_source_id'] }}"
 
   post_paginator:
     type: DefaultPaginator
@@ -52,7 +54,7 @@ streams:
   - type: DeclarativeStream
     name: cursor_members
     primary_key:
-      - email
+      - unique_key
     schema_loader:
       type: InlineSchemaLoader
       schema:
@@ -60,6 +62,10 @@ streams:
         type: object
         properties:
           tenant_id:
+            type: string
+          source_id:
+            type: string
+          unique_key:
             type: string
           id:
             type: string
@@ -71,6 +77,7 @@ streams:
             type: string
           isRemoved:
             type: boolean
+        additionalProperties: true
     retriever:
       type: SimpleRetriever
       requester:
@@ -92,12 +99,16 @@ streams:
         type: NoPagination
     transformations:
       - $ref: "#/definitions/tenant_id_injection"
+      - type: AddFields
+        fields:
+          - path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['email'] }}"
 
   # ── Stream 2: cursor_audit_logs (incremental, GET) ──
   - type: DeclarativeStream
     name: cursor_audit_logs
     primary_key:
-      - event_id
+      - unique_key
     schema_loader:
       type: InlineSchemaLoader
       schema:
@@ -105,6 +116,10 @@ streams:
         type: object
         properties:
           tenant_id:
+            type: string
+          source_id:
+            type: string
+          unique_key:
             type: string
           event_id:
             type: string
@@ -122,6 +137,7 @@ streams:
             type:
               - string
               - "null"
+        additionalProperties: true
     retriever:
       type: SimpleRetriever
       requester:
@@ -143,6 +159,10 @@ streams:
         $ref: "#/definitions/get_paginator"
     transformations:
       - $ref: "#/definitions/tenant_id_injection"
+      - type: AddFields
+        fields:
+          - path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['event_id'] }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: timestamp
@@ -167,7 +187,7 @@ streams:
   - type: DeclarativeStream
     name: cursor_usage_events
     primary_key:
-      - unique
+      - unique_key
     schema_loader:
       type: InlineSchemaLoader
       schema:
@@ -176,7 +196,9 @@ streams:
         properties:
           tenant_id:
             type: string
-          unique:
+          source_id:
+            type: string
+          unique_key:
             type: string
           userEmail:
             type: string
@@ -211,6 +233,7 @@ streams:
                 type: number
               totalCents:
                 type: number
+        additionalProperties: true
     retriever:
       type: SimpleRetriever
       requester:
@@ -238,8 +261,8 @@ streams:
       - type: AddFields
         fields:
           - path:
-              - unique
-            value: "{{ record['userEmail'] }}{{ record['timestamp'] }}"
+              - unique_key
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['userEmail'] }}|{{ record['timestamp'] }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: timestamp
@@ -255,7 +278,7 @@ streams:
   - type: DeclarativeStream
     name: cursor_usage_events_daily_resync
     primary_key:
-      - unique
+      - unique_key
     schema_loader:
       type: InlineSchemaLoader
       schema:
@@ -264,7 +287,9 @@ streams:
         properties:
           tenant_id:
             type: string
-          unique:
+          source_id:
+            type: string
+          unique_key:
             type: string
           userEmail:
             type: string
@@ -299,6 +324,7 @@ streams:
                 type: number
               totalCents:
                 type: number
+        additionalProperties: true
     retriever:
       type: SimpleRetriever
       requester:
@@ -326,8 +352,8 @@ streams:
       - type: AddFields
         fields:
           - path:
-              - unique
-            value: "{{ record['userEmail'] }}{{ record['timestamp'] }}"
+              - unique_key
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['userEmail'] }}|{{ record['timestamp'] }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: timestamp
@@ -347,7 +373,7 @@ streams:
   - type: DeclarativeStream
     name: cursor_daily_usage
     primary_key:
-      - unique
+      - unique_key
     schema_loader:
       type: InlineSchemaLoader
       schema:
@@ -356,7 +382,9 @@ streams:
         properties:
           tenant_id:
             type: string
-          unique:
+          source_id:
+            type: string
+          unique_key:
             type: string
           userId:
             type: string
@@ -418,6 +446,7 @@ streams:
             type: number
           apiKeyReqs:
             type: number
+        additionalProperties: true
     retriever:
       type: SimpleRetriever
       requester:
@@ -442,8 +471,8 @@ streams:
       - type: AddFields
         fields:
           - path:
-              - unique
-            value: "{{ record['email'] }}{{ record['date'] }}"
+              - unique_key
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['email'] }}|{{ record['date'] }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: date
@@ -469,20 +498,28 @@ spec:
     $schema: http://json-schema.org/draft-07/schema#
     type: object
     required:
-      - tenant_id
+      - insight_tenant_id
+      - insight_source_id
       - api_key
     properties:
-      tenant_id:
+      insight_tenant_id:
         type: string
-        title: Tenant ID
-        description: Tenant isolation identifier (UUID)
+        title: Insight Tenant ID
+        description: Insight tenant isolation identifier (UUID)
+        minLength: 1
         order: 0
+      insight_source_id:
+        type: string
+        title: Insight Source ID
+        description: Connector instance identifier for multi-instance deployments
+        minLength: 1
+        order: 1
       api_key:
         type: string
         title: API Key
         description: Cursor team API key
         airbyte_secret: true
-        order: 1
+        order: 2
     additionalProperties: true
 
 metadata:

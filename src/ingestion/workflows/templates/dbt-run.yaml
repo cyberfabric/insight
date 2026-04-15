@@ -17,6 +17,8 @@ spec:
             default: "clickhouse.data.svc.cluster.local"
           - name: clickhouse_port
             default: "8123"
+          - name: full_refresh
+            default: ""
       activeDeadlineSeconds: 1800
       script:
         image: insight-toolbox:local
@@ -44,4 +46,4 @@ spec:
                 password: "${CH_PASS}"
                 secure: false
           PROFILES
-          dbt run --profiles-dir . --select "{{inputs.parameters.dbt_select}}"
+          dbt run --profiles-dir . --select "{{inputs.parameters.dbt_select}}" {{inputs.parameters.full_refresh}}

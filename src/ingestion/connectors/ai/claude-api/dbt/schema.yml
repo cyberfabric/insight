@@ -18,12 +18,18 @@ models:
       Joins messages_usage with keys and workspaces for dimension enrichment.
       person_id is always NULL (API usage has no direct user attribution).
     columns:
-      - name: tenant_id
-        description: "Tenant isolation field — framework-injected"
+      - name: insight_tenant_id
+        description: "Insight tenant isolation identifier (mapped from Bronze tenant_id)"
         tests:
           - not_null
       - name: insight_source_id
-        description: "Connector instance identifier"
+        description: "Connector instance identifier (mapped from Bronze source_id)"
+        tests:
+          - not_null
+      - name: insight_source_type
+        description: "Source system type (always 'claude-api')"
+        tests:
+          - not_null
       - name: unique_id
         description: "Composite dedup key: date|model|api_key_id|workspace_id|service_tier|context_window"
         tests:

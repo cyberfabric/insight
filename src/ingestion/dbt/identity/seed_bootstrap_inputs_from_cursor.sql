@@ -21,22 +21,23 @@
 
 -- Each cursor member emits up to 3 observation rows: email, platform_id, display_name.
 -- Column set matches bootstrap_inputs_from_history macro output.
--- TEMPORARY: insight_tenant_id derived via sipHash128 until tenants table exists.
+-- TEMPORARY: insight_tenant_id/insight_source_id derived via sipHash128 until tenants/sources tables exist (REC-IR-04).
 
 WITH source AS (
     SELECT
         cm.id                                                       AS source_account_id,
         cm.name,
         cm.email,
-        cm.tenant_id
+        cm.tenant_id,
+        cm.source_id
     FROM {{ source('bronze_cursor', 'cursor_members') }} cm
 ),
 
 observations AS (
     -- email
     SELECT
-        UUIDNumToString(sipHash128(coalesce(tenant_id, '')))        AS insight_tenant_id,
-        toUUID('00000000-0000-0000-0000-000000000000')              AS insight_source_id,
+        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, ''))))        AS insight_tenant_id,
+        toUUID(UUIDNumToString(sipHash128(coalesce(source_id, ''))))        AS insight_source_id,
         'cursor'                                                    AS insight_source_type,
         source_account_id,
         'email'                                                     AS alias_type,
@@ -51,8 +52,8 @@ observations AS (
 
     -- platform_id (cursor user ID)
     SELECT
-        UUIDNumToString(sipHash128(coalesce(tenant_id, ''))),
-        toUUID('00000000-0000-0000-0000-000000000000'),
+        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))),
+        toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))),
         'cursor',
         source_account_id,
         'platform_id',
@@ -67,8 +68,8 @@ observations AS (
 
     -- display_name
     SELECT
-        UUIDNumToString(sipHash128(coalesce(tenant_id, ''))),
-        toUUID('00000000-0000-0000-0000-000000000000'),
+        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))),
+        toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))),
         'cursor',
         source_account_id,
         'display_name',

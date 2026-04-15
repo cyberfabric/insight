@@ -16,8 +16,8 @@ date: 2026-04-08
   - [Consequences](#consequences)
   - [Confirmation](#confirmation)
 - [Pros and Cons of the Options](#pros-and-cons-of-the-options)
-  - [Option 1: cursor\_granularity: PT1S (chosen)](#option-1-cursor_granularity-pt1s-chosen)
-  - [Option 2: Keep cursor\_granularity: P1D](#option-2-keep-cursor_granularity-p1d)
+  - [Option 1: cursor_granularity: PT1S (chosen)](#option-1-cursorgranularity-pt1s-chosen)
+  - [Option 2: Keep cursor_granularity: P1D](#option-2-keep-cursorgranularity-p1d)
 - [More Information](#more-information)
 - [Traceability](#traceability)
 
