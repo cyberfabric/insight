@@ -122,19 +122,20 @@ class GitHubRestStream(HttpStream, ABC):
             return 60.0
         return None
 
-    def parse_response(self, response: requests.Response, **kwargs) -> Iterable[Mapping[str, Any]]:
+    def _guard_response(self, response: requests.Response) -> bool:
+        """Check auth errors and unexpected status codes.
+        Returns True if safe to parse JSON. Raises on auth errors."""
         if response.status_code in (401, 403) and not _is_rate_limit_403(response):
             raise GitHubAuthError(
                 f"GitHub auth error ({response.status_code}): {response.text[:200]}"
             )
-        if response.status_code == 404:
-            logger.warning(f"Resource not found (404): {response.url}")
-            return
-        if response.status_code == 409:
-            logger.warning(f"Empty repository (409): {response.url}")
-            return
         if response.status_code >= 400:
             logger.error(f"Unexpected HTTP {response.status_code}: {response.url} — {response.text[:200]}")
+            return False
+        return True
+
+    def parse_response(self, response: requests.Response, **kwargs) -> Iterable[Mapping[str, Any]]:
+        if not self._guard_response(response):
             return
         data = response.json()
         records = data if isinstance(data, list) else [data]

@@ -94,11 +94,7 @@ class FileChangesStream(GitHubRestStream):
         owner = s.get("owner", "")
         repo = s.get("repo", "")
 
-        if response.status_code in (404, 409):
-            logger.warning(
-                f"Skipping {owner}/{repo} file_changes ({response.status_code}): "
-                f"sha={s.get('sha', '?')[:8]}"
-            )
+        if not self._guard_response(response):
             return
 
         data = response.json()

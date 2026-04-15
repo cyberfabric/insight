@@ -48,8 +48,7 @@ class RepositoriesStream(GitHubRestStream):
 
     def parse_response(self, response, stream_slice=None, **kwargs):
         org = (stream_slice or {}).get("org", "")
-        if response.status_code in (404, 409):
-            logger.warning(f"Skipping repos for org {org} ({response.status_code})")
+        if not self._guard_response(response):
             return
         repos = response.json()
         if not isinstance(repos, list):

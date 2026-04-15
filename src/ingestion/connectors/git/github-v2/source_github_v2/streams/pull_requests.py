@@ -50,6 +50,7 @@ class PullRequestsStream(GitHubGraphQLStream):
         )
         self._partitions_with_errors: set = set()
         self._child_slice_cache: dict[tuple, dict] = {}
+        self._child_cache_built: bool = False
         self._current_cursor_value: Optional[str] = None
         # Disk-backed embedded child data — near-zero memory.
         # Each line is JSON: {commits: {...}, reviews: {...}, comments: {...}, review_threads: {...}}
@@ -74,6 +75,7 @@ class PullRequestsStream(GitHubGraphQLStream):
                     sync_mode=sync_mode, stream_slice=repo_slice,
                     stream_state=stream_state, **kwargs,
                 )
+            self._child_cache_built = True
         else:
             yield from super().read_records(
                 sync_mode=sync_mode, stream_slice=stream_slice,
@@ -352,7 +354,7 @@ class PullRequestsStream(GitHubGraphQLStream):
         Populated during parse_response (no re-read). If called before
         parse_response has run, triggers a full read to populate.
         """
-        if self._child_slice_cache:
+        if self._child_cache_built:
             return list(self._child_slice_cache.values())
         # Fallback: trigger read if not yet populated (e.g., CDK hasn't driven this stream yet)
         list(self.read_records(sync_mode=None))

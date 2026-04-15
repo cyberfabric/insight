@@ -52,8 +52,7 @@ class BranchesStream(GitHubRestStream):
         s = stream_slice or {}
         owner = s.get("owner", "")
         repo = s.get("repo", "")
-        if response.status_code in (404, 409):
-            logger.warning(f"Skipping branches for {owner}/{repo} ({response.status_code})")
+        if not self._guard_response(response):
             return
         branches = response.json()
         if not isinstance(branches, list):
