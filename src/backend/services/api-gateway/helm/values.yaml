@@ -29,7 +29,15 @@ resources:
     memory: 256Mi
 
 # OIDC configuration (required for production)
+#
+# Two modes:
+#   1. Pre-provisioned Secret (recommended): set oidc.existingSecret to the
+#      name of a K8s Secret containing all OIDC env vars (see secrets/oidc.yaml.example).
+#      Values below are ignored.
+#   2. Inline values: set oidc.issuer / clientId / redirectUri / audience directly.
+#      The chart will create its own Secret from these values. Suitable for local dev.
 oidc:
+  existingSecret: ""      # Name of pre-provisioned Secret. When set, inline values below are ignored.
   issuer: ""              # e.g., https://dev-12345.okta.com/oauth2/default
   audience: ""            # e.g., api://insight
   clientId: ""            # Frontend (public) OIDC client ID

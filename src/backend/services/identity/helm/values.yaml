@@ -25,6 +25,14 @@ existingSecret: ""
 clickhouse:
   url: "http://insight-clickhouse:8123"
   database: "insight"
+  # Credentials: prefer a pre-existing K8s Secret (set credentialsSecret.name).
+  # When set, user/password below are ignored and values are injected via
+  # env: secretKeyRef at pod level.
+  credentialsSecret:
+    name: ""                  # e.g., clickhouse-credentials
+    userKey: "username"
+    passwordKey: "password"
+  # Inline fallback (used only when credentialsSecret.name is empty).
   user: "insight"
   password: ""
 

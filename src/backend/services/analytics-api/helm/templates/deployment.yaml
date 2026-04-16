@@ -35,6 +35,19 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ .Values.existingSecret | default (printf "%s-config" (include "insight-analytics-api.fullname" .)) }}
+          {{- if .Values.clickhouse.credentialsSecret.name }}
+          env:
+            - name: ANALYTICS__clickhouse_user
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.clickhouse.credentialsSecret.name | quote }}
+                  key: {{ .Values.clickhouse.credentialsSecret.userKey | quote }}
+            - name: ANALYTICS__clickhouse_password
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.clickhouse.credentialsSecret.name | quote }}
+                  key: {{ .Values.clickhouse.credentialsSecret.passwordKey | quote }}
+          {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
           {{- with .Values.livenessProbe }}
@@ -55,5 +68,18 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ .Values.existingSecret | default (printf "%s-config" (include "insight-analytics-api.fullname" .)) }}
+          {{- if .Values.clickhouse.credentialsSecret.name }}
+          env:
+            - name: ANALYTICS__clickhouse_user
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.clickhouse.credentialsSecret.name | quote }}
+                  key: {{ .Values.clickhouse.credentialsSecret.userKey | quote }}
+            - name: ANALYTICS__clickhouse_password
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.clickhouse.credentialsSecret.name | quote }}
+                  key: {{ .Values.clickhouse.credentialsSecret.passwordKey | quote }}
+          {{- end }}
           securityContext:
             allowPrivilegeEscalation: false

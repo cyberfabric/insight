@@ -1,4 +1,7 @@
+.env
 .env.local
+.env.*
+!.env.*.example
 up-orb.sh
 __pycache__/
 *.pyc
