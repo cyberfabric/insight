@@ -1,0 +1,50 @@
+version: 2
+
+sources:
+  - name: bronze_slack
+    schema: bronze_slack
+    tables:
+      - name: users
+      - name: channels
+      - name: messages
+
+models:
+  - name: slack__comms_events
+    description: "Slack message events -> staging, feeds class_comms_events"
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: source_id
+        tests:
+          - not_null
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: activity_date
+        tests:
+          - not_null
+
+  - name: slack__users_snapshot
+    description: "Slack users snapshot — tracks field changes over time"
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: source_id
+        tests:
+          - not_null
+      - name: unique_key
+        tests:
+          - not_null
+
+  - name: slack__users_fields_history
+    description: "Slack users field-level change history"
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: source_id
+        tests:
+          - not_null

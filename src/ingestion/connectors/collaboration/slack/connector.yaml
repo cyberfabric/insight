@@ -7,6 +7,10 @@ check:
   stream_names:
     - users
 
+concurrency_level:
+  type: ConcurrencyLevel
+  default_concurrency: 1
+
 definitions:
   base_error_handler:
     type: CompositeErrorHandler
@@ -47,7 +51,7 @@ definitions:
     url_base: https://slack.com/api/
     authenticator:
       type: BearerAuthenticator
-      api_token: "{{ config['bot_token'] }}"
+      api_token: "{{ config['slack_bot_token'] }}"
     request_headers:
       Accept: application/json
 
@@ -65,10 +69,9 @@ definitions:
       condition: "{{ not response.get('response_metadata', {}).get('next_cursor') }}"
 
   streams:
-    # ── users ─────────────────────────────────────────────────────────
+    # -- users ---------------------------------------------------------------
     # Root stream: Slack user directory from users.list
-    # Full refresh — small dataset, no incremental sync needed
-    # PRD: cpt-insightspec-fr-slack-user-directory
+    # Full refresh -- small dataset, no incremental sync needed
     users:
       type: DeclarativeStream
       name: users
@@ -83,7 +86,7 @@ definitions:
           error_handler:
             $ref: "#/definitions/base_error_handler"
           request_parameters:
-            limit: "{{ config.get('page_size', 200) }}"
+            limit: "{{ config.get('slack_page_size', 200) }}"
         paginator:
           $ref: "#/definitions/slack_paginator"
         record_selector:
@@ -93,7 +96,7 @@ definitions:
             field_path:
               - members
       primary_key:
-        - slack_user_id
+        - unique_key
       schema_loader:
         type: InlineSchemaLoader
         schema:
@@ -128,21 +131,16 @@ definitions:
               value: "{{ config['insight_tenant_id'] }}"
             - type: AddedFieldDefinition
               path:
-                - source_instance_id
-              value: "{{ config['source_instance_id'] }}"
+                - source_id
+              value: "{{ config['insight_source_id'] }}"
             - type: AddedFieldDefinition
               path:
-                - _airbyte_data_source
-              value: insight_slack
-            - type: AddedFieldDefinition
-              path:
-                - _airbyte_collected_at
-              value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+                - unique_key
+              value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
 
-    # ── channels ──────────────────────────────────────────────────────
+    # -- channels ------------------------------------------------------------
     # Root stream: Slack channel directory from conversations.list
-    # Full refresh — provides authoritative channel_type for message attribution
-    # PRD: cpt-insightspec-fr-slack-channel-type-cache
+    # Full refresh -- provides authoritative channel_type for message attribution
     channels:
       type: DeclarativeStream
       name: channels
@@ -157,8 +155,8 @@ definitions:
           error_handler:
             $ref: "#/definitions/base_error_handler"
           request_parameters:
-            types: "{{ config.get('channel_types', 'public_channel,private_channel,mpim,im') }}"
-            limit: "{{ config.get('page_size', 200) }}"
+            types: "{{ config.get('slack_channel_types', 'public_channel,private_channel,mpim,im') }}"
+            limit: "{{ config.get('slack_page_size', 200) }}"
             exclude_archived: "true"
         paginator:
           $ref: "#/definitions/slack_paginator"
@@ -169,7 +167,7 @@ definitions:
             field_path:
               - channels
       primary_key:
-        - channel_id
+        - unique_key
       schema_loader:
         type: InlineSchemaLoader
         schema:
@@ -197,21 +195,16 @@ definitions:
               value: "{{ config['insight_tenant_id'] }}"
             - type: AddedFieldDefinition
               path:
-                - source_instance_id
-              value: "{{ config['source_instance_id'] }}"
+                - source_id
+              value: "{{ config['insight_source_id'] }}"
             - type: AddedFieldDefinition
               path:
-                - _airbyte_data_source
-              value: insight_slack
-            - type: AddedFieldDefinition
-              path:
-                - _airbyte_collected_at
-              value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+                - unique_key
+              value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
 
-    # ── messages ──────────────────────────────────────────────────────
+    # -- messages ------------------------------------------------------------
     # Child stream of channels: raw messages from conversations.history
     # Partitioned by channel_id; incremental via DatetimeBasedCursor on ts
-    # PRD: cpt-insightspec-fr-slack-chat-standard
     messages:
       type: DeclarativeStream
       name: messages
@@ -225,11 +218,6 @@ definitions:
               partition_field: channel_id
               stream:
                 $ref: "#/definitions/streams/channels"
-            - type: ParentStreamConfig
-              parent_key: channel_type
-              partition_field: channel_type
-              stream:
-                $ref: "#/definitions/streams/channels"
         decoder:
           type: JsonDecoder
         requester:
@@ -240,7 +228,7 @@ definitions:
             $ref: "#/definitions/base_error_handler"
           request_parameters:
             channel: "{{ stream_partition.channel_id }}"
-            limit: "{{ config.get('page_size', 200) }}"
+            limit: "{{ config.get('slack_page_size', 200) }}"
         paginator:
           $ref: "#/definitions/slack_paginator"
         record_selector:
@@ -253,16 +241,15 @@ definitions:
         type: DatetimeBasedCursor
         cursor_field: ts
         cursor_datetime_formats:
-          - "%s.%f"
           - "%s"
         datetime_format: "%s"
         start_datetime:
           type: MinMaxDatetime
-          datetime: "{{ config['start_date'] }}"
+          datetime: "{{ config['slack_start_date'] }}"
           datetime_format: "%Y-%m-%d"
         end_datetime:
           type: MinMaxDatetime
-          datetime: "{{ now_utc().strftime('%Y-%m-%d') }}"
+          datetime: "{{ (now_utc() + duration('P1D')).strftime('%Y-%m-%d') }}"
           datetime_format: "%Y-%m-%d"
         start_time_option:
           type: RequestOption
@@ -272,11 +259,11 @@ definitions:
           type: RequestOption
           field_name: latest
           inject_into: request_parameter
-        lookback_window: "P{{ config.get('lookback_days', 7) }}D"
+        lookback_window: "P{{ config.get('slack_lookback_days', 7) }}D"
         step: "P1D"
         cursor_granularity: "PT1S"
       primary_key:
-        - message_key
+        - unique_key
       schema_loader:
         type: InlineSchemaLoader
         schema:
@@ -286,16 +273,16 @@ definitions:
           fields:
             - type: AddedFieldDefinition
               path:
-                - message_key
-              value: "{{ stream_partition.channel_id ~ ':' ~ record['ts'] }}"
+                - ts_raw
+              value: "{{ record['ts'] }}"
+            - type: AddedFieldDefinition
+              path:
+                - ts
+              value: "{{ record['ts'].split('.')[0] }}"
             - type: AddedFieldDefinition
               path:
                 - channel_id
               value: "{{ stream_partition.channel_id }}"
-            - type: AddedFieldDefinition
-              path:
-                - channel_type
-              value: "{{ stream_partition.channel_type }}"
         - type: AddFields
           fields:
             - type: AddedFieldDefinition
@@ -304,16 +291,12 @@ definitions:
               value: "{{ config['insight_tenant_id'] }}"
             - type: AddedFieldDefinition
               path:
-                - source_instance_id
-              value: "{{ config['source_instance_id'] }}"
+                - source_id
+              value: "{{ config['insight_source_id'] }}"
             - type: AddedFieldDefinition
               path:
-                - _airbyte_data_source
-              value: insight_slack
-            - type: AddedFieldDefinition
-              path:
-                - _airbyte_collected_at
-              value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+                - unique_key
+              value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.channel_id }}-{{ record['ts_raw'] }}"
 
 streams:
   - $ref: "#/definitions/streams/users"
@@ -326,12 +309,24 @@ spec:
     type: object
     $schema: http://json-schema.org/draft-07/schema#
     required:
-      - bot_token
       - insight_tenant_id
-      - source_instance_id
-      - start_date
+      - insight_source_id
+      - slack_bot_token
+      - slack_start_date
     properties:
-      bot_token:
+      insight_tenant_id:
+        type: string
+        title: Insight Tenant ID
+        description: Tenant isolation identifier stamped onto every emitted record.
+        order: 0
+      insight_source_id:
+        type: string
+        title: Insight Source ID
+        description: >-
+          Unique identifier for this connector instance (e.g., slack-acme).
+          Disambiguates workspaces in multi-workspace setups.
+        order: 1
+      slack_bot_token:
         type: string
         title: Slack Bot Token
         description: >-
@@ -339,20 +334,8 @@ spec:
           channels:read, groups:history, groups:read, im:history,
           im:read, mpim:history, mpim:read, users:read, users:read.email.
         airbyte_secret: true
-        order: 0
-      insight_tenant_id:
-        type: string
-        title: Insight Tenant ID
-        description: Insight tenant identifier stamped onto every emitted record.
-        order: 1
-      source_instance_id:
-        type: string
-        title: Source Instance ID
-        description: >-
-          Slack workspace identifier (e.g., slack-acme).
-          Disambiguates workspaces in multi-workspace setups.
         order: 2
-      start_date:
+      slack_start_date:
         type: string
         title: Start Date
         description: >-
@@ -360,7 +343,7 @@ spec:
           Subsequent syncs use the incremental cursor with a 7-day lookback window.
         format: date
         order: 3
-      page_size:
+      slack_page_size:
         type: integer
         title: Page Size
         description: Records per API page for paginated Slack endpoints.
@@ -368,7 +351,7 @@ spec:
         minimum: 1
         maximum: 999
         order: 4
-      lookback_days:
+      slack_lookback_days:
         type: integer
         title: Lookback Days
         description: >-
@@ -378,7 +361,7 @@ spec:
         minimum: 1
         maximum: 30
         order: 5
-      channel_types:
+      slack_channel_types:
         type: string
         title: Channel Types
         description: >-
@@ -400,6 +383,12 @@ schemas:
     type: object
     $schema: http://json-schema.org/draft-07/schema#
     properties:
+      unique_key:
+        type: string
+      tenant_id:
+        type: string
+      source_id:
+        type: string
       slack_user_id:
         type: string
       email:
@@ -446,28 +435,22 @@ schemas:
         type:
           - integer
           - "null"
-      tenant_id:
-        type:
-          - string
-          - "null"
-      source_instance_id:
-        type:
-          - string
-          - "null"
-      _airbyte_data_source:
-        type:
-          - string
-          - "null"
-      _airbyte_collected_at:
-        type:
-          - string
-          - "null"
-        format: date-time
+    required:
+      - unique_key
+      - tenant_id
+      - source_id
+      - slack_user_id
     additionalProperties: true
   channels:
     type: object
     $schema: http://json-schema.org/draft-07/schema#
     properties:
+      unique_key:
+        type: string
+      tenant_id:
+        type: string
+      source_id:
+        type: string
       channel_id:
         type: string
       name:
@@ -514,39 +497,31 @@ schemas:
         type:
           - string
           - "null"
-      tenant_id:
-        type:
-          - string
-          - "null"
-      source_instance_id:
-        type:
-          - string
-          - "null"
-      _airbyte_data_source:
-        type:
-          - string
-          - "null"
-      _airbyte_collected_at:
-        type:
-          - string
-          - "null"
-        format: date-time
+    required:
+      - unique_key
+      - tenant_id
+      - source_id
+      - channel_id
     additionalProperties: true
   messages:
     type: object
     $schema: http://json-schema.org/draft-07/schema#
     properties:
-      message_key:
+      unique_key:
+        type: string
+      tenant_id:
+        type: string
+      source_id:
         type: string
       channel_id:
         type:
           - string
           - "null"
-      channel_type:
+      ts:
         type:
           - string
           - "null"
-      ts:
+      ts_raw:
         type:
           - string
           - "null"
@@ -574,21 +549,8 @@ schemas:
         type:
           - integer
           - "null"
-      tenant_id:
-        type:
-          - string
-          - "null"
-      source_instance_id:
-        type:
-          - string
-          - "null"
-      _airbyte_data_source:
-        type:
-          - string
-          - "null"
-      _airbyte_collected_at:
-        type:
-          - string
-          - "null"
-        format: date-time
+    required:
+      - unique_key
+      - tenant_id
+      - source_id
     additionalProperties: true
