@@ -74,6 +74,9 @@ streams:
     name: claude_enterprise_summaries
     primary_key:
       - unique_key
+    supported_sync_modes:
+      - full_refresh
+      - incremental
     retriever:
       type: SimpleRetriever
       decoder:
@@ -181,7 +184,8 @@ streams:
               - "null"
         required:
           - unique_key
-          - date
+          - tenant_id
+          - source_id
         additionalProperties: true
     transformations:
       - type: AddFields
@@ -217,6 +221,9 @@ streams:
     name: claude_enterprise_users
     primary_key:
       - unique_key
+    supported_sync_modes:
+      - full_refresh
+      - incremental
     retriever:
       type: SimpleRetriever
       decoder:
@@ -418,7 +425,8 @@ streams:
               - "null"
         required:
           - unique_key
-          - date
+          - tenant_id
+          - source_id
         additionalProperties: true
     transformations:
       - type: AddFields
@@ -595,6 +603,9 @@ streams:
     name: claude_enterprise_chat_projects
     primary_key:
       - unique_key
+    supported_sync_modes:
+      - full_refresh
+      - incremental
     retriever:
       type: SimpleRetriever
       decoder:
@@ -700,7 +711,8 @@ streams:
               - "null"
         required:
           - unique_key
-          - date
+          - tenant_id
+          - source_id
         additionalProperties: true
     transformations:
       - type: AddFields
@@ -748,6 +760,9 @@ streams:
     name: claude_enterprise_skills
     primary_key:
       - unique_key
+    supported_sync_modes:
+      - full_refresh
+      - incremental
     retriever:
       type: SimpleRetriever
       decoder:
@@ -853,7 +868,8 @@ streams:
               - "null"
         required:
           - unique_key
-          - date
+          - tenant_id
+          - source_id
         additionalProperties: true
     transformations:
       - type: AddFields
@@ -921,6 +937,9 @@ streams:
     name: claude_enterprise_connectors
     primary_key:
       - unique_key
+    supported_sync_modes:
+      - full_refresh
+      - incremental
     retriever:
       type: SimpleRetriever
       decoder:
@@ -1026,7 +1045,8 @@ streams:
               - "null"
         required:
           - unique_key
-          - date
+          - tenant_id
+          - source_id
         additionalProperties: true
     transformations:
       - type: AddFields
@@ -1140,8 +1160,8 @@ spec:
 
 metadata:
   autoImportSchema:
-    claude_enterprise_summaries: true
-    claude_enterprise_users: true
-    claude_enterprise_chat_projects: true
-    claude_enterprise_skills: true
-    claude_enterprise_connectors: true
+    claude_enterprise_summaries: false
+    claude_enterprise_users: false
+    claude_enterprise_chat_projects: false
+    claude_enterprise_skills: false
+    claude_enterprise_connectors: false
