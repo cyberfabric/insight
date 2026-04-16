@@ -1,18 +1,17 @@
 version: 2
 
 sources:
-  - name: bronze
-    schema: raw
+  - name: bronze_cursor
+    schema: bronze_cursor
     tables:
       - name: cursor_members
       - name: cursor_audit_logs
       - name: cursor_usage_events
       - name: cursor_usage_events_daily_resync
       - name: cursor_daily_usage
-      - name: cursor_collection_runs
 
 models:
-  - name: to_cursor_ai_dev_usage
+  - name: cursor__ai_dev_usage
     description: >
       Unified AI dev tool usage events from Cursor.
       Deduplication: yesterday and earlier from daily_resync (finalized costs),
@@ -22,6 +21,15 @@ models:
         description: "Tenant isolation field — framework-injected"
         tests:
           - not_null
+      - name: source_id
+        description: "Connector instance identifier — framework-injected"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite dedup key: tenant_id-source_id-userEmail-timestamp (usage events) or tenant_id-source_id-id (members)"
+        tests:
+          - not_null
+          - unique
       - name: user_email
         description: "User email (identity key for Silver step 2 resolution)"
         tests:
@@ -54,9 +62,66 @@ models:
         description: "Tokens written to cache (from tokenUsage, nullable)"
       - name: total_cents
         description: "Total cost in cents (from tokenUsage, nullable)"
-      - name: data_source
-        description: "Always 'insight_cursor' — source discriminator for cross-tool queries"
+      - name: source
+        description: "Always 'cursor' — source discriminator for cross-tool queries"
         tests:
           - not_null
           - accepted_values:
-              values: ['insight_cursor']
+              values: ['cursor']
+
+  - name: cursor__members_snapshot
+    description: >
+      SCD2 snapshot of Cursor team members. Appends a new row when
+      name, role, or isRemoved changes.
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: source_id
+        tests:
+          - not_null
+      - name: unique_key
+        tests:
+          - not_null
+      - name: email
+        description: "Member email — identity key"
+        tests:
+          - not_null
+      - name: name
+        description: "Display name"
+      - name: role
+        description: "Team role (owner, admin, member)"
+      - name: isRemoved
+        description: "Whether the member has been removed"
+      - name: _row_hash
+        description: "cityHash64 of tracked columns"
+      - name: _tracked_at
+        description: "Timestamp when this version was captured"
+
+  - name: cursor__members_history
+    description: >
+      Field-level change log for Cursor team members.
+      One row per changed field per version transition.
+    columns:
+      - name: entity_id
+        description: "Member ID (stable identifier)"
+        tests:
+          - not_null
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: source_id
+        tests:
+          - not_null
+      - name: field_name
+        description: "Changed field: name, role, or isRemoved"
+        tests:
+          - not_null
+      - name: old_value
+        description: "Previous value (empty string for first version)"
+      - name: new_value
+        description: "New value"
+      - name: updated_at
+        description: "When the change was detected"
+        tests:
+          - not_null
