@@ -37,7 +37,7 @@ metadata:
     app.kubernetes.io/part-of: insight
   annotations:
     insight.cyberfabric.com/connector: slack
-    insight.cyberfabric.com/source-id: main
+    insight.cyberfabric.com/source-id: slack-main
 type: Opaque
 stringData:
   slack_bot_token: "xoxb-..."       # Bot User OAuth Token

@@ -157,7 +157,7 @@ definitions:
           request_parameters:
             types: "{{ config.get('slack_channel_types', 'public_channel,private_channel,mpim,im') }}"
             limit: "{{ config.get('slack_page_size', 200) }}"
-            exclude_archived: "true"
+            exclude_archived: "false"
         paginator:
           $ref: "#/definitions/slack_paginator"
         record_selector:

@@ -26,5 +26,5 @@ LEFT JOIN {{ source('bronze_slack', 'channels') }} c
 WHERE m.user IS NOT NULL
   AND m.subtype IS NULL
 {% if is_incremental() %}
-  AND toDateTime(toFloat64(m.ts)) > (SELECT max(activity_date) FROM {{ this }})
+  AND toDateTime(toFloat64(m.ts)) > (SELECT max(activity_date) - INTERVAL 7 DAY FROM {{ this }})
 {% endif %}
