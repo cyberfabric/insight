@@ -1,0 +1,19 @@
+version: 2
+
+# Bronze source declarations only.
+# Cross-source task-tracker unification (Silver `class_task_tracker_*`) is
+# delivered by the task-tracking Silver layer package, not by this connector.
+# See DESIGN §1.1 and §3.2.
+
+sources:
+  - name: bronze_jira
+    schema: bronze_jira
+    tables:
+      - name: jira_fields
+      - name: jira_projects
+      - name: jira_user
+      - name: jira_issue
+      - name: jira_issue_history
+      - name: jira_comments
+      - name: jira_worklogs
+      - name: jira_sprints

@@ -1,7 +1,14 @@
 name: jira
 version: "1.0"
+
 schedule: "0 3 * * *"
-dbt_select: "tag:jira+"
 workflow: sync
+
+# Silver routing (class_task_tracker_*) is delivered by the task-tracking Silver
+# layer package, not by this connector. This connector ships only Bronze source
+# declarations in dbt/schema.yml. dbt_select is empty so the connector's dbt
+# step is a deliberate no-op. See DESIGN §1.1 and §3.2.
+dbt_select: ""
+
 connection:
   namespace: bronze_jira
