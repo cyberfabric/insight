@@ -21,6 +21,21 @@ CLUSTER_NAME="insight"
 KUBECONFIG_PATH="${KUBECONFIG:-${HOME}/.kube/insight.kubeconfig}"
 COMPONENT="${1:-all}"
 
+# ─── Load .env.local (OIDC credentials, overrides) ─────────────────────────
+ENV_FILE="$ROOT_DIR/.env.local"
+if [[ -f "$ENV_FILE" ]]; then
+  # shellcheck source=/dev/null
+  source "$ENV_FILE"
+fi
+
+: "${OIDC_ISSUER:?ERROR: OIDC_ISSUER is required — set it in .env.local}"
+: "${OIDC_CLIENT_ID:?ERROR: OIDC_CLIENT_ID is required — set it in .env.local}"
+OIDC_REDIRECT_URI="${OIDC_REDIRECT_URI:-http://localhost:8000/callback}"
+OIDC_AUDIENCE="${OIDC_AUDIENCE:-api://default}"
+
+# Timestamp to force pod restarts when image tag doesn't change
+DEPLOY_TS="$(date +%s)"
+
 echo "=== Insight Platform — Environment: ${ENV} ==="
 
 # --- Prerequisites ---
@@ -109,6 +124,7 @@ if [[ "$COMPONENT" == "all" || "$COMPONENT" == "app" || "$COMPONENT" == "backend
     --set clickhouse.database=insight \
     --set redis.url="redis://insight-redis-master:6379" \
     --set identityResolution.url="http://insight-identity-identity-resolution:8082" \
+    --set-string podAnnotations.deployedAt="$DEPLOY_TS" \
     --wait --timeout 3m
 
   echo "=== Building Identity Resolution ==="
@@ -128,8 +144,9 @@ if [[ "$COMPONENT" == "all" || "$COMPONENT" == "app" || "$COMPONENT" == "backend
     --set image.pullPolicy=IfNotPresent \
     --set clickhouse.url="http://clickhouse.data.svc.cluster.local:8123" \
     --set clickhouse.database=insight \
-    --set clickhouse.user=insight \
-    --set clickhouse.password=insight-pass \
+    --set clickhouse.user="${CLICKHOUSE_USER:-insight}" \
+    --set clickhouse.password="${CLICKHOUSE_PASSWORD:-}" \
+    --set-string podAnnotations.deployedAt="$DEPLOY_TS" \
     --wait --timeout 3m
 
   echo "=== Deploying API Gateway ==="
@@ -138,16 +155,23 @@ if [[ "$COMPONENT" == "all" || "$COMPONENT" == "app" || "$COMPONENT" == "backend
     --set image.repository=insight-api-gateway
     --set image.tag=local
     --set image.pullPolicy=IfNotPresent
+    --set ingress.enabled=false
+    --set gateway.enableDocs=true
+    --set oidc.issuer="$OIDC_ISSUER"
+    --set oidc.audience="$OIDC_AUDIENCE"
+    --set oidc.clientId="$OIDC_CLIENT_ID"
+    --set oidc.redirectUri="$OIDC_REDIRECT_URI"
     --set proxy.routes[0].prefix=/analytics
     --set proxy.routes[0].upstream=http://insight-analytics-analytics-api:8081
     --set proxy.routes[0].public=false
     --set proxy.routes[1].prefix=/identity-resolution
     --set proxy.routes[1].upstream=http://insight-identity-identity-resolution:8082
     --set proxy.routes[1].public=false
+    --set-string podAnnotations.deployedAt="$DEPLOY_TS"
     --wait --timeout 3m
   )
   if [[ "$ENV" == "local" ]]; then
-    GW_HELM_ARGS+=(--set authDisabled=true --set ingress.host="" --set gateway.enableDocs=true)
+    GW_HELM_ARGS+=(--set authDisabled=true)
   fi
   helm upgrade --install insight-gw src/backend/services/api-gateway/helm/ "${GW_HELM_ARGS[@]}"
 fi
@@ -165,6 +189,10 @@ if [[ "$COMPONENT" == "all" || "$COMPONENT" == "app" || "$COMPONENT" == "fronten
   helm upgrade --install insight-fe src/frontend/helm/ \
     --namespace insight \
     --set image.pullPolicy=IfNotPresent \
+    --set ingress.enabled=false \
+    --set oidc.issuer="$OIDC_ISSUER" \
+    --set oidc.clientId="$OIDC_CLIENT_ID" \
+    --set-string podAnnotations.deployedAt="$DEPLOY_TS" \
     --wait --timeout 3m
 fi
 

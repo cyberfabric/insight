@@ -1,10 +1,11 @@
 //! In-memory people store built from `bronze_bamboohr.employees`.
 //!
 //! Loaded once at startup. Builds email→person lookup and
-//! supervisor→subordinates relationships.
+//! supervisor→subordinates relationships. Returns recursive subordinate
+//! trees on lookup, with circular dependency protection.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Raw row from `bronze_bamboohr.employees`.
 #[derive(Debug, Deserialize)]
@@ -33,7 +34,24 @@ struct RawEmployee {
     supervisor: Option<String>,
 }
 
-/// Person returned by the API.
+/// Flat person record stored internally (no nested subordinates).
+#[derive(Debug, Clone)]
+struct PersonRecord {
+    email: String,
+    display_name: String,
+    first_name: String,
+    last_name: String,
+    department: String,
+    division: String,
+    job_title: String,
+    status: String,
+    supervisor_email: Option<String>,
+    supervisor_name: Option<String>,
+    /// Direct subordinate emails (lowercased).
+    direct_reports: Vec<String>,
+}
+
+/// Person returned by the API — with recursive subordinate tree.
 #[derive(Debug, Clone, Serialize)]
 pub struct Person {
     pub email: String,
@@ -46,20 +64,12 @@ pub struct Person {
     pub status: String,
     pub supervisor_email: Option<String>,
     pub supervisor_name: Option<String>,
-    pub subordinates: Vec<Subordinate>,
+    pub subordinates: Vec<Person>,
 }
 
-/// Subordinate summary.
-#[derive(Debug, Clone, Serialize)]
-pub struct Subordinate {
-    pub email: String,
-    pub display_name: String,
-    pub job_title: String,
-}
-
-/// In-memory store: email (lowercased) → Person.
+/// In-memory store: email (lowercased) → `PersonRecord`.
 pub struct PeopleStore {
-    by_email: HashMap<String, Person>,
+    by_email: HashMap<String, PersonRecord>,
     aliases: HashMap<String, String>,
 }
 
@@ -95,7 +105,6 @@ impl PeopleStore {
             anyhow::anyhow!("ClickHouse fetch failed: {e}")
         })?;
 
-        // Parse rows, deduplicate by id (first row per id wins due to ORDER BY)
         let mut seen_ids: HashMap<String, ()> = HashMap::new();
         let mut employees: Vec<RawEmployee> = Vec::new();
 
@@ -131,19 +140,20 @@ impl PeopleStore {
         }
 
         let mut store = Self::build(employees);
-        store.aliases = HashMap::new(); // no aliases in test mode
+        store.aliases = HashMap::new();
         Ok(store)
     }
 
     fn build(employees: Vec<RawEmployee>) -> Self {
-        let mut by_email: HashMap<String, Person> = HashMap::new();
+        // Build flat person records
+        let mut by_email: HashMap<String, PersonRecord> = HashMap::new();
         for emp in &employees {
             let email = emp.work_email.as_deref().unwrap_or_default();
             if email.is_empty() {
                 continue;
             }
             let key = email.to_lowercase();
-            by_email.insert(key, Person {
+            by_email.insert(key, PersonRecord {
                 email: email.to_owned(),
                 display_name: emp.display_name.clone().unwrap_or_default(),
                 first_name: emp.first_name.clone().unwrap_or_default(),
@@ -154,11 +164,11 @@ impl PeopleStore {
                 status: emp.status.clone().unwrap_or_default(),
                 supervisor_email: emp.supervisor_email.clone(),
                 supervisor_name: emp.supervisor.clone(),
-                subordinates: Vec::new(),
+                direct_reports: Vec::new(),
             });
         }
 
-        let mut subordinate_map: HashMap<String, Vec<Subordinate>> = HashMap::new();
+        // Build direct_reports: for each person, register them under their supervisor
         for emp in &employees {
             if let Some(ref sup_email) = emp.supervisor_email {
                 let sup_key = sup_email.to_lowercase();
@@ -166,21 +176,12 @@ impl PeopleStore {
                 if email.is_empty() {
                     continue;
                 }
-                subordinate_map.entry(sup_key).or_default().push(Subordinate {
-                    email: email.to_owned(),
-                    display_name: emp.display_name.clone().unwrap_or_default(),
-                    job_title: emp.job_title.clone().unwrap_or_default(),
-                });
+                if let Some(supervisor) = by_email.get_mut(&sup_key) {
+                    supervisor.direct_reports.push(email.to_lowercase());
+                }
             }
         }
 
-        for (email_key, person) in &mut by_email {
-            if let Some(subs) = subordinate_map.remove(email_key) {
-                person.subordinates = subs;
-            }
-        }
-
-        // MVP: hardcoded email aliases for test accounts
         let mut aliases = HashMap::new();
         aliases.insert(
             "test@vz.com".to_owned(),
@@ -190,11 +191,46 @@ impl PeopleStore {
         Self { by_email, aliases }
     }
 
-    pub fn get_by_email(&self, email: &str) -> Option<&Person> {
+    /// Look up a person by email, returning the full recursive subordinate tree.
+    pub fn get_by_email(&self, email: &str) -> Option<Person> {
         let key = email.to_lowercase();
-        // Check aliases first, then direct lookup
         let resolved = self.aliases.get(&key).unwrap_or(&key);
-        self.by_email.get(resolved)
+        let record = self.by_email.get(resolved)?;
+        let mut visited = HashSet::new();
+        Some(self.build_tree(record, &mut visited))
+    }
+
+    /// Recursively build a `Person` with nested subordinates.
+    /// `visited` prevents infinite loops from circular supervisor references.
+    fn build_tree(&self, record: &PersonRecord, visited: &mut HashSet<String>) -> Person {
+        let key = record.email.to_lowercase();
+        visited.insert(key);
+
+        let subordinates = record
+            .direct_reports
+            .iter()
+            .filter_map(|sub_email| {
+                if visited.contains(sub_email) {
+                    return None; // break cycle
+                }
+                let sub_record = self.by_email.get(sub_email)?;
+                Some(self.build_tree(sub_record, visited))
+            })
+            .collect();
+
+        Person {
+            email: record.email.clone(),
+            display_name: record.display_name.clone(),
+            first_name: record.first_name.clone(),
+            last_name: record.last_name.clone(),
+            department: record.department.clone(),
+            division: record.division.clone(),
+            job_title: record.job_title.clone(),
+            status: record.status.clone(),
+            supervisor_email: record.supervisor_email.clone(),
+            supervisor_name: record.supervisor_name.clone(),
+            subordinates,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -207,7 +243,7 @@ mod tests {
     use super::*;
 
     fn test_data() -> &'static [u8] {
-        br#"{"id":"1","status":"Active","firstName":"Alice","lastName":"Smith","displayName":"Alice Smith","workEmail":"alice@example.com","department":"Engineering","division":"R&D","jobTitle":"Staff Engineer","supervisorEmail":"bob@example.com","supervisor":"Smith, Bob"}
+        br#"{"id":"1","status":"Active","firstName":"Alice","lastName":"Smith","displayName":"Alice Smith","workEmail":"alice@example.com","department":"Engineering","division":"R&D","jobTitle":"Staff Engineer","supervisorEmail":"bob@example.com","supervisor":"Jones, Bob"}
 {"id":"2","status":"Active","firstName":"Bob","lastName":"Jones","displayName":"Bob Jones","workEmail":"bob@example.com","department":"Engineering","division":"R&D","jobTitle":"Engineering Manager","supervisorEmail":"carol@example.com","supervisor":"Lee, Carol"}
 {"id":"3","status":"Active","firstName":"Carol","lastName":"Lee","displayName":"Carol Lee","workEmail":"carol@example.com","department":"Engineering","division":"R&D","jobTitle":"VP Engineering","supervisorEmail":null,"supervisor":null}
 {"id":"4","status":"Active","firstName":"Dave","lastName":"Ng","displayName":"Dave Ng","workEmail":"dave@example.com","department":"Engineering","division":"R&D","jobTitle":"Senior Engineer","supervisorEmail":"bob@example.com","supervisor":"Jones, Bob"}"#
@@ -263,7 +299,7 @@ mod tests {
         let store = PeopleStore::from_json_lines(test_data()).unwrap();
         let alice = store.get_by_email("alice@example.com").unwrap();
         assert_eq!(alice.supervisor_email.as_deref(), Some("bob@example.com"));
-        assert_eq!(alice.supervisor_name.as_deref(), Some("Smith, Bob"));
+        assert_eq!(alice.supervisor_name.as_deref(), Some("Jones, Bob"));
     }
 
     #[test]
@@ -275,12 +311,51 @@ mod tests {
     }
 
     #[test]
+    fn recursive_tree() {
+        // Carol → Bob → Alice, Dave
+        let store = PeopleStore::from_json_lines(test_data()).unwrap();
+        let carol = store.get_by_email("carol@example.com").unwrap();
+
+        assert_eq!(carol.subordinates.len(), 1);
+        let bob = &carol.subordinates[0];
+        assert_eq!(bob.email, "bob@example.com");
+        assert_eq!(bob.subordinates.len(), 2);
+
+        let nested_emails: Vec<&str> = bob.subordinates.iter().map(|s| s.email.as_str()).collect();
+        assert!(nested_emails.contains(&"alice@example.com"));
+        assert!(nested_emails.contains(&"dave@example.com"));
+
+        // Leaves have no subordinates
+        for leaf in &bob.subordinates {
+            assert!(leaf.subordinates.is_empty());
+        }
+    }
+
+    #[test]
+    fn circular_dependency_safe() {
+        // A reports to B, B reports to A — cycle
+        let data = br#"{"id":"1","status":"Active","firstName":"A","lastName":"A","displayName":"A","workEmail":"a@example.com","department":"Eng","division":"R&D","jobTitle":"Eng","supervisorEmail":"b@example.com","supervisor":"B"}
+{"id":"2","status":"Active","firstName":"B","lastName":"B","displayName":"B","workEmail":"b@example.com","department":"Eng","division":"R&D","jobTitle":"Eng","supervisorEmail":"a@example.com","supervisor":"A"}"#;
+        let store = PeopleStore::from_json_lines(data).unwrap();
+
+        let a = store.get_by_email("a@example.com").unwrap();
+        // A has B as subordinate, but B should NOT have A again (cycle broken)
+        assert_eq!(a.subordinates.len(), 1);
+        assert_eq!(a.subordinates[0].email, "b@example.com");
+        assert!(a.subordinates[0].subordinates.is_empty()); // cycle cut
+
+        let b = store.get_by_email("b@example.com").unwrap();
+        assert_eq!(b.subordinates.len(), 1);
+        assert_eq!(b.subordinates[0].email, "a@example.com");
+        assert!(b.subordinates[0].subordinates.is_empty()); // cycle cut
+    }
+
+    #[test]
     fn deduplicates_by_id() {
         let data = br#"{"id":"1","status":"Active","firstName":"Alice","lastName":"Smith","displayName":"Alice Smith","workEmail":"alice@example.com","department":"Eng","division":"R&D","jobTitle":"Engineer","supervisorEmail":null,"supervisor":null}
 {"id":"1","status":"Active","firstName":"Alice","lastName":"Smith-Updated","displayName":"Alice Smith-Updated","workEmail":"alice@example.com","department":"Eng","division":"R&D","jobTitle":"Staff Engineer","supervisorEmail":null,"supervisor":null}"#;
         let store = PeopleStore::from_json_lines(data).unwrap();
         assert_eq!(store.len(), 1);
-        // First row wins (simulating ORDER BY _airbyte_extracted_at DESC)
         let alice = store.get_by_email("alice@example.com").unwrap();
         assert_eq!(alice.last_name, "Smith");
     }
