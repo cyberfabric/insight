@@ -78,57 +78,55 @@ Insight connects to 10+ external platforms. Each platform has its own user model
 
 ### 4.1 Identity Input Collection (p1)
 
-Each connector provides a dbt model `{connector}__identity_input` that extracts identity-relevant fields from its fields_history using the `identity_input_from_history` macro. Fields include: email, display_name, employee_id, username, platform_id. Operations: UPSERT (field changed) and DELETE (entity deactivated).
+Each connector extracts identity-relevant fields (email, display_name, employee_id, username, platform_id) from its change history. Two operation types: UPSERT (field changed or set) and DELETE (field cleared or entity deactivated).
 
-All connector identity_input models are unioned into `identity.identity_input` VIEW via `union_by_tag('identity:input')`.
+All connector inputs are unified into a single identity input stream.
 
 ### 4.2 Proposal Generation (p1)
 
-The system generates proposals by comparing identity_input data:
-- **new_profile**: A source profile exists in identity_input but has no link in identity.links
-- **email_match**: Two profiles from different sources share the same email address
-- **deactivation**: A DELETE operation received from a connector
+The system generates matching proposals by comparing identity input data:
+- **new_profile**: A source profile has no current person binding
+- **email_match**: Two profiles from different source systems share the same current email address
+- **deactivation**: A source system signals that an entity has been deactivated
 
-Proposals are incremental (only new observations generate new proposals) and deduplicated.
+Proposals are generated incrementally and deduplicated.
 
 ### 4.3 Operator Link Management (p1)
 
-Operators create links binding source profiles to persons:
-- **Create new person**: Generate a new person_id, link a profile to it
-- **Link to existing person**: Link a profile to an already-existing person_id
-- **Unlink**: Remove a profile's binding (sets profile_id = NULL)
-- **Merge**: Unlink profile from person A + link to person B (two rows, one INSERT)
-- **Split**: Reverse of merge (unlink from B + link back to A)
+Operators bind source profiles to persons:
+- **Create new person**: Assign a new person identity, bind a profile to it
+- **Bind to existing person**: Bind a profile to an already-existing person
+- **Unbind**: Remove a profile's binding to a person
+- **Merge**: Move a profile binding from one person to another (unbind + bind)
+- **Split**: Reverse of merge (unbind + bind back to original)
 
-All operations are append-only in identity.links.
+All operations are append-only and auditable.
 
 ### 4.4 Person Field Materialization (p1)
 
-When links change or new input data arrives, `identity_person` dbt model appends new field rows:
-- **Link event**: All current input fields for the linked profile are written to identity_person with valid_from = link timestamp
-- **Unlink event**: All fields the person had from that source are nullified (empty field_value) with valid_from = unlink timestamp
-- **New input data**: When a connector syncs new data for an already-linked profile, the new field values are appended with valid_from = observed_at
-
-Current person state: `argMax(field_value, valid_from)` grouped by (person_id, field_type, field_source), filtering out empty values.
+When bindings change or new input data arrives, person fields are updated:
+- **Bind event**: Current field values from the bound profile are assigned to the person
+- **Unbind event**: All fields the person had from that profile are cleared
+- **New input data**: When a source syncs new data for an already-bound profile, the new values propagate to the person
 
 ### 4.5 Temporal Queries (p1)
 
-Person state at any historical date is queryable by filtering `valid_from <= target_date` before aggregation. Merge/split operations do not alter past rows -- they only append new rows with later valid_from timestamps.
+Person state at any historical date is queryable. Merge/split operations do not alter past data -- they only add new records with later timestamps.
 
 ## 5. Non-Functional Requirements
 
 | NFR | Target |
 |---|---|
-| Incremental processing | Each dbt run processes only new data since last run; no full table scans for writes |
-| Idempotency | Repeated dbt runs with no new data produce no new rows |
-| Append-only storage | No UPDATE or DELETE on identity.links, identity.identity_person, or identity.identity_proposals |
-| Query performance | Current person state query < 100ms for single person_id |
+| Incremental processing | Each run processes only new data since last run |
+| Idempotency | Repeated runs with no new data produce no new records |
+| Append-only storage | No destructive operations on core tables |
+| Query performance | Current person state query < 100ms for single person |
 
 ## 6. Dependencies
 
 | Dependency | Description |
 |---|---|
-| Connector fields_history models | Each connector must provide `staging.*_fields_history` for identity_input_from_history macro |
-| ClickHouse | All tables stored in ClickHouse (MergeTree family) |
-| dbt + dbt-clickhouse adapter | All transformations via dbt |
-| Operator access to ClickHouse | MVP: operator runs SQL directly; future: UI |
+| Connector change history | Each connector must provide field-level change history for identity input extraction |
+| Data warehouse | All tables stored in a columnar analytical database |
+| Transformation pipeline | Incremental transformations for input processing, proposal generation, person materialization |
+| Operator access | MVP: direct database access; future: UI |

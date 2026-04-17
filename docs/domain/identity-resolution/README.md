@@ -43,14 +43,15 @@ Connectors (Airbyte)
 ### Given a source profile ID (e.g., BambooHR employee_id = "ST069")
 
 ```sql
--- Step 1: Find which person this profile is linked to
-SELECT person_id
+-- Step 1: Find which person this profile is currently linked to
+-- (latest action must be 'link', not 'unlink')
+SELECT person_id, action
 FROM identity.links
 WHERE source_type = 'bamboohr'
   AND profile_id = '1002'  -- profile containing employee_id ST069
-  AND action = 'link'
 ORDER BY created_at DESC
 LIMIT 1;
+-- If action = 'link' → person_id is valid. If 'unlink' → profile is not linked.
 
 -- Step 2: Get current person fields
 SELECT
@@ -162,7 +163,7 @@ VALUES
 INSERT INTO identity.links
     (insight_tenant_id, person_id, source_type, profile_id, action, reason, created_by)
 VALUES
-    ('example_tenant', '<P2>', 'gitlab', NULL,   'unlink', 'merge', 'operator_name'),
+    ('example_tenant', '<P2>', 'gitlab', 'G123', 'unlink', 'merge', 'operator_name'),
     ('example_tenant', '<P1>', 'gitlab', 'G123', 'link',   'merge', 'operator_name');
 ```
 
@@ -172,7 +173,7 @@ VALUES
 INSERT INTO identity.links
     (insight_tenant_id, person_id, source_type, profile_id, action, reason, created_by)
 VALUES
-    ('example_tenant', '<P1>', 'gitlab', NULL,   'unlink', 'split', 'operator_name'),
+    ('example_tenant', '<P1>', 'gitlab', 'G123', 'unlink', 'split', 'operator_name'),
     ('example_tenant', '<P2>', 'gitlab', 'G123', 'link',   'split', 'operator_name');
 ```
 

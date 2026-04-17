@@ -34,15 +34,13 @@ WITH current_links AS (
     FROM (
         SELECT *,
             row_number() OVER (
-                PARTITION BY insight_tenant_id, source_type,
-                    coalesce(profile_id, concat(toString(person_id), ':', source_type))
+                PARTITION BY insight_tenant_id, source_type, profile_id
                 ORDER BY created_at DESC
             ) AS rn
         FROM identity.links
     )
     WHERE rn = 1
       AND action = 'link'
-      AND profile_id IS NOT NULL
 ),
 
 -- New link/unlink events since last run
@@ -54,62 +52,56 @@ new_links AS (
     {% endif %}
 ),
 
--- EVENT 1a: LINK — copy all input fields for the newly linked profile
+-- Latest field value per (profile, field_type) — current state, not full history
+latest_input AS (
+    SELECT
+        insight_tenant_id,
+        source_type,
+        profile_id,
+        field_type,
+        argMax(field_value, observed_at) AS field_value,
+        max(observed_at) AS last_observed
+    FROM {{ ref('identity_input') }}
+    WHERE operation = 'UPSERT'
+    GROUP BY insight_tenant_id, source_type, profile_id, field_type
+    HAVING field_value != ''
+),
+
+-- EVENT 1a: LINK — copy latest field state for the newly linked profile
 link_fields AS (
     SELECT
         nl.person_id AS person_id,
-        i.insight_tenant_id AS insight_tenant_id,
-        i.field_type AS field_type,
-        i.field_value AS field_value,
-        i.source_type AS field_source,
-        i.profile_id AS field_profile_id,
+        li.insight_tenant_id AS insight_tenant_id,
+        li.field_type AS field_type,
+        li.field_value AS field_value,
+        li.source_type AS field_source,
+        li.profile_id AS field_profile_id,
         nl.created_at AS valid_from
     FROM new_links nl
-    JOIN {{ ref('identity_input') }} i
-        ON nl.insight_tenant_id = i.insight_tenant_id
-        AND nl.source_type = i.source_type
-        AND nl.profile_id = i.profile_id
+    JOIN latest_input li
+        ON nl.insight_tenant_id = li.insight_tenant_id
+        AND nl.source_type = li.source_type
+        AND nl.profile_id = li.profile_id
     WHERE nl.action = 'link'
-      AND nl.profile_id IS NOT NULL
-      AND i.operation = 'UPSERT'
-      AND i.field_value != ''
 ),
 
--- EVENT 1b: UNLINK — nullify all fields the person had from this source/profile
--- Find the previous link to determine which profile_id was unlinked
+-- EVENT 1b: UNLINK — nullify all fields the person had from this profile
+-- profile_id is always set on unlink rows (not NULL)
 unlink_fields AS (
     SELECT
         nl.person_id AS person_id,
-        i.insight_tenant_id AS insight_tenant_id,
-        i.field_type AS field_type,
+        li.insight_tenant_id AS insight_tenant_id,
+        li.field_type AS field_type,
         '' AS field_value,
-        i.source_type AS field_source,
-        prev_link.profile_id AS field_profile_id,
+        li.source_type AS field_source,
+        nl.profile_id AS field_profile_id,
         nl.created_at AS valid_from
     FROM new_links nl
-    -- Find the most recent previous link for this person+source to get the profile_id
-    JOIN (
-        SELECT *,
-            row_number() OVER (
-                PARTITION BY insight_tenant_id, person_id, source_type
-                ORDER BY created_at DESC
-            ) AS rn
-        FROM identity.links
-        WHERE action = 'link' AND profile_id IS NOT NULL
-    ) prev_link
-        ON nl.insight_tenant_id = prev_link.insight_tenant_id
-        AND nl.person_id = prev_link.person_id
-        AND nl.source_type = prev_link.source_type
-        AND prev_link.created_at < nl.created_at
-        AND prev_link.rn = 1
-    -- Get all fields from input for the unlinked profile
-    JOIN {{ ref('identity_input') }} i
-        ON prev_link.insight_tenant_id = i.insight_tenant_id
-        AND prev_link.source_type = i.source_type
-        AND prev_link.profile_id = i.profile_id
+    JOIN latest_input li
+        ON nl.insight_tenant_id = li.insight_tenant_id
+        AND nl.source_type = li.source_type
+        AND nl.profile_id = li.profile_id
     WHERE nl.action = 'unlink'
-      AND i.operation = 'UPSERT'
-      AND i.field_value != ''
 ),
 
 -- EVENT 2: New input data for already-linked profiles
@@ -131,7 +123,7 @@ new_input_fields AS (
         AND i.profile_id = cl.profile_id
     WHERE i.operation = 'UPSERT'
       AND i.field_value != ''
-      AND i.observed_at > cl.linked_at  -- only data newer than link creation
+      AND i.observed_at > cl.linked_at
     {% if is_incremental() %}
       AND i.observed_at > (SELECT coalesce(max(valid_from), toDateTime64('1970-01-01', 3, 'UTC')) FROM {{ this }})
     {% endif %}

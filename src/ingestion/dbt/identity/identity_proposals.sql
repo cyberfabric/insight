@@ -2,8 +2,8 @@
 -- Incremental: processes only new identity_input rows since last run.
 --
 -- Proposal types:
---   'new_profile'    — profile not linked to any person yet
---   'email_match'    — two profiles share the same email across sources
+--   'new_profile'    — profile not currently linked to any person
+--   'email_match'    — two profiles share the same current email across sources
 --   'deactivation'   — DELETE operation received, suggest deactivating aliases
 --
 -- Run: dbt run --select identity_proposals
@@ -33,19 +33,38 @@ new_profiles AS (
     WHERE operation = 'UPSERT'
 ),
 
--- Profiles not yet linked to any person
+-- Current link state: latest action per (tenant, source_type, profile_id)
+current_link_state AS (
+    SELECT
+        insight_tenant_id,
+        source_type,
+        profile_id,
+        action
+    FROM (
+        SELECT *,
+            row_number() OVER (
+                PARTITION BY insight_tenant_id, source_type, profile_id
+                ORDER BY created_at DESC
+            ) AS rn
+        FROM identity.links
+    )
+    WHERE rn = 1
+),
+
+-- Profiles not currently linked (never linked, or last action = unlink)
 unlinked AS (
     SELECT
         np.insight_tenant_id,
         np.source_type,
         np.profile_id
     FROM new_profiles np
-    LEFT JOIN identity.links l
-        ON np.insight_tenant_id = l.insight_tenant_id
-        AND np.source_type = l.source_type
-        AND np.profile_id = l.profile_id
-        AND l.action = 'link'
-    WHERE l.id IS NULL OR l.id = toUUID('00000000-0000-0000-0000-000000000000')
+    LEFT JOIN current_link_state cls
+        ON np.insight_tenant_id = cls.insight_tenant_id
+        AND np.source_type = cls.source_type
+        AND np.profile_id = cls.profile_id
+    WHERE cls.action IS NULL                -- never linked
+       OR cls.action = ''                   -- ClickHouse default for empty LEFT JOIN
+       OR cls.action = 'unlink'             -- was unlinked
 ),
 
 -- Proposal: new unlinked profile
@@ -67,19 +86,22 @@ unlinked_proposals AS (
     FROM unlinked u
 ),
 
--- Email matches across different profiles
-all_emails AS (
+-- Latest email per profile (not historical, only current)
+current_emails AS (
     SELECT
         insight_tenant_id,
         source_type,
         profile_id,
-        lower(trim(field_value)) AS email
+        lower(trim(argMax(field_value, observed_at))) AS email
     FROM {{ ref('identity_input') }}
     WHERE field_type = 'email'
       AND operation = 'UPSERT'
       AND field_value != ''
+    GROUP BY insight_tenant_id, source_type, profile_id
+    HAVING email != ''
 ),
 
+-- Cross-source email matches (only different source_types)
 email_matches AS (
     SELECT DISTINCT
         a.insight_tenant_id AS insight_tenant_id,
@@ -88,12 +110,12 @@ email_matches AS (
         b.source_type AS source_type_b,
         b.profile_id AS profile_id_b,
         a.email AS email
-    FROM all_emails a
-    JOIN all_emails b
+    FROM current_emails a
+    JOIN current_emails b
         ON a.insight_tenant_id = b.insight_tenant_id
         AND a.email = b.email
-        AND (a.source_type != b.source_type OR a.profile_id != b.profile_id)
-        AND a.source_type <= b.source_type  -- avoid duplicates (A,B) and (B,A)
+        AND a.source_type != b.source_type  -- cross-source only
+        AND a.source_type < b.source_type   -- avoid (A,B) and (B,A) duplicates
     -- Only include matches involving new inputs
     JOIN new_profiles np
         ON np.insight_tenant_id = a.insight_tenant_id

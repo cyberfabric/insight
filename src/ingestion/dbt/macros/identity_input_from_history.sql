@@ -48,14 +48,14 @@ upserts AS (
         coalesce(source_id, '') AS source_id,
         entity_id AS profile_id,
         '{{ f.field_type }}' AS field_type,
-        new_value AS field_value,
+        coalesce(new_value, '') AS field_value,
         '{{ f.field_path }}' AS field_path,
-        'UPSERT' AS operation,
+        -- empty new_value = field was cleared (tombstone), non-empty = field changed
+        if(coalesce(new_value, '') = '', 'DELETE', 'UPSERT') AS operation,
         updated_at AS observed_at,
         now64(3) AS _synced_at
     FROM history
     WHERE field_name = '{{ f.field }}'
-      AND new_value != ''
     {{ 'UNION ALL' if not loop.last }}
     {% endfor %}
 ),

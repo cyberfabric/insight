@@ -57,13 +57,15 @@ Operator decisions. Each row = one link/unlink event. Append-only.
 | insight_tenant_id | String | Tenant isolation |
 | person_id | UUID | Person being linked/unlinked |
 | source_type | LowCardinality(String) | Source system |
-| profile_id | Nullable(String) | Source profile ID. NULL = unlink |
+| profile_id | String | Source profile ID. Always set, even on unlink |
 | action | LowCardinality(String) | `link` or `unlink` |
 | reason | String | new_person, same_email, merge, split, operator_decision |
 | created_by | String | Operator name |
 | created_at | DateTime64(3, 'UTC') | When the decision was made |
 
-**ENGINE**: MergeTree ORDER BY (insight_tenant_id, person_id, source_type, created_at)
+**ENGINE**: MergeTree ORDER BY (insight_tenant_id, source_type, profile_id, created_at)
+
+Primary lookup pattern: "which person is this profile linked to?" filters by source_type + profile_id, which matches the ORDER BY prefix.
 
 **Current link resolution**: For each (tenant, source_type, profile_id), take the row with latest created_at. If action = 'link', the profile is currently linked to that person_id.
 
@@ -186,9 +188,9 @@ File: `src/ingestion/dbt/identity/identity_person.sql`
 
 Reacts to three event types:
 
-**EVENT 1a (link)**: New link in identity.links with action='link'. Copies all UPSERT fields from identity_input for the linked profile. valid_from = link.created_at (operator decision date).
+**EVENT 1a (link)**: New link in identity.links with action='link'. Copies the latest field state (not full history) from identity_input for the linked profile. valid_from = link.created_at (operator decision date).
 
-**EVENT 1b (unlink)**: New link with action='unlink'. Writes empty field_value for all fields the person had from that source. valid_from = unlink.created_at. Finds the previously linked profile_id by looking at the most recent prior 'link' record for that person+source.
+**EVENT 1b (unlink)**: New link with action='unlink'. Writes empty field_value for all fields the person had from that profile. valid_from = unlink.created_at. profile_id is always set on unlink rows.
 
 **EVENT 2 (new input)**: New data in identity_input for an already-linked profile (observed_at > link.created_at). Copies new field values with valid_from = observed_at. This handles ongoing connector syncs after the initial link.
 
@@ -196,15 +198,15 @@ Reacts to three event types:
 
 ### Merge (person P2 absorbed into P1)
 
-Operator inserts two rows in identity.links:
+Operator inserts two rows in identity.links (profile_id always set):
 ```
-(P2, source, NULL,       'unlink', 'merge')  -- detach from P2
+(P2, source, profile_id, 'unlink', 'merge')  -- detach from P2
 (P1, source, profile_id, 'link',   'merge')  -- attach to P1
 ```
 
 On next `dbt run --select identity_person`:
-- Unlink generates nullification rows for P2 (all fields from that source = empty)
-- Link generates field rows for P1 (all current fields from that source copied)
+- Unlink generates nullification rows for P2 (all fields from that profile = empty)
+- Link generates field rows for P1 (latest field state from that profile)
 
 P2's historical data (before merge date) remains unchanged. P1 gains the source's fields from the merge date forward.
 
@@ -212,7 +214,7 @@ P2's historical data (before merge date) remains unchanged. P1 gains the source'
 
 Operator inserts two rows:
 ```
-(P1, source, NULL,       'unlink', 'split')  -- detach from P1
+(P1, source, profile_id, 'unlink', 'split')  -- detach from P1
 (P2, source, profile_id, 'link',   'split')  -- reattach to P2
 ```
 
