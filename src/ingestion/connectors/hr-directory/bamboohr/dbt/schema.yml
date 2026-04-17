@@ -59,6 +59,109 @@ models:
         tests:
           - not_null
 
+  - name: bamboohr__hr_events
+    description: >
+      BambooHR leave_requests → class_hr_events (Silver Step 2 staging).
+      One row per leave request. Joins to employees to resolve email.
+      type/amount/status are JSON objects in Bronze — extracted with JSONExtractString.
+    columns:
+      - name: insight_tenant_id
+        tests:
+          - not_null
+      - name: source_id
+        tests:
+          - not_null
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: source_person_id
+        description: "BambooHR employeeId"
+        tests:
+          - not_null
+      - name: email
+        description: "Resolved from employees.workEmail via JOIN"
+      - name: event_type
+        description: "Always 'leave' for leave_requests"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['leave']
+      - name: event_subtype
+        description: "Leave type name (Annual Leave, Sick Leave, etc.) from type.name JSON"
+      - name: start_date
+        description: "Leave start date"
+        tests:
+          - not_null
+      - name: end_date
+        description: "Leave end date"
+        tests:
+          - not_null
+      - name: duration_amount
+        description: "Amount from amount.amount JSON (numeric)"
+      - name: duration_unit
+        description: "Unit from amount.unit JSON: hours or days"
+      - name: request_status
+        description: "Status from status.status JSON: approved, denied, requested"
+      - name: source
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['bamboohr']
+      - name: created_at
+        description: "When the leave request was created in BambooHR"
+      - name: ingested_at
+        tests:
+          - not_null
+
+  - name: bamboohr__working_hours
+    description: >
+      BambooHR active employees → class_hr_working_hours (Silver Step 2 staging).
+      One row per active employee with their scheduled working hours.
+      standardHoursPerWeek is not provided by this tenant; defaults to 8h/day / 40h/week.
+    columns:
+      - name: insight_tenant_id
+        tests:
+          - not_null
+      - name: source_id
+        tests:
+          - not_null
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: source_person_id
+        description: "BambooHR employee ID"
+        tests:
+          - not_null
+      - name: email
+        description: "Work email — identity key"
+        tests:
+          - not_null
+      - name: display_name
+        tests:
+          - not_null
+      - name: employment_type
+        description: "BambooHR employmentHistoryStatus (Contractor, Employee, etc.)"
+      - name: source
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['bamboohr']
+      - name: working_hours_per_day
+        description: "Scheduled working hours per working day"
+        tests:
+          - not_null
+      - name: working_hours_per_week
+        description: "Scheduled working hours per week"
+        tests:
+          - not_null
+      - name: ingested_at
+        tests:
+          - not_null
+
   - name: bamboohr__employees_snapshot
     description: >
       SCD2 append-only snapshot of BambooHR employees.

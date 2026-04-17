@@ -1,11 +1,7 @@
 version: 2
 
 sources:
-  - name: bronze_cursor
-    schema: bronze_cursor
-    tables:
-      - name: cursor_members
-
+  # bronze_cursor is declared in connectors/ai-dev/cursor/dbt/schema.yml (with full table list)
   - name: bronze_claude_team
     schema: bronze_claude_team
     tables:
