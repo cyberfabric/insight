@@ -110,7 +110,7 @@ Unlike the Admin API connectors, the Enterprise Analytics API is **engagement-fo
 | Claude Cowork | Anthropic's agentic coworker product. Usage is surfaced as `cowork_metrics` on the per-user activity endpoint and on summaries (`cowork_*_active_user_count`). |
 | Office Agents | Claude's Excel and PowerPoint integrations. Surfaced as `office_metrics.excel` and `office_metrics.powerpoint`. |
 | DAU / WAU / MAU | Daily / Weekly / Monthly Active Users. "Active" means: sent ≥1 chat message, or had a Claude Code session with tool/git activity, or had a Cowork session with tool or message activity. Weekly and monthly counts use rolling windows ending on the reference date. |
-| Reporting Lag | The Enterprise Analytics API makes data for day `N-1` available three days after it is aggregated. Data for day `N` is therefore queryable starting on day `N+4`. |
+| Reporting Lag | The Enterprise Analytics API makes data for day `N-1` queryable only on day `N+2` (three full days after aggregation). Data for day `N` is therefore queryable starting on day `N+3`. |
 | Cursor Pagination | Pagination mechanism used by the Enterprise Analytics API: clients pass `page=<opaque_token>` and receive a `next_page` field (string or `null`) in the response. Opaque to the client. |
 | `person_id` | Canonical cross-system person identifier resolved by the Identity Manager. |
 | `class_ai_*` | Silver streams for AI usage metrics (`class_ai_dev_usage`, `class_ai_tool_usage`, `class_ai_api_usage`). Out of scope for this PRD. |

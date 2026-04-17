@@ -84,7 +84,7 @@ graph LR
 | `cpt-insightspec-fr-claude-enterprise-users-collect` | Stream `claude_enterprise_users` → `GET /v1/organizations/analytics/users` (incremental, cursor-paginated per day) |
 | `cpt-insightspec-fr-claude-enterprise-users-incremental` | `DatetimeBasedCursor` on `date`; `step: P1D`; one request per day |
 | `cpt-insightspec-fr-claude-enterprise-summaries-collect` | Stream `claude_enterprise_summaries` → `GET /v1/organizations/analytics/summaries` (incremental, multi-day response) |
-| `cpt-insightspec-fr-claude-enterprise-summaries-chunking` | `DatetimeBasedCursor` with `step: P31D` to stay within the 31-day API window |
+| `cpt-insightspec-fr-claude-enterprise-summaries-chunking` | `DatetimeBasedCursor` with `step: P1D` and `starting_date` only (no `ending_date`). The API supports 31-day ranges, but `ending_date` is exclusive — using P31D with Airbyte's inclusive cursor arithmetic causes boundary-day loss. P1D avoids this safely. |
 | `cpt-insightspec-fr-claude-enterprise-projects-collect` | Stream `claude_enterprise_chat_projects` → `GET /v1/organizations/analytics/apps/chat/projects` (incremental) |
 | `cpt-insightspec-fr-claude-enterprise-projects-incremental` | `DatetimeBasedCursor` on `date`; `step: P1D` |
 | `cpt-insightspec-fr-claude-enterprise-skills-collect` | Stream `claude_enterprise_skills` → `GET /v1/organizations/analytics/skills` (incremental) |
@@ -169,13 +169,13 @@ All five endpoints use HTTP GET with query parameters. `/users`, `/apps/chat/pro
 
 - [ ] `p2` - **ID**: `cpt-insightspec-constraint-claude-enterprise-cursor-pagination`
 
-`/users`, `/apps/chat/projects`, `/skills`, `/connectors` all use cursor pagination: clients pass an opaque `page` token (from the previous response's `next_page`) and receive records in `data`. Pagination stops when `next_page` is absent or null. The manifest uses `CursorPagination` for these streams. `/summaries` returns all days in a single response within the 31-day window and does not paginate.
+`/users`, `/apps/chat/projects`, `/skills`, `/connectors` all use cursor pagination: clients pass an opaque `page` token (from the previous response's `next_page`) and receive records in `data`. Pagination stops when `next_page` is absent or null. The manifest uses `CursorPagination` for these streams. `/summaries` is called once per day (P1D step, `starting_date` only) and returns a single day's summary without pagination.
 
 #### 31-Day Maximum Range on Summaries
 
 - [ ] `p2` - **ID**: `cpt-insightspec-constraint-claude-enterprise-summaries-window`
 
-The `/summaries` endpoint rejects requests where `ending_date - starting_date > 31 days` with HTTP 400. The manifest uses `DatetimeBasedCursor` with `step: P31D` to automatically chunk long windows into successive 31-day requests.
+The `/summaries` endpoint rejects requests where `ending_date - starting_date > 31 days` with HTTP 400. The manifest uses `step: P1D` with only `starting_date` (no `ending_date`) to avoid boundary-day data loss caused by the API's exclusive `ending_date` semantics. Each request returns one day's summary.
 
 #### Three-Day Reporting Lag
 
@@ -236,7 +236,7 @@ graph TD
         Auth["ApiKeyAuthenticator<br/>x-api-key header<br/>+ anthropic-version: 2023-06-01"]
         Cur["DatetimeBasedCursor<br/>step: P1D<br/>min: 2026-01-01<br/>max: now - 3 days"]
         S1["Stream: claude_enterprise_users<br/>GET /users?date=YYYY-MM-DD<br/>Incremental, CursorPagination"]
-        S2["Stream: claude_enterprise_summaries<br/>GET /summaries?starting_date&ending_date<br/>Incremental, step P31D"]
+        S2["Stream: claude_enterprise_summaries<br/>GET /summaries?starting_date<br/>Incremental, step P1D (one day per request)"]
         S3["Stream: claude_enterprise_chat_projects<br/>GET /apps/chat/projects?date=YYYY-MM-DD<br/>Incremental, CursorPagination"]
         S4["Stream: claude_enterprise_skills<br/>GET /skills?date=YYYY-MM-DD<br/>Incremental, CursorPagination"]
         S5["Stream: claude_enterprise_connectors<br/>GET /connectors?date=YYYY-MM-DD<br/>Incremental, CursorPagination"]
@@ -298,7 +298,7 @@ The manifest uses Airbyte declarative framework v7.0.4. Key structural patterns 
 - **Auth**: `definitions.linked.HttpRequester.authenticator` — `ApiKeyAuthenticator` with `x-api-key` header + `anthropic-version: 2023-06-01`
 - **Error handling**: `definitions.retryable_error_handler` (NOT under `linked` — per create.md §3.1) — `CompositeErrorHandler` with 429 RATE_LIMITED + Retry-After, 5xx RETRY + exponential backoff, 401/404 FAIL
 - **Pagination**: `definitions.linked.SimpleRetriever.paginator` — `CursorPagination` on `next_page` token (used by users, chat_projects, skills, connectors; summaries uses `NoPagination`)
-- **Cursor**: `DatetimeBasedCursor` on `date` field, `min_datetime: "2026-01-01"`, `end_datetime: day_delta(-3)`, step P1D (P31D for summaries)
+- **Cursor**: `DatetimeBasedCursor` on `date` field, `min_datetime: "2026-01-01"`, `end_datetime: day_delta(-3)`, step P1D (all streams including summaries)
 - **Transformations**: `AddFields` with `type: AddedFieldDefinition` per field — injects `tenant_id`, `source_id`, `data_source`, `collected_at`, `unique_key` + stream-specific flattened fields
 - **Check**: `claude_enterprise_summaries` (lightest stream)
 - **Base URL**: `{{ config.get('base_url', 'https://api.anthropic.com') }}` — overridable for dev/test
@@ -331,7 +331,7 @@ Ensures every record emitted by all streams contains `tenant_id`, `insight_sourc
 | Stream | Endpoint | Pagination | Date Params |
 |--------|----------|------------|-------------|
 | `claude_enterprise_users` | `GET /v1/organizations/analytics/users` | Cursor: `page` param (from response `next_page`), default `limit=20`, max `1000` | Query: `date` (YYYY-MM-DD) |
-| `claude_enterprise_summaries` | `GET /v1/organizations/analytics/summaries` | None (single response within 31-day window) | Query: `starting_date`, `ending_date` (YYYY-MM-DD, exclusive); max 31-day range |
+| `claude_enterprise_summaries` | `GET /v1/organizations/analytics/summaries` | None | Query: `starting_date` only (P1D step — no `ending_date` sent; API returns single day) |
 | `claude_enterprise_chat_projects` | `GET /v1/organizations/analytics/apps/chat/projects` | Cursor: `page` param, default `limit=100`, max `1000` | Query: `date` |
 | `claude_enterprise_skills` | `GET /v1/organizations/analytics/skills` | Cursor: `page` param, default `limit=100`, max `1000` | Query: `date` |
 | `claude_enterprise_connectors` | `GET /v1/organizations/analytics/connectors` | Cursor: `page` param, default `limit=100`, max `1000` | Query: `date` |
@@ -433,10 +433,10 @@ sequenceDiagram
     end
     Src-->>Dest: RECORD messages (one per user-day)
 
-    Note over Src,AApi: Stream 2: claude_enterprise_summaries (incremental, 31-day chunks)
-    loop For each 31-day window W (cursor -> upper bound)
-        Src->>AApi: GET /analytics/summaries?starting_date=W.start&ending_date=W.end
-        AApi-->>Src: {data: [...]}    (one record per day in range)
+    Note over Src,AApi: Stream 2: claude_enterprise_summaries (incremental, P1D)
+    loop For each day D (cursor -> upper bound)
+        Src->>AApi: GET /analytics/summaries?starting_date=D
+        AApi-->>Src: {data: [{...}]}    (one record for day D)
     end
     Src-->>Dest: RECORD messages
 
@@ -468,7 +468,7 @@ sequenceDiagram
     end
 ```
 
-**Description**: The connector first computes the effective upper bound of the sync window (`today() - 3 days`) and clamps the lower bound to `max(configured start_date, 2026-01-01, last stored cursor)`. For `/users`, `/apps/chat/projects`, `/skills`, `/connectors` it iterates day-by-day and paginates each day to exhaustion. For `/summaries` it walks forward in 31-day windows, each returning multiple days in a single response. All five streams share the same cursor/lag semantics. After all streams complete, per-stream cursor state is persisted.
+**Description**: The connector first computes the effective upper bound of the sync window (`today() - 3 days`) and clamps the lower bound to `max(configured start_date, 2026-01-01, last stored cursor)`. For `/users`, `/apps/chat/projects`, `/skills`, `/connectors` it iterates day-by-day and paginates each day to exhaustion. For `/summaries` it also walks day-by-day (P1D step, `starting_date` only — no `ending_date` sent) to avoid data loss from the API's exclusive end-date semantics. All five streams share the same cursor/lag semantics. After all streams complete, per-stream cursor state is persisted.
 
 ### 3.7 Database schemas & tables
 
@@ -544,7 +544,7 @@ One row per `(date, user_id)`. Incremental by `date`.
 | `collected_at` | DateTime | Collection timestamp |
 | `data_source` | String | Always `insight_claude_enterprise` |
 
-One row per day. Incremental by `date`. Each API request covers up to 31 days.
+One row per day. Incremental by `date`. Each API request covers one day (`starting_date` only, P1D step).
 
 #### Table: `claude_enterprise_chat_projects`
 
@@ -731,7 +731,7 @@ All five data streams use incremental sync on `date`:
 | Stream | Cursor field | Step | First-run start | End |
 |--------|-------------|------|-----------------|-----|
 | `claude_enterprise_users` | `date` (YYYY-MM-DD) | `P1D` | `max(configured start_date, 2026-01-01)`; default 14 days ago | `now_utc() - 3 days` |
-| `claude_enterprise_summaries` | `date` | `P31D` | Same | Same |
+| `claude_enterprise_summaries` | `date` | `P1D` | Same | Same |
 | `claude_enterprise_chat_projects` | `date` | `P1D` | Same | Same |
 | `claude_enterprise_skills` | `date` | `P1D` | Same | Same |
 | `claude_enterprise_connectors` | `date` | `P1D` | Same | Same |
@@ -739,7 +739,7 @@ All five data streams use incremental sync on `date`:
 
 **Why `P1D` for most streams**: Each endpoint returns all data for a single date, so per-day requests are the natural unit. Paginate within a day with cursor tokens; advance the date cursor after pagination completes.
 
-**Why `P31D` for summaries**: The summaries endpoint returns multiple days in a single response within its 31-day window. Walking in 31-day steps maximizes efficiency without violating the API's range limit.
+**Why `P1D` for summaries (not `P31D`)**: The summaries endpoint supports multi-day ranges via `starting_date` + `ending_date`, but `ending_date` is **exclusive**. Airbyte's `DatetimeBasedCursor` computes inclusive-inclusive intervals (window_end = start + step - granularity), so using P31D causes the last day of each window to be silently skipped. P1D with `starting_date` only (no `ending_date`) avoids this boundary bug. Performance impact is minimal: one extra HTTP call per day for a tiny payload.
 
 **Default start**: `day_delta(-14)` (14 days ago), not 90 as in claude-team. Rationale: the minimum queryable date is 2026-01-01, the lag is 3 days, and per-user records are the largest stream — a shorter default keeps the first run fast.
 
@@ -783,7 +783,7 @@ Expected data volumes for typical deployments (see `OQ-CE-5` for formal sizing):
 | Stream | Volume per day | Estimated sync time (per day) |
 |--------|----------------|-------------------------------|
 | `claude_enterprise_users` | ≤ 10,000 rows (one per seat active that day) | 10–60s depending on page count (default 20/page) |
-| `claude_enterprise_summaries` | 1 row / day, 31 rows per 31-day chunk | < 5s per chunk |
+| `claude_enterprise_summaries` | 1 row / day | < 1s per request |
 | `claude_enterprise_chat_projects` | 10–500 rows | < 30s |
 | `claude_enterprise_skills` | 10–200 rows | < 10s |
 | `claude_enterprise_connectors` | 10–100 rows | < 10s |

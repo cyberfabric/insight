@@ -72,7 +72,7 @@ If you don't have a real Enterprise key, set `base_url` to a local stub service 
 
 | Stream | Endpoint | Sync Mode | Cursor | Step | Pagination |
 |--------|----------|-----------|--------|------|-----------|
-| `claude_enterprise_summaries` | `GET /v1/organizations/analytics/summaries` | Incremental | `date` | P31D | None (multi-day response) |
+| `claude_enterprise_summaries` | `GET /v1/organizations/analytics/summaries?starting_date=…` | Incremental | `date` | P1D | None (one day per request) |
 | `claude_enterprise_users` | `GET /v1/organizations/analytics/users?date=…` | Incremental | `date` | P1D | Cursor (`page` token) |
 | `claude_enterprise_chat_projects` | `GET /v1/organizations/analytics/apps/chat/projects?date=…` | Incremental | `date` | P1D | Cursor |
 | `claude_enterprise_skills` | `GET /v1/organizations/analytics/skills?date=…` | Incremental | `date` | P1D | Cursor |
@@ -97,7 +97,7 @@ The other streams (`summaries`, `skills`, `connectors`) are pre-aggregated by th
 - **Reporting lag**: 3 days. The connector's effective upper bound is `today − 3 days`; later dates are deferred to the next run.
 - **Minimum date**: 2026-01-01. Earlier `start_date` values are silently clamped.
 - **`start_date` edge case**: if `start_date` is within the 3-day lag window (e.g. yesterday), the cursor window is empty (`start > end`). Airbyte's `DatetimeBasedCursor` skips empty windows silently — no error, zero records. Set `start_date` to at least 4 days in the past to guarantee data on first run.
-- **`/summaries` range**: max 31 days per request. The connector chunks longer windows automatically (`step: P31D`).
+- **`/summaries`**: uses P1D step with `starting_date` only (no `ending_date`). The API supports 31-day ranges, but `ending_date` is exclusive — P31D would silently skip boundary days. One request per day is safe and fast (tiny payload).
 - **Concurrency**: `default_concurrency: 1` (sequential streams). Intentional to avoid rate-limit exhaustion during backfill; can be bumped to 2-3 after observing real API behavior.
 
 ## Validation

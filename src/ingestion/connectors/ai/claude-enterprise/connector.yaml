@@ -117,15 +117,16 @@ streams:
         type: MinMaxDatetime
         datetime: "{{ day_delta(-3, format='%Y-%m-%d') }}"
         datetime_format: "%Y-%m-%d"
-      step: P31D
+      # P1D step: one request per day. The /summaries endpoint supports multi-day
+      # ranges via starting_date + ending_date, but ending_date is EXCLUSIVE — using
+      # P31D with Airbyte's inclusive-inclusive cursor arithmetic causes silent data
+      # loss at 31-day boundaries. P1D + no end_time_option avoids this: each request
+      # sends only starting_date and the API returns that single day's summary.
+      step: P1D
       cursor_granularity: P1D
       start_time_option:
         type: RequestOption
         field_name: starting_date
-        inject_into: request_parameter
-      end_time_option:
-        type: RequestOption
-        field_name: ending_date
         inject_into: request_parameter
     schema_loader:
       type: InlineSchemaLoader
