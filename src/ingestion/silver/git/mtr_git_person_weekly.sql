@@ -27,7 +27,7 @@ loc AS (
         tenant_id,
         person_key,
         week,
-        SUM(if(file_category = 'spec', 0, lines_added)) AS code_loc,
+        SUM(if(file_category = 'code', lines_added, 0)) AS code_loc,
         SUM(if(file_category = 'spec', lines_added, 0)) AS spec_lines
     FROM {{ ref('fct_git_file_change') }}
     WHERE is_merge_commit = 0

@@ -28,8 +28,13 @@ SELECT
     pr.files_changed,
     pr.lines_added,
     pr.lines_removed,
+    -- Clamp negative diffs (dirty data where closed_on < created_on) to NULL
+    -- so avg_pr_cycle_time_h and percentiles aren't skewed by impossible values.
     if(
-        lower(pr.state) = 'merged' AND pr.closed_on IS NOT NULL AND pr.created_on IS NOT NULL,
+        lower(pr.state) = 'merged'
+        AND pr.closed_on IS NOT NULL
+        AND pr.created_on IS NOT NULL
+        AND pr.closed_on >= pr.created_on,
         dateDiff('second', pr.created_on, pr.closed_on) / 3600.0,
         NULL
     ) AS cycle_time_h,

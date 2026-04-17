@@ -32,7 +32,10 @@ SELECT
     fc._version,
     fc._airbyte_extracted_at
 FROM {{ ref('class_git_file_changes') }} AS fc
-LEFT JOIN {{ ref('fct_git_commit') }} AS c
+-- INNER JOIN: a file change without a matching commit cannot be attributed
+-- to a person/week and has no usable downstream role. Enforcing correspondence
+-- here avoids silent NULL-propagation through WHERE filters in metric models.
+INNER JOIN {{ ref('fct_git_commit') }} AS c
     ON  c.tenant_id   = fc.tenant_id
     AND c.source_id   = fc.source_id
     AND c.project_key = fc.project_key
