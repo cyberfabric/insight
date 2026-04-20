@@ -23,6 +23,8 @@
     tags=['identity:seed', 'silver', 'silver:bootstrap_inputs']
 ) }}
 
+{{ skip_if_no_source("bronze_claude_team") }}
+
 -- Column set matches bootstrap_inputs_from_history macro output.
 -- TEMPORARY: insight_tenant_id derived via sipHash128 until tenants table exists.
 

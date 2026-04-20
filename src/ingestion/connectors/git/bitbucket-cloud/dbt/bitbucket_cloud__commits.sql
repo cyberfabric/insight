@@ -5,6 +5,8 @@
     tags=['bitbucket-cloud', 'silver:class_git_commits']
 ) }}
 
+{{ skip_if_no_source("bronze_bitbucket_cloud") }}
+
 SELECT
     c.tenant_id,
     c.source_id,

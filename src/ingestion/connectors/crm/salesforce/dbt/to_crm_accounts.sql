@@ -6,6 +6,8 @@
     tags=['silver:class_crm_accounts']
 ) }}
 
+{{ skip_if_no_source("bronze_salesforce") }}
+
 SELECT
     Id                                              AS account_id,
     Name                                            AS name,

@@ -4,6 +4,8 @@
     tags=['bamboohr', 'silver:class_hr_events']
 ) }}
 
+{{ skip_if_no_source("bronze_bamboohr") }}
+
 SELECT
     lr.tenant_id                                            AS insight_tenant_id,
     lr.source_id,

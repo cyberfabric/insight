@@ -13,6 +13,8 @@
     tags=['identity:seed', 'person']
 ) }}
 
+{{ skip_if_no_source("bronze_cursor") }}
+
 SELECT
     generateUUIDv7()                                        AS id,
     -- TEMPORARY: sipHash128 derives UUID from string tenant_id until tenants table exists

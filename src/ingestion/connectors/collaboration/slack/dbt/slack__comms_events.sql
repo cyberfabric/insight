@@ -5,6 +5,8 @@
     tags=['slack', 'silver:class_comms_events']
 ) }}
 
+{{ skip_if_no_source("bronze_slack") }}
+
 SELECT
     m.tenant_id,
     m.source_id,

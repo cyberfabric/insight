@@ -2,6 +2,8 @@
 -- Joins with keys and workspaces for dimension name enrichment.
 {{ config(materialized='incremental', unique_key='unique_id') }}
 
+{{ skip_if_no_source("bronze_claude_api") }}
+
 WITH usage AS (
     SELECT
         tenant_id,

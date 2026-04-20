@@ -5,6 +5,8 @@
     tags=['bamboohr', 'silver', 'silver:bootstrap_inputs']
 ) }}
 
+{{ skip_if_no_source("bronze_bamboohr") }}
+
 {{ bootstrap_inputs_from_history(
     fields_history_ref=ref('bamboohr__employees_fields_history'),
     source_type='bamboohr',

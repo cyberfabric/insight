@@ -7,6 +7,8 @@
     inserts_only=true
 ) }}
 
+{{ skip_if_no_source("bronze_cursor") }}
+
 {{ fields_history(
     snapshot_ref=ref('cursor__members_snapshot'),
     entity_id_col='id',

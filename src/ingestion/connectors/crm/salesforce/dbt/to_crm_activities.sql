@@ -4,6 +4,8 @@
 -- Duration: CallDurationInSeconds (tasks), DurationInMinutes*60 (events).
 {{ config(materialized='incremental', unique_key='activity_id', schema='salesforce', tags=['silver:class_crm_activities']) }}
 
+{{ skip_if_no_source("bronze_salesforce") }}
+
 WITH tasks AS (
     SELECT
         Id                                          AS activity_id,

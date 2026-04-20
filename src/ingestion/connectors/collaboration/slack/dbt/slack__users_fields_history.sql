@@ -4,6 +4,8 @@
     tags=['slack', 'silver']
 ) }}
 
+{{ skip_if_no_source("bronze_slack") }}
+
 {{ fields_history(
     snapshot_ref=ref('slack__users_snapshot'),
     entity_id_col='unique_key',

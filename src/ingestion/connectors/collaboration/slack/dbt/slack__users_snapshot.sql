@@ -5,6 +5,8 @@
     tags=['slack']
 ) }}
 
+{{ skip_if_no_source("bronze_slack") }}
+
 {{ snapshot(
     source_ref=source('bronze_slack', 'users'),
     unique_key_col='unique_key',

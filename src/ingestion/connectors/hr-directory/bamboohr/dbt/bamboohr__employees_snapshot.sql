@@ -5,6 +5,8 @@
     tags=['bamboohr']
 ) }}
 
+{{ skip_if_no_source("bronze_bamboohr") }}
+
 {{ snapshot(
     source_ref=source('bamboohr', 'employees'),
     unique_key_col='unique_key',

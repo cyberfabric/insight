@@ -2,6 +2,8 @@
 -- Incremental via SystemModstamp. IsClosed/IsWon are native Salesforce fields.
 {{ config(materialized='incremental', unique_key='deal_id', schema='salesforce', tags=['silver:class_crm_deals']) }}
 
+{{ skip_if_no_source("bronze_salesforce") }}
+
 SELECT
     Id                                              AS deal_id,
     Name                                            AS name,

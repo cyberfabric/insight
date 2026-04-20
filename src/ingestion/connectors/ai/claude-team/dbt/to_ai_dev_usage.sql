@@ -4,6 +4,8 @@
 -- This model handles Claude Code sessions — developer AI tool usage alongside Cursor/Windsurf.
 {{ config(materialized='incremental', unique_key='unique_id') }}
 
+{{ skip_if_no_source("bronze_claude_team") }}
+
 SELECT
     tenant_id,
     source_instance_id,

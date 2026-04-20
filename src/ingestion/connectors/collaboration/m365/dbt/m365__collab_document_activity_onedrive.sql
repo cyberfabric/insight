@@ -5,6 +5,8 @@
     tags=['m365', 'silver:class_collab_document_activity']
 ) }}
 
+{{ skip_if_no_source("bronze_m365") }}
+
 -- OneDrive half of document activity.
 -- Split from SharePoint (see m365__collab_document_activity_sharepoint) so each
 -- product has its own incremental watermark. Unioned at silver by tag.

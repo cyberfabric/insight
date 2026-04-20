@@ -4,6 +4,8 @@
     tags=['bamboohr', 'silver']
 ) }}
 
+{{ skip_if_no_source("bronze_bamboohr") }}
+
 {{ fields_history(
     snapshot_ref=ref('bamboohr__employees_snapshot'),
     entity_id_col='id',

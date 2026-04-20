@@ -19,6 +19,8 @@
     tags=['identity:seed', 'silver', 'silver:bootstrap_inputs']
 ) }}
 
+{{ skip_if_no_source("bronze_cursor") }}
+
 -- Each cursor member emits up to 3 observation rows: email, platform_id, display_name.
 -- Column set matches bootstrap_inputs_from_history macro output.
 -- TEMPORARY: insight_tenant_id derived via sipHash128 until tenants table exists.

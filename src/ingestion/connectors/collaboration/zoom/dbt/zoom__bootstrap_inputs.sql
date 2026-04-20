@@ -5,6 +5,8 @@
     tags=['zoom', 'silver', 'silver:bootstrap_inputs']
 ) }}
 
+{{ skip_if_no_source("bronze_zoom") }}
+
 {{ bootstrap_inputs_from_history(
     fields_history_ref=ref('zoom__users_fields_history'),
     source_type='zoom',

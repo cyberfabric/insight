@@ -4,6 +4,8 @@
     tags=['zoom', 'silver']
 ) }}
 
+{{ skip_if_no_source("bronze_zoom") }}
+
 {{ fields_history(
     snapshot_ref=ref('zoom__users_snapshot'),
     entity_id_col='id',

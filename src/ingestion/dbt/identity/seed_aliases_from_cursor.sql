@@ -15,6 +15,8 @@
     tags=['identity:seed', 'aliases']
 ) }}
 
+{{ skip_if_no_source("bronze_cursor") }}
+
 -- Each cursor member emits up to 3 alias rows: email, platform_id, display_name.
 -- Join on email to resolve person_id from the seed_persons_from_cursor output.
 

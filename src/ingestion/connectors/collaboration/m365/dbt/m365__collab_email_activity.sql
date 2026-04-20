@@ -5,6 +5,8 @@
     tags=['m365', 'silver:class_collab_email_activity']
 ) }}
 
+{{ skip_if_no_source("bronze_m365") }}
+
 SELECT
     tenant_id,
     source_id AS insight_source_id,

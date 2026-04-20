@@ -43,4 +43,12 @@ spec:
                 password: "${CH_PASS}"
                 secure: false
           PROFILES
-          dbt run --profiles-dir . --select "{{inputs.parameters.dbt_select}}"
+          # Discover which bronze databases exist so connector models can skip missing ones
+          AVAILABLE_DBS=$(curl -sf "http://{{inputs.parameters.clickhouse_host}}:{{inputs.parameters.clickhouse_port}}" \
+            --data-urlencode "query=SELECT name FROM system.databases WHERE name LIKE 'bronze_%'" \
+            --data-urlencode "user=default" \
+            --data-urlencode "password=${CH_PASS}" \
+            | tr '\n' ',' | sed 's/,$//')
+          VARS="{available_dbs: [${AVAILABLE_DBS}]}"
+          echo "Available bronze databases: ${AVAILABLE_DBS}"
+          dbt run --profiles-dir . --select "{{inputs.parameters.dbt_select}}" --vars "${VARS}"

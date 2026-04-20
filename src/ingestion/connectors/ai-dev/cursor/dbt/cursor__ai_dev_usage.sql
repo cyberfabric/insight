@@ -9,6 +9,8 @@
     tags=['cursor', 'silver:class_ai_dev_usage']
 ) }}
 
+{{ skip_if_no_source("bronze_cursor") }}
+
 WITH resync AS (
     -- Authoritative data for completed days (yesterday and earlier)
     SELECT

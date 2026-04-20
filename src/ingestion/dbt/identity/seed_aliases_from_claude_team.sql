@@ -19,6 +19,8 @@
     tags=['identity:seed', 'aliases']
 ) }}
 
+{{ skip_if_no_source("bronze_claude_team") }}
+
 WITH latest AS (
     SELECT id AS source_id, email, name, tenant_id
     FROM {{ source('bronze_claude_team', 'claude_team_users') }}

@@ -5,6 +5,8 @@
     tags=['bitbucket-cloud', 'silver:class_git_pull_requests_reviewers']
 ) }}
 
+{{ skip_if_no_source("bronze_bitbucket_cloud") }}
+
 SELECT
     pr.tenant_id,
     pr.source_id,

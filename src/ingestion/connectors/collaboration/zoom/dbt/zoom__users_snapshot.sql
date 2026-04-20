@@ -5,6 +5,8 @@
     tags=['zoom']
 ) }}
 
+{{ skip_if_no_source("bronze_zoom") }}
+
 {{ snapshot(
     source_ref=source('bronze_zoom', 'users'),
     unique_key_col='unique_key',

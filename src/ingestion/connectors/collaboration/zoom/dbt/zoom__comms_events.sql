@@ -5,6 +5,8 @@
     tags=['zoom', 'silver:class_comms_events']
 ) }}
 
+{{ skip_if_no_source("bronze_zoom") }}
+
 SELECT
     p.tenant_id,
     p.source_id,

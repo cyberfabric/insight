@@ -5,6 +5,8 @@
     tags=['m365', 'silver:class_comms_events']
 ) }}
 
+{{ skip_if_no_source("bronze_m365") }}
+
 SELECT
     tenant_id,
     source_id,

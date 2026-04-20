@@ -7,6 +7,8 @@
     tags=['cursor']
 ) }}
 
+{{ skip_if_no_source("bronze_cursor") }}
+
 {{ snapshot(
     source_ref=source('bronze_cursor', 'cursor_members'),
     unique_key_col='unique_key',

@@ -27,4 +27,6 @@
 
 {{ config(enabled=false) }}
 
+{{ skip_if_no_source("bronze_claude_team") }}
+
 SELECT 1 AS placeholder

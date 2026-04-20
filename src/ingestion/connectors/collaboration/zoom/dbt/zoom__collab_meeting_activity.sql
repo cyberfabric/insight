@@ -5,6 +5,8 @@
     tags=['zoom', 'silver:class_collab_meeting_activity']
 ) }}
 
+{{ skip_if_no_source("bronze_zoom") }}
+
 -- Zoom meeting activity aggregated per user per day.
 --
 -- Grain: (tenant, source, email, date). We intentionally filter out participants

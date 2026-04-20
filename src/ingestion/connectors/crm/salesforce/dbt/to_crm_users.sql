@@ -6,6 +6,8 @@
     tags=['silver:class_crm_users']
 ) }}
 
+{{ skip_if_no_source("bronze_salesforce") }}
+
 SELECT
     Id                                              AS user_id,
     Email                                           AS email,

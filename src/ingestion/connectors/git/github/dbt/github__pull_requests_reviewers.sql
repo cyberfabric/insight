@@ -5,6 +5,8 @@
     tags=['github', 'silver:class_git_pull_requests_reviewers']
 ) }}
 
+{{ skip_if_no_source("bronze_github") }}
+
 SELECT
     tenant_id,
     source_id,

@@ -5,6 +5,8 @@
     tags=['slack', 'silver:class_collab_chat_activity']
 ) }}
 
+{{ skip_if_no_source("bronze_slack") }}
+
 -- Slack chat activity aggregated per user per day.
 -- Email can be NULL when Slack workspace policy hides it — we keep the row and
 -- fall back to display_name for person_key (matches the git-plugin convention:

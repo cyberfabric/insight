@@ -8,6 +8,8 @@
     tags=['bamboohr', 'silver:class_people']
 ) }}
 
+{{ skip_if_no_source("bronze_bamboohr") }}
+
 SELECT
     tenant_id,
     source_id,
