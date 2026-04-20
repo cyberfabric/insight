@@ -13,7 +13,7 @@ spec:
         parameters:
           - name: connection_id
           - name: dbt_select
-            default: "tag:silver"
+            default: "+tag:silver"
           - name: airbyte_url
             default: "http://airbyte-airbyte-server-svc.airbyte.svc.cluster.local:8001"
           - name: clickhouse_host
