@@ -219,27 +219,27 @@ name = "Outline Connector Specification"
 
 [[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/connectors/ai-dev/cursor.md"
+path = "docs/components/connectors/ai/cursor.md"
 name = "Cursor Connector Specification"
 
 [[systems.artifacts]]
 kind = "PRD"
-path = "docs/components/connectors/ai-dev/cursor/specs/PRD.md"
+path = "docs/components/connectors/ai/cursor/specs/PRD.md"
 name = "Cursor Connector PRD"
 
 [[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/connectors/ai-dev/cursor/specs/DESIGN.md"
+path = "docs/components/connectors/ai/cursor/specs/DESIGN.md"
 name = "Cursor Connector Design"
 
 [[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/connectors/ai-dev/windsurf.md"
+path = "docs/components/connectors/ai/windsurf.md"
 name = "Windsurf Connector Specification"
 
 [[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/connectors/ai-dev/github-copilot.md"
+path = "docs/components/connectors/ai/github-copilot.md"
 name = "GitHub Copilot Connector Specification"
 
 [[systems.artifacts]]

@@ -1,11 +1,8 @@
 version: 2
 
 sources:
-  # bronze_cursor is declared in connectors/ai-dev/cursor/dbt/schema.yml (with full table list)
-  - name: bronze_claude_team
-    schema: bronze_claude_team
-    tables:
-      - name: claude_team_users
+  # bronze_cursor is declared in connectors/ai/cursor/dbt/schema.yml (with full table list)
+  # bronze_claude_admin is declared in connectors/ai/claude-admin/dbt/schema.yml
 
 models:
   # --- Cursor seed ---

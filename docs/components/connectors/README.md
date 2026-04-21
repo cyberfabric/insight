@@ -74,10 +74,10 @@ Per-source deep-dive specifications for Constructor Insight connectors. Each fil
 
 | Source | Spec | Status |
 |--------|------|--------|
-| Cursor | [`ai-dev/cursor.md`](ai-dev/cursor.md) | Proposed |
-| Windsurf | [`ai-dev/windsurf.md`](ai-dev/windsurf.md) | Proposed |
-| GitHub Copilot | [`ai-dev/github-copilot.md`](ai-dev/github-copilot.md) | Proposed |
-| JetBrains | [`ai-dev/jetbrains.md`](ai-dev/jetbrains.md) | Draft |
+| Cursor | [`ai/cursor.md`](ai/cursor.md) | Proposed |
+| Windsurf | [`ai/windsurf.md`](ai/windsurf.md) | Proposed |
+| GitHub Copilot | [`ai/github-copilot.md`](ai/github-copilot.md) | Proposed |
+| JetBrains | [`ai/jetbrains.md`](ai/jetbrains.md) | Draft |
 
 ### AI Tools
 

@@ -179,7 +179,7 @@ The `POST /teams/daily-usage-data` endpoint returns rows for all team members fo
 - All entities → `email`/`userEmail` → resolved to `person_id` by Identity Manager (Silver)
 
 **Schema format**: Airbyte declarative manifest YAML with inline JSON Schema definitions per stream.
-**Schema location**: `src/ingestion/connectors/ai-dev/cursor/connector.yaml` (to be created as the connector manifest).
+**Schema location**: `src/ingestion/connectors/ai/cursor/connector.yaml` (to be created as the connector manifest).
 
 ### 3.2 Component Model
 
@@ -367,7 +367,7 @@ spec:
         order: 1
 ```
 
-This is a structural skeleton — the full manifest is in `src/ingestion/connectors/ai-dev/cursor/connector.yaml`.
+This is a structural skeleton — the full manifest is in `src/ingestion/connectors/ai/cursor/connector.yaml`.
 
 ##### Responsibility boundaries
 
