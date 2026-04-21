@@ -11,15 +11,15 @@
 --
 -- Run each statement separately (copy one block at a time).
 -- Raw SQL equivalents of dbt models:
---   seed_persons_from_claude_team.sql
---   seed_aliases_from_claude_team.sql
---   seed_bootstrap_inputs_from_claude_team.sql
+--   seed_persons_from_claude_admin.sql
+--   seed_aliases_from_claude_admin.sql
+--   seed_bootstrap_inputs_from_claude_admin.sql
 -- ============================================================
 
 -- TEMPORARY: insight_tenant_id derived via sipHash128 until tenants table exists.
 
 -- ============================================================
--- Step 1: Add persons from Claude Team (skip existing by email)
+-- Step 1: Add persons from Claude Admin (skip existing by email)
 -- ============================================================
 
 INSERT INTO person.persons (
@@ -28,7 +28,7 @@ INSERT INTO person.persons (
 )
 WITH latest AS (
     SELECT email, name, role, type, tenant_id
-    FROM bronze_claude_team.claude_team_users
+    FROM bronze_claude_admin.claude_admin_users
     WHERE email IS NOT NULL AND email != ''
     QUALIFY row_number() OVER (PARTITION BY lower(trim(email)), coalesce(tenant_id, '') ORDER BY _airbyte_extracted_at DESC) = 1
 )
@@ -36,12 +36,12 @@ SELECT
     generateUUIDv7(),
     UUIDNumToString(sipHash128(coalesce(tenant_id, ''))),
     coalesce(name, ''),
-    'claude_team',
+    'claude_admin',
     'active',
     lower(trim(email)),
-    'claude_team',
+    'claude_admin',
     coalesce(role, ''),
-    'claude_team',
+    'claude_admin',
     -- completeness = non-empty golden attrs / 7 (display_name,email,username,role,manager,org_unit,location)
     (if(name IS NOT NULL AND name != '', 1, 0)
      + if(email != '', 1, 0)
@@ -54,7 +54,7 @@ LEFT ANTI JOIN person.persons ex
 
 
 -- ============================================================
--- Step 2: Add aliases from Claude Team (skip existing)
+-- Step 2: Add aliases from Claude Admin (skip existing)
 -- ============================================================
 
 INSERT INTO identity.aliases (
@@ -63,7 +63,7 @@ INSERT INTO identity.aliases (
 )
 WITH latest AS (
     SELECT id AS source_id, email, name, tenant_id
-    FROM bronze_claude_team.claude_team_users
+    FROM bronze_claude_admin.claude_admin_users
     WHERE email IS NOT NULL AND email != ''
     QUALIFY row_number() OVER (PARTITION BY lower(trim(email)), coalesce(tenant_id, '') ORDER BY _airbyte_extracted_at DESC) = 1
 ),
@@ -82,19 +82,19 @@ new_aliases AS (
     SELECT person_id, insight_tenant_id, source_account_id,
            'email' AS alias_type,
            lower(trim(email)) AS alias_value,
-           'bronze_claude_team.claude_team_users.email' AS alias_field_name
+           'bronze_claude_admin.claude_admin_users.email' AS alias_field_name
     FROM source WHERE email IS NOT NULL AND email != ''
     UNION ALL
     SELECT person_id, insight_tenant_id, source_account_id,
            'platform_id',
            trim(source_account_id),
-           'bronze_claude_team.claude_team_users.id'
+           'bronze_claude_admin.claude_admin_users.id'
     FROM source WHERE source_account_id IS NOT NULL AND source_account_id != ''
     UNION ALL
     SELECT person_id, insight_tenant_id, source_account_id,
            'display_name',
            trim(name),
-           'bronze_claude_team.claude_team_users.name'
+           'bronze_claude_admin.claude_admin_users.name'
     FROM source WHERE name IS NOT NULL AND name != ''
 )
 SELECT
@@ -104,19 +104,19 @@ SELECT
     na.alias_type,
     na.alias_value,
     na.alias_field_name,
-    'claude_team',
+    'claude_admin',
     na.source_account_id
 FROM new_aliases na
 LEFT ANTI JOIN identity.aliases existing
     ON  na.alias_type              = existing.alias_type
     AND na.alias_value             = existing.alias_value
     AND na.source_account_id       = existing.source_account_id
-    AND existing.insight_source_type = 'claude_team'
+    AND existing.insight_source_type = 'claude_admin'
     AND existing.is_deleted        = 0;
 
 
 -- ============================================================
--- Step 3: Add bootstrap_inputs from Claude Team (raw observations)
+-- Step 3: Add bootstrap_inputs from Claude Admin (raw observations)
 -- ============================================================
 
 INSERT INTO identity.bootstrap_inputs (
@@ -125,7 +125,7 @@ INSERT INTO identity.bootstrap_inputs (
 )
 WITH latest AS (
     SELECT id AS source_id, email, name, tenant_id
-    FROM bronze_claude_team.claude_team_users
+    FROM bronze_claude_admin.claude_admin_users
     WHERE email IS NOT NULL AND email != ''
     QUALIFY row_number() OVER (PARTITION BY lower(trim(email)), coalesce(tenant_id, '') ORDER BY _airbyte_extracted_at DESC) = 1
 ),
@@ -133,25 +133,25 @@ observations AS (
     SELECT source_id AS source_account_id, tenant_id,
            'email' AS alias_type,
            email AS alias_value,
-           'bronze_claude_team.claude_team_users.email' AS alias_field_name
+           'bronze_claude_admin.claude_admin_users.email' AS alias_field_name
     FROM latest WHERE email IS NOT NULL AND email != ''
     UNION ALL
     SELECT source_id, tenant_id,
            'platform_id',
            source_id,
-           'bronze_claude_team.claude_team_users.id'
+           'bronze_claude_admin.claude_admin_users.id'
     FROM latest WHERE source_id IS NOT NULL AND source_id != ''
     UNION ALL
     SELECT source_id, tenant_id,
            'display_name',
            name,
-           'bronze_claude_team.claude_team_users.name'
+           'bronze_claude_admin.claude_admin_users.name'
     FROM latest WHERE name IS NOT NULL AND name != ''
 )
 SELECT
     generateUUIDv7(),
     UUIDNumToString(sipHash128(coalesce(o.tenant_id, ''))),
-    'claude_team',
+    'claude_admin',
     o.source_account_id,
     o.alias_type,
     o.alias_value,
@@ -162,7 +162,7 @@ LEFT ANTI JOIN identity.bootstrap_inputs existing
     ON  o.alias_type              = existing.alias_type
     AND o.alias_value             = existing.alias_value
     AND o.source_account_id       = existing.source_account_id
-    AND existing.insight_source_type = 'claude_team';
+    AND existing.insight_source_type = 'claude_admin';
 
 
 -- ============================================================

@@ -219,68 +219,43 @@ name = "Outline Connector Specification"
 
 [[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/connectors/ai-dev/cursor.md"
+path = "docs/components/connectors/ai/cursor.md"
 name = "Cursor Connector Specification"
 
 [[systems.artifacts]]
 kind = "PRD"
-path = "docs/components/connectors/ai-dev/cursor/specs/PRD.md"
+path = "docs/components/connectors/ai/cursor/specs/PRD.md"
 name = "Cursor Connector PRD"
 
 [[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/connectors/ai-dev/cursor/specs/DESIGN.md"
+path = "docs/components/connectors/ai/cursor/specs/DESIGN.md"
 name = "Cursor Connector Design"
 
 [[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/connectors/ai-dev/windsurf.md"
+path = "docs/components/connectors/ai/windsurf.md"
 name = "Windsurf Connector Specification"
 
 [[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/connectors/ai-dev/github-copilot.md"
+path = "docs/components/connectors/ai/github-copilot.md"
 name = "GitHub Copilot Connector Specification"
 
 [[systems.artifacts]]
-kind = "PRD"
-path = "docs/components/connectors/ai/claude-api/specs/PRD.md"
-name = "Claude API Connector PRD"
-
-[[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/connectors/ai/claude-api/specs/DESIGN.md"
-name = "Claude API Connector Design"
-
-[[systems.artifacts]]
-kind = "ADR"
-path = "docs/components/connectors/ai/claude-api/specs/ADR/ADR-001-group-by-limit-inference-geo.md"
-name = "ADR-001: Drop inference_geo from group_by dimensions"
-
-[[systems.artifacts]]
-kind = "ADR"
-path = "docs/components/connectors/ai/claude-api/specs/ADR/ADR-002-api-response-structure.md"
-name = "ADR-002: API response structure — nested records and field mapping"
-
-[[systems.artifacts]]
-kind = "ADR"
-path = "docs/components/connectors/ai/claude-api/specs/ADR/ADR-003-cursor-granularity-boundary-fix.md"
-name = "ADR-003: Cursor granularity PT1S to avoid empty date-boundary windows"
+path = "docs/components/connectors/ai/claude-admin/README.md"
+name = "Claude Admin Connector Specification"
 
 [[systems.artifacts]]
 kind = "PRD"
-path = "docs/components/connectors/ai/claude-team/specs/PRD.md"
-name = "Claude Team Plan Connector PRD"
+path = "docs/components/connectors/ai/claude-admin/specs/PRD.md"
+name = "Claude Admin Connector PRD"
 
 [[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/connectors/ai/claude-team/specs/DESIGN.md"
-name = "Claude Team Plan Connector Design"
-
-[[systems.artifacts]]
-kind = "ADR"
-path = "docs/components/connectors/ai/claude-team/specs/ADR/ADR-001-cursor-granularity-boundary-fix.md"
-name = "ADR-001: Cursor granularity PT1S for consistency with claude-api"
+path = "docs/components/connectors/ai/claude-admin/specs/DESIGN.md"
+name = "Claude Admin Connector Design"
 
 [[systems.artifacts]]
 kind = "PRD"

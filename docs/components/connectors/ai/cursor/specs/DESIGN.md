@@ -179,7 +179,7 @@ The `POST /teams/daily-usage-data` endpoint returns rows for all team members fo
 - All entities → `email`/`userEmail` → resolved to `person_id` by Identity Manager (Silver)
 
 **Schema format**: Airbyte declarative manifest YAML with inline JSON Schema definitions per stream.
-**Schema location**: `src/ingestion/connectors/ai-dev/cursor/connector.yaml` (to be created as the connector manifest).
+**Schema location**: `src/ingestion/connectors/ai/cursor/connector.yaml` (to be created as the connector manifest).
 
 ### 3.2 Component Model
 
@@ -209,7 +209,7 @@ graph TD
 The Cursor connector is packaged as a self-contained unit following the standard connector package layout:
 
 ```text
-src/ingestion/connectors/ai-dev/cursor/
+src/ingestion/connectors/ai/cursor/
 ├── connector.yaml          # Airbyte declarative manifest (nocode)
 ├── descriptor.yaml         # Package metadata: streams, Silver targets
 └── dbt/
@@ -367,7 +367,7 @@ spec:
         order: 1
 ```
 
-This is a structural skeleton — the full manifest is in `src/ingestion/connectors/ai-dev/cursor/connector.yaml`.
+This is a structural skeleton — the full manifest is in `src/ingestion/connectors/ai/cursor/connector.yaml`.
 
 ##### Responsibility boundaries
 
@@ -730,7 +730,7 @@ Monitoring table — not an analytics source.
 The Cursor connector uses one manifest and two Airbyte connections with different schedules:
 
 ```text
-Package: src/ingestion/connectors/ai-dev/cursor/
+Package: src/ingestion/connectors/ai/cursor/
 ├── connector.yaml (declarative manifest — 6 streams)
 ├── descriptor.yaml (package metadata)
 └── dbt/ (Bronze → Silver)
@@ -976,4 +976,4 @@ Additional architectural decisions documented inline:
 - **ADRs**: [ADR/](./ADR/) (none yet — see ADR Status above)
 - **Source specification**: [../../cursor/cursor.md](../../cursor/cursor.md)
 - **Reference implementation**: [../../cursor/additional/](../../cursor/additional/) (production code, not part of connector)
-- **AI Dev Tool domain**: [docs/components/connectors/ai-dev/](../../)
+- **AI Tool domain**: [docs/components/connectors/ai/](../../)
