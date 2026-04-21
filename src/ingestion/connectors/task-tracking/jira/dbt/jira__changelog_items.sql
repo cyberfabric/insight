@@ -30,7 +30,11 @@ WITH exploded AS (
         COALESCE(parseDateTime64BestEffortOrNull(h.created_at, 3), toDateTime64(0, 3)) AS created_at,
         h.author_account_id                                      AS author_account_id,
         arrayJoin(JSONExtractArrayRaw(COALESCE(h.items, '[]')))  AS item_raw
-    FROM {{ source('bronze_jira', 'jira_issue_history') }} h FINAL
+    FROM (
+        SELECT * FROM {{ source('bronze_jira', 'jira_issue_history') }}
+        ORDER BY _airbyte_extracted_at DESC
+        LIMIT 1 BY _airbyte_raw_id
+    ) h
     WHERE h.items IS NOT NULL AND h.items != '[]'
 ),
 parsed AS (

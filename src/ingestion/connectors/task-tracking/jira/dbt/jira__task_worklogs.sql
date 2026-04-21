@@ -20,4 +20,8 @@ SELECT
     w.comment                                         AS description,
     parseDateTime64BestEffortOrNull(w.collected_at, 3) AS collected_at,
     toUnixTimestamp64Milli(now64(3))                  AS _version
-FROM {{ source('bronze_jira', 'jira_worklogs') }} w FINAL
+FROM (
+    SELECT * FROM {{ source('bronze_jira', 'jira_worklogs') }}
+    ORDER BY _airbyte_extracted_at DESC
+    LIMIT 1 BY _airbyte_raw_id
+) w

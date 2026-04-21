@@ -404,9 +404,11 @@ for connector_name, source_id_label, config in connector_instances:
                 stream_name = stream_def.get("name", "")
                 supported = stream_def.get("supportedSyncModes", ["full_refresh"])
                 sync_mode = "incremental" if "incremental" in supported else "full_refresh"
-                # incremental → append_dedup (ReplacingMergeTree, dedup via primary_key + _airbyte_extracted_at)
-                # full_refresh → overwrite (drops+rewrites each run, avoids bronze duplicate accumulation)
-                dest_sync_mode = "append_dedup" if sync_mode == "incremental" else "overwrite"
+                # Bronze is always plain append; dedup happens in silver via unique_key.
+                # Destination-side dedup (append_dedup) buffers all records in memory
+                # until stream COMPLETE — OOMs on large streams and loses all data
+                # on mid-stream pod death. Overwrite has the same problem on retries.
+                dest_sync_mode = "append"
                 stream_config = {
                     "syncMode": sync_mode,
                     "destinationSyncMode": dest_sync_mode,

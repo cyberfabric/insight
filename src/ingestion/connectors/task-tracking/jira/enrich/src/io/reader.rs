@@ -31,7 +31,7 @@ pub async fn fetch_field_metadata(
     let rows: Vec<FieldMetaRow> = client
         .query(
             "SELECT field_id, field_name, is_multi, has_id \
-             FROM staging.jira__task_field_metadata FINAL \
+             FROM staging.jira__task_field_metadata \
              WHERE data_source = 'jira' AND insight_source_id = ?",
         )
         .bind(insight_source_id)
@@ -137,7 +137,7 @@ pub async fn fetch_last_state_for(
                         argMax(value_ids, event_at)      AS value_ids, \
                         argMax(value_displays, event_at) AS value_displays, \
                         toInt64(toUnixTimestamp64Milli(max(event_at))) AS last_event_at_ms \
-                 FROM staging.jira__task_field_history FINAL \
+                 FROM staging.jira__task_field_history \
                  WHERE data_source = 'jira' \
                    AND insight_source_id = ? \
                    AND id_readable IN ? \
@@ -204,7 +204,7 @@ pub async fn fetch_all_snapshots(
                     COALESCE(toString(id_readable), '')     AS id_readable, \
                     COALESCE(toInt64(toUnixTimestamp64Milli(parseDateTime64BestEffortOrNull(created, 3))), 0) AS created_ms, \
                     reporter_id \
-             FROM bronze_jira.jira_issue AS ji FINAL \
+             FROM bronze_jira.jira_issue AS ji \
              WHERE source_id = ?",
         )
         .bind(insight_source_id)
@@ -305,7 +305,7 @@ pub fn open_events_cursor(
                     e.value_to              AS value_to, \
                     e.value_to_string       AS value_to_string \
              FROM staging.jira_changelog_items e \
-             LEFT JOIN bronze_jira.jira_issue i FINAL \
+             LEFT JOIN bronze_jira.jira_issue i \
                  ON e.insight_source_id = i.source_id \
                 AND e.id_readable        = i.id_readable \
              LEFT JOIN ( \

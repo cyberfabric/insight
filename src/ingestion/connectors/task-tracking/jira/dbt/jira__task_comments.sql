@@ -22,4 +22,8 @@ SELECT
     c.body                                              AS body,
     toUInt8(0)                                          AS is_deleted,
     toUnixTimestamp64Milli(now64(3))                    AS _version
-FROM {{ source('bronze_jira', 'jira_comments') }} c FINAL
+FROM (
+    SELECT * FROM {{ source('bronze_jira', 'jira_comments') }}
+    ORDER BY _airbyte_extracted_at DESC
+    LIMIT 1 BY _airbyte_raw_id
+) c

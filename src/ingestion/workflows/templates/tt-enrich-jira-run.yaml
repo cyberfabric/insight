@@ -6,6 +6,8 @@ metadata:
   labels:
     app.kubernetes.io/part-of: ingestion
 spec:
+  imagePullSecrets:
+    - name: ghcr-pull
   entrypoint: run
   templates:
     - name: run
@@ -20,10 +22,10 @@ spec:
             default: "default"
           - name: batch_size
             default: "10000"
-      activeDeadlineSeconds: 1800
+      activeDeadlineSeconds: 7200
       container:
-        image: insight-jira-enrich:local
-        imagePullPolicy: IfNotPresent
+        image: ghcr.io/cyberfabric/insight-jira-enrich:latest
+        imagePullPolicy: Always
         # Emissary executor can't resolve local-image entrypoints via registry,
         # so set command explicitly (matches Dockerfile ENTRYPOINT).
         command: ["/usr/local/bin/jira-enrich"]

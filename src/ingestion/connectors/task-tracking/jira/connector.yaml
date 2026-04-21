@@ -7218,7 +7218,33 @@ streams:
         parent_stream_configs:
           - type: ParentStreamConfig
             stream:
-              $ref: "#/streams/0"
+              type: DeclarativeStream
+              name: _scrum_boards
+              retriever:
+                type: SimpleRetriever
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path:
+                      - values
+                paginator:
+                  $ref: "#/definitions/linked/SimpleRetriever/paginator"
+                requester:
+                  type: HttpRequester
+                  http_method: GET
+                  authenticator:
+                    $ref: "#/definitions/linked/HttpRequester/authenticator"
+                  error_handler:
+                    $ref: "#/definitions/linked/HttpRequester/error_handler"
+                  url: "{{ config['jira_instance_url'] }}/rest/agile/1.0/board?type=scrum"
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  properties:
+                    id:
+                      type: number
             parent_key: id
             partition_field: board_id
     transformations:

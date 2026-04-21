@@ -13,9 +13,8 @@
 -- synthetic_initial rows can be emitted for every field — even ones that never appear
 -- in the changelog.
 --
--- Strategy: JOIN bronze lookup tables (jira_statuses, jira_priorities, jira_issuetypes,
--- jira_resolutions, jira_user) against the narrowed jira_issue columns. Zero JSON parsing
--- in the hot path — display names come from the lookup tables, not from per-issue JSON.
+-- All fields extracted from custom_fields_json via JSONExtract (ClickHouse destination
+-- nests Jira fields inside a single JSON column rather than top-level columns).
 
 WITH issue AS (
     SELECT
@@ -24,26 +23,30 @@ WITH issue AS (
         COALESCE(toString(id_readable), '')                           AS id_readable,
         COALESCE(parseDateTime64BestEffortOrNull(created, 3),
                  toDateTime64(0, 3))                                  AS created_at,
-        -- ID fields are Decimal(38,9) in bronze after Airbyte auto-detect (treated as
-        -- numeric because Jira returns them as numeric strings). Cast to String to make
-        -- them joinable with lookup tables where IDs remain strings.
-        toString(status_id)       AS status_id,
-        toString(priority_id)     AS priority_id,
-        toString(issuetype_id)    AS issuetype_id,
-        toString(resolution_id)   AS resolution_id,
-        assignee_id, reporter_id, parent_id, project_key,
-        labels_csv,
-        -- `story_points` and other per-issue custom fields are absent from bronze schema
-        -- when the value is always null in the sampled data (Airbyte auto-detect skips
-        -- NULL-only columns). Stub as NULL; future schema fix would declare them explicitly.
-        CAST(NULL AS Nullable(String)) AS story_points,
+        JSONExtractString(custom_fields_json, 'status', 'id')        AS status_id,
+        JSONExtractString(custom_fields_json, 'status', 'name')      AS status_name,
+        JSONExtractString(custom_fields_json, 'priority', 'id')      AS priority_id,
+        JSONExtractString(custom_fields_json, 'priority', 'name')    AS priority_name,
+        JSONExtractString(custom_fields_json, 'issuetype', 'id')     AS issuetype_id,
+        JSONExtractString(custom_fields_json, 'issuetype', 'name')   AS issuetype_name,
+        JSONExtractString(custom_fields_json, 'resolution', 'id')    AS resolution_id,
+        JSONExtractString(custom_fields_json, 'resolution', 'name')  AS resolution_name,
+        JSONExtractString(custom_fields_json, 'assignee', 'accountId')    AS assignee_id,
+        JSONExtractString(custom_fields_json, 'assignee', 'displayName') AS assignee_name,
+        JSONExtractString(custom_fields_json, 'reporter', 'accountId')    AS reporter_id,
+        JSONExtractString(custom_fields_json, 'reporter', 'displayName') AS reporter_name,
+        parent_id,
+        project_key,
+        JSONExtractString(custom_fields_json, 'labels')              AS labels_raw,
+        CAST(NULL AS Nullable(String))                                AS story_points,
         due_date
-    FROM {{ source('bronze_jira', 'jira_issue') }} AS ji FINAL
+    FROM (
+        SELECT * FROM {{ source('bronze_jira', 'jira_issue') }}
+        ORDER BY _airbyte_extracted_at DESC
+        LIMIT 1 BY _airbyte_raw_id
+    ) AS ji
 )
 
--- CAST to Array(String) forces non-nullable element types so the Rust reader
--- (which expects Vec<String>) can deserialize. dbt-clickhouse otherwise infers
--- Array(Nullable(String)) when inner value expressions reference Nullable source columns.
 SELECT insight_source_id, issue_id, id_readable, created_at, field_id,
        CAST(arrayMap(x -> COALESCE(x, ''), value_ids)      AS Array(String)) AS value_ids,
        CAST(arrayMap(x -> COALESCE(x, ''), value_displays) AS Array(String)) AS value_displays,
@@ -52,70 +55,58 @@ FROM (
     -- status
     SELECT i.insight_source_id, i.issue_id, i.id_readable, i.created_at,
            'status' AS field_id,
-           if(i.status_id IS NULL OR i.status_id = '', [], [i.status_id])           AS value_ids,
-           if(i.status_id IS NULL OR i.status_id = '', [], [COALESCE(s.name, i.status_id)]) AS value_displays
+           if(i.status_id = '', [], [i.status_id])      AS value_ids,
+           if(i.status_id = '', [], [i.status_name])     AS value_displays
     FROM issue i
-    LEFT JOIN {{ source('bronze_jira', 'jira_statuses') }} s
-        ON s.source_id = i.insight_source_id AND toString(s.status_id) = i.status_id
 
     UNION ALL
 
     -- priority
     SELECT i.insight_source_id, i.issue_id, i.id_readable, i.created_at,
            'priority',
-           if(i.priority_id IS NULL OR i.priority_id = '', [], [i.priority_id]),
-           if(i.priority_id IS NULL OR i.priority_id = '', [], [COALESCE(p.name, i.priority_id)])
+           if(i.priority_id = '', [], [i.priority_id]),
+           if(i.priority_id = '', [], [i.priority_name])
     FROM issue i
-    LEFT JOIN {{ source('bronze_jira', 'jira_priorities') }} p
-        ON p.source_id = i.insight_source_id AND toString(p.priority_id) = i.priority_id
 
     UNION ALL
 
     -- issuetype
     SELECT i.insight_source_id, i.issue_id, i.id_readable, i.created_at,
            'issuetype',
-           if(i.issuetype_id IS NULL OR i.issuetype_id = '', [], [i.issuetype_id]),
-           if(i.issuetype_id IS NULL OR i.issuetype_id = '', [], [COALESCE(t.name, i.issuetype_id)])
+           if(i.issuetype_id = '', [], [i.issuetype_id]),
+           if(i.issuetype_id = '', [], [i.issuetype_name])
     FROM issue i
-    LEFT JOIN {{ source('bronze_jira', 'jira_issuetypes') }} t
-        ON t.source_id = i.insight_source_id AND toString(t.issuetype_id) = i.issuetype_id
 
     UNION ALL
 
     -- resolution
     SELECT i.insight_source_id, i.issue_id, i.id_readable, i.created_at,
            'resolution',
-           if(i.resolution_id IS NULL OR i.resolution_id = '', [], [i.resolution_id]),
-           if(i.resolution_id IS NULL OR i.resolution_id = '', [], [COALESCE(r.name, i.resolution_id)])
+           if(i.resolution_id = '', [], [i.resolution_id]),
+           if(i.resolution_id = '', [], [i.resolution_name])
     FROM issue i
-    LEFT JOIN {{ source('bronze_jira', 'jira_resolutions') }} r
-        ON r.source_id = i.insight_source_id AND toString(r.resolution_id) = i.resolution_id
 
     UNION ALL
 
-    -- assignee (display from jira_user)
+    -- assignee
     SELECT i.insight_source_id, i.issue_id, i.id_readable, i.created_at,
            'assignee',
-           if(i.assignee_id IS NULL OR i.assignee_id = '', [], [i.assignee_id]),
-           if(i.assignee_id IS NULL OR i.assignee_id = '', [], [COALESCE(u.display_name, i.assignee_id)])
+           if(i.assignee_id = '', [], [i.assignee_id]),
+           if(i.assignee_id = '', [], [i.assignee_name])
     FROM issue i
-    LEFT JOIN {{ source('bronze_jira', 'jira_user') }} u
-        ON u.source_id = i.insight_source_id AND u.account_id = i.assignee_id
 
     UNION ALL
 
     -- reporter
     SELECT i.insight_source_id, i.issue_id, i.id_readable, i.created_at,
            'reporter',
-           if(i.reporter_id IS NULL OR i.reporter_id = '', [], [i.reporter_id]),
-           if(i.reporter_id IS NULL OR i.reporter_id = '', [], [COALESCE(u.display_name, i.reporter_id)])
+           if(i.reporter_id = '', [], [i.reporter_id]),
+           if(i.reporter_id = '', [], [i.reporter_name])
     FROM issue i
-    LEFT JOIN {{ source('bronze_jira', 'jira_user') }} u
-        ON u.source_id = i.insight_source_id AND u.account_id = i.reporter_id
 
     UNION ALL
 
-    -- project (already a string key, no lookup needed)
+    -- project
     SELECT i.insight_source_id, i.issue_id, i.id_readable, i.created_at,
            'project',
            if(i.project_key IS NULL OR i.project_key = '', [], [i.project_key]),
@@ -124,7 +115,7 @@ FROM (
 
     UNION ALL
 
-    -- parent (issue key)
+    -- parent
     SELECT i.insight_source_id, i.issue_id, i.id_readable, i.created_at,
            'parent',
            if(i.parent_id IS NULL OR i.parent_id = '', [], [i.parent_id]),
@@ -133,17 +124,16 @@ FROM (
 
     UNION ALL
 
-    -- labels — CSV split into array (ids == displays since labels are string literals)
-    -- splitByChar(',', '') returns [''] — we want []; use COALESCE + length filter instead.
+    -- labels
     SELECT i.insight_source_id, i.issue_id, i.id_readable, i.created_at,
            'labels',
-           arrayFilter(x -> x != '', splitByChar(',', COALESCE(i.labels_csv, ''))),
-           arrayFilter(x -> x != '', splitByChar(',', COALESCE(i.labels_csv, '')))
+           JSONExtract(COALESCE(i.labels_raw, '[]'), 'Array(String)'),
+           JSONExtract(COALESCE(i.labels_raw, '[]'), 'Array(String)')
     FROM issue i
 
     UNION ALL
 
-    -- story_points (primitive)
+    -- story_points
     SELECT i.insight_source_id, i.issue_id, i.id_readable, i.created_at,
            'story_points',
            if(i.story_points IS NULL OR i.story_points = '', [], [i.story_points]),
@@ -152,7 +142,7 @@ FROM (
 
     UNION ALL
 
-    -- due_date (primitive)
+    -- due_date
     SELECT i.insight_source_id, i.issue_id, i.id_readable, i.created_at,
            'due_date',
            if(i.due_date IS NULL OR i.due_date = '', [], [toString(i.due_date)]),
