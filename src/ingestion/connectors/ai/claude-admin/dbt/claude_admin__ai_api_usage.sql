@@ -1,5 +1,7 @@
--- Bronze → Silver step 1: Claude API messages usage → class_ai_api_usage
--- Joins with keys and workspaces for dimension name enrichment.
+-- Bronze → Silver step 1: Claude Admin messages usage → class_ai_api_usage
+-- Joins with api_keys and workspaces for dimension name enrichment.
+-- person_id is always NULL at this stage: Admin API token usage is attributed
+-- to api_key_id / workspace_id, not to individual users.
 {{ config(materialized='incremental', unique_key='unique_id') }}
 
 WITH usage AS (
@@ -30,8 +32,8 @@ WITH usage AS (
             + cache_creation_1h_tokens
             + output_tokens                         AS total_tokens,
         collected_at,
-        'insight_claude_api'                        AS data_source
-    FROM {{ source('bronze', 'claude_api_messages_usage') }}
+        'insight_claude_admin'                      AS data_source
+    FROM {{ source('bronze_claude_admin', 'claude_admin_messages_usage') }}
     {% if is_incremental() %}
     WHERE date > (SELECT max(report_date) FROM {{ this }})
     {% endif %}
@@ -39,12 +41,12 @@ WITH usage AS (
 
 keys AS (
     SELECT DISTINCT tenant_id, id, name AS key_name
-    FROM {{ source('bronze', 'claude_api_keys') }}
+    FROM {{ source('bronze_claude_admin', 'claude_admin_api_keys') }}
 ),
 
 workspaces AS (
     SELECT DISTINCT tenant_id, id, display_name AS workspace_name
-    FROM {{ source('bronze', 'claude_api_workspaces') }}
+    FROM {{ source('bronze_claude_admin', 'claude_admin_workspaces') }}
 )
 
 SELECT

@@ -1,10 +1,10 @@
--- Phase 1 (Initial Seed): Claude Team users → person.persons
+-- Phase 1 (Initial Seed): Claude Admin users → person.persons
 -- Idempotent: skips users whose email already exists in persons.
 -- Dedup: takes latest row per email by _airbyte_extracted_at.
 -- Source: docs/domain/identity-resolution/specs/DECOMPOSITION.md §2.1
 --
 -- Prerequisite: person.persons table created by scripts/migrations/20260408000000_init-identity.sql
--- Run: dbt run --select seed_persons_from_claude_team
+-- Run: dbt run --select seed_persons_from_claude_admin
 --
 -- Test manually: http://localhost:30123/play  (user: default, password: clickhouse_local)
 --   or:          http://localhost:8123/play
@@ -18,7 +18,7 @@
 
 WITH latest AS (
     SELECT email, name, role, type, tenant_id
-    FROM {{ source('bronze_claude_team', 'claude_team_users') }}
+    FROM {{ source('bronze_claude_admin', 'claude_admin_users') }}
     WHERE email IS NOT NULL AND trim(email) != ''
     QUALIFY row_number() OVER (PARTITION BY lower(trim(email)), coalesce(tenant_id, '') ORDER BY _airbyte_extracted_at DESC) = 1
 )
@@ -28,14 +28,14 @@ SELECT
     -- TEMPORARY: sipHash128 derives UUID from string tenant_id until tenants table exists
     UUIDNumToString(sipHash128(coalesce(tenant_id, '')))             AS insight_tenant_id,
     coalesce(name, '')                                      AS display_name,
-    'claude_team'                                           AS display_name_source,
+    'claude_admin'                                          AS display_name_source,
     'active'                                                AS status,
     lower(trim(email))                                      AS email,
-    'claude_team'                                           AS email_source,
+    'claude_admin'                                          AS email_source,
     ''                                                      AS username,
     ''                                                      AS username_source,
     coalesce(role, '')                                      AS role,
-    'claude_team'                                           AS role_source,
+    'claude_admin'                                          AS role_source,
     toUUID('00000000-0000-0000-0000-000000000000')          AS manager_person_id,
     ''                                                      AS manager_person_id_source,
     toUUID('00000000-0000-0000-0000-000000000000')          AS org_unit_id,

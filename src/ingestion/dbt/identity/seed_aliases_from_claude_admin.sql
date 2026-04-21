@@ -1,4 +1,4 @@
--- Phase 1 (Initial Seed): Claude Team users → identity.aliases
+-- Phase 1 (Initial Seed): Claude Admin users → identity.aliases
 -- Idempotent: skips aliases that already exist (by alias_type + alias_value + source).
 -- Dedup: takes latest row per email by _airbyte_extracted_at.
 -- Each user produces up to 3 aliases: email, platform_id, display_name.
@@ -6,8 +6,8 @@
 --
 -- Prerequisite:
 --   identity.aliases table created by scripts/migrations/20260408000000_init-identity.sql
---   person.persons populated (by seed_persons_from_cursor or seed_persons_from_claude_team)
--- Run: dbt run --select seed_aliases_from_claude_team
+--   person.persons populated (by seed_persons_from_cursor or seed_persons_from_claude_admin)
+-- Run: dbt run --select seed_aliases_from_claude_admin
 --
 -- Test manually: http://localhost:30123/play  (user: default, password: clickhouse_local)
 --   or:          http://localhost:8123/play
@@ -21,7 +21,7 @@
 
 WITH latest AS (
     SELECT id AS source_id, email, name, tenant_id
-    FROM {{ source('bronze_claude_team', 'claude_team_users') }}
+    FROM {{ source('bronze_claude_admin', 'claude_admin_users') }}
     WHERE email IS NOT NULL AND email != ''
     QUALIFY row_number() OVER (PARTITION BY lower(trim(email)), coalesce(tenant_id, '') ORDER BY _airbyte_extracted_at DESC) = 1
 ),
@@ -46,9 +46,9 @@ new_aliases AS (
         person_id,
         'email'                                                     AS alias_type,
         lower(trim(email))                                          AS alias_value,
-        'bronze_claude_team.claude_team_users.email'                AS alias_field_name,
+        'bronze_claude_admin.claude_admin_users.email'              AS alias_field_name,
         toUUID('00000000-0000-0000-0000-000000000000')              AS insight_source_id,
-        'claude_team'                                               AS insight_source_type,
+        'claude_admin'                                              AS insight_source_type,
         source_account_id,
         toFloat32(1.0)                                              AS confidence,
         toUInt8(1)                                                  AS is_active,
@@ -64,16 +64,16 @@ new_aliases AS (
 
     UNION ALL
 
-    -- platform_id (Claude Team user ID)
+    -- platform_id (Claude Admin user ID)
     SELECT
         generateUUIDv7(),
         insight_tenant_id,
         person_id,
         'platform_id',
         trim(source_account_id),
-        'bronze_claude_team.claude_team_users.id',
+        'bronze_claude_admin.claude_admin_users.id',
         toUUID('00000000-0000-0000-0000-000000000000'),
-        'claude_team',
+        'claude_admin',
         source_account_id,
         toFloat32(1.0),
         toUInt8(1),
@@ -96,9 +96,9 @@ new_aliases AS (
         person_id,
         'display_name',
         trim(name),
-        'bronze_claude_team.claude_team_users.name',
+        'bronze_claude_admin.claude_admin_users.name',
         toUUID('00000000-0000-0000-0000-000000000000'),
-        'claude_team',
+        'claude_admin',
         source_account_id,
         toFloat32(1.0),
         toUInt8(1),
@@ -119,6 +119,6 @@ LEFT ANTI JOIN {{ this }} existing
     ON  na.alias_type          = existing.alias_type
     AND na.alias_value         = existing.alias_value
     AND na.source_account_id   = existing.source_account_id
-    AND existing.insight_source_type = 'claude_team'
+    AND existing.insight_source_type = 'claude_admin'
     AND existing.is_deleted    = 0
 {% endif %}

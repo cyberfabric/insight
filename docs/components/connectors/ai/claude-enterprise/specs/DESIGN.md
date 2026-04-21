@@ -741,7 +741,7 @@ All five data streams use incremental sync on `date`:
 
 **Why `P1D` for summaries (not `P31D`)**: The summaries endpoint supports multi-day ranges via `starting_date` + `ending_date`, but `ending_date` is **exclusive**. Airbyte's `DatetimeBasedCursor` computes inclusive-inclusive intervals (window_end = start + step - granularity), so using P31D causes the last day of each window to be silently skipped. P1D with `starting_date` only (no `ending_date`) avoids this boundary bug. Performance impact is minimal: one extra HTTP call per day for a tiny payload.
 
-**Default start**: `day_delta(-14)` (14 days ago), not 90 as in claude-team. Rationale: the minimum queryable date is 2026-01-01, the lag is 3 days, and per-user records are the largest stream — a shorter default keeps the first run fast.
+**Default start**: `day_delta(-14)` (14 days ago), not 90 as in the Admin API connector (`claude-admin`). Rationale: the minimum queryable date is 2026-01-01, the lag is 3 days, and per-user records are the largest stream — a shorter default keeps the first run fast.
 
 ### Reporting Lag & Minimum Date Handling
 

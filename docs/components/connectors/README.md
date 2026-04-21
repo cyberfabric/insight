@@ -83,8 +83,7 @@ Per-source deep-dive specifications for Constructor Insight connectors. Each fil
 
 | Source | Spec | Status |
 |--------|------|--------|
-| Claude API | [`ai/claude-api.md`](ai/claude-api.md) | Proposed |
-| Claude Team Plan | [`ai/claude-team.md`](ai/claude-team.md) | Proposed |
+| Claude Admin | [`ai/claude-admin/README.md`](ai/claude-admin/README.md) | Proposed |
 | OpenAI API | [`ai/openai-api.md`](ai/openai-api.md) | Proposed |
 | ChatGPT Team | [`ai/chatgpt-team.md`](ai/chatgpt-team.md) | Proposed |
 

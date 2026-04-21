@@ -1208,10 +1208,10 @@ Phase 1 seed models derive `insight_tenant_id` (UUID) from the Bronze string `te
 **Migration path**: When the `tenants` table is created, replace all `UUIDNumToString(sipHash128(...))` calls with a lookup join (e.g., `JOIN tenants t ON t.external_id = cm.tenant_id`). All affected files are marked with `-- TEMPORARY: sipHash128` comments. Search: `grep -r "TEMPORARY.*sipHash128" src/ingestion/dbt/identity/`.
 
 **Affected files** (Phase 1 seed):
-- `seed_persons_from_cursor.sql`, `seed_persons_from_claude_team.sql` — compute the hash
-- `seed_aliases_from_cursor.sql`, `seed_aliases_from_claude_team.sql` — use it in tenant-scoped JOINs
-- `seed_bootstrap_inputs_from_cursor.sql`, `seed_bootstrap_inputs_from_claude_team.sql` — compute the hash
-- `scripts/adhoc/seed_from_cursor_manual.sql`, `scripts/adhoc/seed_from_claude_team_manual.sql` — ad-hoc Play UI testing SQL (point-in-time snapshots, not kept in sync with dbt models)
+- `seed_persons_from_cursor.sql`, `seed_persons_from_claude_admin.sql` — compute the hash
+- `seed_aliases_from_cursor.sql`, `seed_aliases_from_claude_admin.sql` — use it in tenant-scoped JOINs
+- `seed_bootstrap_inputs_from_cursor.sql`, `seed_bootstrap_inputs_from_claude_admin.sql` — compute the hash
+- `scripts/adhoc/seed_from_cursor_manual.sql`, `scripts/adhoc/seed_from_claude_admin_manual.sql` — ad-hoc Play UI testing SQL (point-in-time snapshots, not kept in sync with dbt models)
 
 ## 6. Traceability
 

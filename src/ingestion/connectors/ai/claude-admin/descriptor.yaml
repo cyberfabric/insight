@@ -1,0 +1,7 @@
+name: claude-admin
+version: '1.0'
+schedule: '0 2 * * *'
+dbt_select: 'tag:claude-admin+'
+workflow: sync
+connection:
+  namespace: bronze_claude_admin

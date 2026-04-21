@@ -246,5 +246,5 @@ The example tenant config (`connections/example-tenant.yaml`) **MUST** be update
 - [ ] Multiple Secrets for the same connector type (multi-instance) create separate Airbyte sources with distinct `insight_source_id`
 - [ ] Inline-only tenant config (no K8s Secrets) continues to work without changes
 - [ ] Missing Secret with no inline fallback produces a clear error message naming the expected Secret label and annotation
-- [ ] All 7 connectors (bamboohr, m365, zoom, cursor, claude-api, claude-team, bitbucket-server) have `README.md` with K8s Secret specification
+- [ ] All 6 connectors (bamboohr, m365, zoom, cursor, claude-admin, bitbucket-server) have `README.md` with K8s Secret specification
 - [ ] Example tenant config updated to reflect Secret-based credential flow
