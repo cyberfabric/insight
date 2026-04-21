@@ -1,0 +1,12 @@
+name: claude-enterprise
+version: "1.0"
+
+schedule: "0 11 * * *"   # daily at 11:00 UTC — accommodates Anthropic's 10:00 UTC aggregation
+workflow: sync
+
+# Bronze-only iteration — Silver routing is out of scope (see specs/DESIGN.md §4).
+# silver_targets is prohibited per Connector Spec §4.10 — Silver determined by dbt_select tags.
+dbt_select: ""
+
+connection:
+  namespace: "bronze_claude_enterprise"

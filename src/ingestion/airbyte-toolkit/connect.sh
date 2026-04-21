@@ -158,10 +158,11 @@ def discover_secrets():
                 raw = base64.b64decode(v).decode()
             except Exception:
                 raw = v
-            # Parse JSON arrays/objects stored as strings in K8s Secrets
+            # Parse JSON values stored as strings in K8s Secrets
+            # (arrays, objects, booleans, numbers)
             try:
                 parsed = json.loads(raw)
-                if isinstance(parsed, (list, dict)):
+                if isinstance(parsed, (list, dict, bool, int, float)):
                     data[k] = parsed
                 else:
                     data[k] = raw
@@ -346,20 +347,28 @@ for connector_name, source_id_label, config in connector_instances:
             state_pop(state, f"{tenant_connector_path}.connection_id")
         else:
             # Update source config (credentials may have changed)
-            api("POST", "/api/v1/sources/update", {
-                "sourceId": source_id,
-                "name": source_name,
-                "connectionConfiguration": config,
-            })
-            print(f"    Source updated: {source_id}")
+            try:
+                api("POST", "/api/v1/sources/update", {
+                    "sourceId": source_id,
+                    "name": source_name,
+                    "connectionConfiguration": config,
+                })
+                print(f"    Source updated: {source_id}")
+            except ApiError as e:
+                print(f"    ERROR: could not update source for {connector_name}: {e.code} {e.message[:200]}", file=sys.stderr)
+                continue
 
     if not source_id:
-        result = api("POST", "/api/v1/sources/create", {
-            "workspaceId": workspace_id,
-            "name": source_name,
-            "sourceDefinitionId": def_id,
-            "connectionConfiguration": config,
-        })
+        try:
+            result = api("POST", "/api/v1/sources/create", {
+                "workspaceId": workspace_id,
+                "name": source_name,
+                "sourceDefinitionId": def_id,
+                "connectionConfiguration": config,
+            })
+        except ApiError as e:
+            print(f"    ERROR: could not create source for {connector_name}: {e.code} {e.message[:200]}", file=sys.stderr)
+            continue
         if result and "sourceId" in result:
             source_id = result["sourceId"]
             print(f"    Source created: {source_id}")

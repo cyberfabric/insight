@@ -1,0 +1,141 @@
+version: 2
+
+models:
+  - name: class_comms_events
+    description: "Unified communication events from all sources"
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: source_id
+        description: "Source instance identifier"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key"
+        tests:
+          - not_null
+          - unique
+
+  - name: class_collab_chat_activity
+    description: "Unified daily chat activity per user from all collaboration sources (M365 Teams, Slack)"
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: insight_source_id
+        description: "Source instance identifier"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key"
+        tests:
+          - not_null
+          - unique
+      - name: person_key
+        description: "lower(email) with lower(user_name) fallback — cross-source identity join key"
+        tests:
+          - not_null
+      - name: date
+        description: "Activity date (UTC)"
+        tests:
+          - not_null
+      - name: data_source
+        description: "Source discriminator: insight_m365 | insight_slack"
+        tests:
+          - not_null
+
+  - name: class_collab_meeting_activity
+    description: "Unified daily meeting activity per user from all collaboration sources (M365 Teams, Zoom)"
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: insight_source_id
+        description: "Source instance identifier"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key"
+        tests:
+          - not_null
+          - unique
+      - name: person_key
+        description: "lower(email) with lower(user_name) fallback — cross-source identity join key"
+        tests:
+          - not_null
+      - name: date
+        description: "Activity date (UTC)"
+        tests:
+          - not_null
+      - name: data_source
+        description: "Source discriminator: insight_m365 | insight_zoom"
+        tests:
+          - not_null
+
+  - name: class_collab_email_activity
+    description: "Unified daily email activity per user (M365 Outlook)"
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: insight_source_id
+        description: "Source instance identifier"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key"
+        tests:
+          - not_null
+          - unique
+      - name: person_key
+        description: "lower(email) with lower(user_name) fallback — cross-source identity join key"
+        tests:
+          - not_null
+      - name: date
+        description: "Activity date (UTC)"
+        tests:
+          - not_null
+      - name: data_source
+        description: "Source discriminator: insight_m365"
+        tests:
+          - not_null
+
+  - name: class_collab_document_activity
+    description: "Unified daily document activity per user (M365 OneDrive + SharePoint)"
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: insight_source_id
+        description: "Source instance identifier"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key"
+        tests:
+          - not_null
+          - unique
+      - name: person_key
+        description: "lower(email) with lower(user_name) fallback — cross-source identity join key"
+        tests:
+          - not_null
+      - name: date
+        description: "Activity date (UTC)"
+        tests:
+          - not_null
+      - name: product
+        description: "onedrive | sharepoint"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['onedrive', 'sharepoint']
+      - name: data_source
+        description: "Source discriminator: insight_m365"
+        tests:
+          - not_null

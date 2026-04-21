@@ -1,0 +1,1175 @@
+version: 7.0.4
+
+type: DeclarativeSource
+
+check:
+  type: CheckStream
+  stream_names:
+    - claude_enterprise_summaries
+
+definitions:
+  # error_handler is at top-level definitions (NOT under linked) per create.md §3.1:
+  # "Do NOT put error_handler in definitions.linked — Builder strips linked error handlers."
+  retryable_error_handler:
+    type: CompositeErrorHandler
+    error_handlers:
+      - type: DefaultErrorHandler
+        response_filters:
+          - type: HttpResponseFilter
+            action: RATE_LIMITED
+            http_codes:
+              - 429
+        backoff_strategies:
+          - type: WaitTimeFromHeader
+            header: Retry-After
+      - type: DefaultErrorHandler
+        max_retries: 5
+        response_filters:
+          - type: HttpResponseFilter
+            action: RETRY
+            http_codes:
+              - 503
+              - 500
+              - 502
+              - 504
+        backoff_strategies:
+          - type: ExponentialBackoffStrategy
+            factor: 5
+      - type: DefaultErrorHandler
+        response_filters:
+          - type: HttpResponseFilter
+            action: FAIL
+            http_codes:
+              - 401
+              - 404
+            error_message: >-
+              Authentication or scope error: verify the analytics_api_key has
+              the read:analytics scope (created at claude.ai/analytics/api-keys
+              by a Primary Owner).
+
+  linked:
+    HttpRequester:
+      authenticator:
+        type: ApiKeyAuthenticator
+        api_token: "{{ config['analytics_api_key'] }}"
+        header: x-api-key
+      request_headers:
+        anthropic-version: "2023-06-01"
+        Accept: application/json
+    SimpleRetriever:
+      paginator:
+        type: DefaultPaginator
+        page_token_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: page
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ response.get('next_page', '') }}"
+          stop_condition: "{{ response.get('next_page') is none or response.get('next_page') == '' }}"
+
+streams:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Stream 1: claude_enterprise_summaries (incremental, 31-day step)
+  # GET /v1/organizations/analytics/summaries?starting_date&ending_date
+  # ─────────────────────────────────────────────────────────────────────────
+  - type: DeclarativeStream
+    name: claude_enterprise_summaries
+    primary_key:
+      - unique_key
+    supported_sync_modes:
+      - full_refresh
+      - incremental
+    retriever:
+      type: SimpleRetriever
+      decoder:
+        type: JsonDecoder
+      requester:
+        type: HttpRequester
+        url: "{{ config.get('base_url', 'https://api.anthropic.com') }}/v1/organizations/analytics/summaries"
+        http_method: GET
+        authenticator:
+          $ref: "#/definitions/linked/HttpRequester/authenticator"
+        request_headers:
+          $ref: "#/definitions/linked/HttpRequester/request_headers"
+        error_handler:
+          $ref: "#/definitions/retryable_error_handler"
+      paginator:
+        type: NoPagination
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: date
+      cursor_datetime_formats:
+        - "%Y-%m-%d"
+      datetime_format: "%Y-%m-%d"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('start_date') or day_delta(-14, format='%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+        min_datetime: "2026-01-01"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ day_delta(-3, format='%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+      # P1D step: one request per day. The /summaries endpoint supports multi-day
+      # ranges via starting_date + ending_date, but ending_date is EXCLUSIVE — using
+      # P31D with Airbyte's inclusive-inclusive cursor arithmetic causes silent data
+      # loss at 31-day boundaries. P1D + no end_time_option avoids this: each request
+      # sends only starting_date and the API returns that single day's summary.
+      step: P1D
+      cursor_granularity: P1D
+      start_time_option:
+        type: RequestOption
+        field_name: starting_date
+        inject_into: request_parameter
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key:
+            type: string
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          date:
+            type: string
+          daily_active_user_count:
+            type:
+              - integer
+              - "null"
+          weekly_active_user_count:
+            type:
+              - integer
+              - "null"
+          monthly_active_user_count:
+            type:
+              - integer
+              - "null"
+          assigned_seat_count:
+            type:
+              - integer
+              - "null"
+          pending_invite_count:
+            type:
+              - integer
+              - "null"
+          cowork_daily_active_user_count:
+            type:
+              - integer
+              - "null"
+          cowork_weekly_active_user_count:
+            type:
+              - integer
+              - "null"
+          cowork_monthly_active_user_count:
+            type:
+              - integer
+              - "null"
+          collected_at:
+            type:
+              - string
+              - "null"
+          data_source:
+            type:
+              - string
+              - "null"
+        required:
+          - unique_key
+          - tenant_id
+          - source_id
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - data_source
+            value: insight_claude_enterprise
+          - type: AddedFieldDefinition
+            path:
+              - collected_at
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ record['date'] }}
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Stream 2: claude_enterprise_users (incremental, 1-day step)
+  # GET /v1/organizations/analytics/users?date=YYYY-MM-DD
+  # ─────────────────────────────────────────────────────────────────────────
+  - type: DeclarativeStream
+    name: claude_enterprise_users
+    primary_key:
+      - unique_key
+    supported_sync_modes:
+      - full_refresh
+      - incremental
+    retriever:
+      type: SimpleRetriever
+      decoder:
+        type: JsonDecoder
+      requester:
+        type: HttpRequester
+        url: "{{ config.get('base_url', 'https://api.anthropic.com') }}/v1/organizations/analytics/users"
+        http_method: GET
+        authenticator:
+          $ref: "#/definitions/linked/HttpRequester/authenticator"
+        request_headers:
+          $ref: "#/definitions/linked/HttpRequester/request_headers"
+        error_handler:
+          $ref: "#/definitions/retryable_error_handler"
+        request_parameters:
+          limit: "1000"
+      paginator:
+        $ref: "#/definitions/linked/SimpleRetriever/paginator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: date
+      cursor_datetime_formats:
+        - "%Y-%m-%d"
+      datetime_format: "%Y-%m-%d"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('start_date') or day_delta(-14, format='%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+        min_datetime: "2026-01-01"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ day_delta(-3, format='%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+      step: P1D
+      cursor_granularity: P1D
+      start_time_option:
+        type: RequestOption
+        field_name: date
+        inject_into: request_parameter
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key:
+            type: string
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          date:
+            type: string
+          user_id:
+            type:
+              - string
+              - "null"
+          user_email:
+            type:
+              - string
+              - "null"
+          chat_conversation_count:
+            type:
+              - integer
+              - "null"
+          chat_message_count:
+            type:
+              - integer
+              - "null"
+          chat_projects_created_count:
+            type:
+              - integer
+              - "null"
+          chat_projects_used_count:
+            type:
+              - integer
+              - "null"
+          chat_files_uploaded_count:
+            type:
+              - integer
+              - "null"
+          chat_artifacts_created_count:
+            type:
+              - integer
+              - "null"
+          chat_thinking_message_count:
+            type:
+              - integer
+              - "null"
+          chat_skills_used_count:
+            type:
+              - integer
+              - "null"
+          chat_connectors_used_count:
+            type:
+              - integer
+              - "null"
+          code_commit_count:
+            type:
+              - integer
+              - "null"
+          code_pull_request_count:
+            type:
+              - integer
+              - "null"
+          code_lines_added:
+            type:
+              - integer
+              - "null"
+          code_lines_removed:
+            type:
+              - integer
+              - "null"
+          code_session_count:
+            type:
+              - integer
+              - "null"
+          code_tool_accepted_count:
+            type:
+              - integer
+              - "null"
+          code_tool_rejected_count:
+            type:
+              - integer
+              - "null"
+          web_search_count:
+            type:
+              - integer
+              - "null"
+          excel_session_count:
+            type:
+              - integer
+              - "null"
+          excel_message_count:
+            type:
+              - integer
+              - "null"
+          powerpoint_session_count:
+            type:
+              - integer
+              - "null"
+          powerpoint_message_count:
+            type:
+              - integer
+              - "null"
+          cowork_session_count:
+            type:
+              - integer
+              - "null"
+          cowork_message_count:
+            type:
+              - integer
+              - "null"
+          cowork_action_count:
+            type:
+              - integer
+              - "null"
+          cowork_dispatch_turn_count:
+            type:
+              - integer
+              - "null"
+          cowork_skills_used_count:
+            type:
+              - integer
+              - "null"
+          chat_metrics_json:
+            type:
+              - string
+              - "null"
+          claude_code_metrics_json:
+            type:
+              - string
+              - "null"
+          office_metrics_json:
+            type:
+              - string
+              - "null"
+          cowork_metrics_json:
+            type:
+              - string
+              - "null"
+          collected_at:
+            type:
+              - string
+              - "null"
+          data_source:
+            type:
+              - string
+              - "null"
+        required:
+          - unique_key
+          - tenant_id
+          - source_id
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - data_source
+            value: insight_claude_enterprise
+          - type: AddedFieldDefinition
+            path:
+              - collected_at
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path:
+              - date
+            value: "{{ stream_interval['start_time'][:10] }}"
+          - type: AddedFieldDefinition
+            path:
+              - user_id
+            value: "{{ record.get('user', {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path:
+              - user_email
+            value: "{{ record.get('user', {}).get('email_address') }}"
+          - type: AddedFieldDefinition
+            path:
+              - chat_conversation_count
+            value: "{{ record.get('chat_metrics', {}).get('distinct_conversation_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - chat_message_count
+            value: "{{ record.get('chat_metrics', {}).get('message_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - chat_projects_created_count
+            value: "{{ record.get('chat_metrics', {}).get('distinct_projects_created_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - chat_projects_used_count
+            value: "{{ record.get('chat_metrics', {}).get('distinct_projects_used_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - chat_files_uploaded_count
+            value: "{{ record.get('chat_metrics', {}).get('distinct_files_uploaded_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - chat_artifacts_created_count
+            value: "{{ record.get('chat_metrics', {}).get('distinct_artifacts_created_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - chat_thinking_message_count
+            value: "{{ record.get('chat_metrics', {}).get('thinking_message_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - chat_skills_used_count
+            value: "{{ record.get('chat_metrics', {}).get('distinct_skills_used_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - chat_connectors_used_count
+            value: "{{ record.get('chat_metrics', {}).get('connectors_used_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - code_commit_count
+            value: "{{ record.get('claude_code_metrics', {}).get('core_metrics', {}).get('commit_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - code_pull_request_count
+            value: "{{ record.get('claude_code_metrics', {}).get('core_metrics', {}).get('pull_request_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - code_lines_added
+            value: "{{ record.get('claude_code_metrics', {}).get('core_metrics', {}).get('lines_of_code', {}).get('added_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - code_lines_removed
+            value: "{{ record.get('claude_code_metrics', {}).get('core_metrics', {}).get('lines_of_code', {}).get('removed_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - code_session_count
+            value: "{{ record.get('claude_code_metrics', {}).get('core_metrics', {}).get('distinct_session_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - code_tool_accepted_count
+            value: >-
+              {{ (record.get('claude_code_metrics', {}).get('tool_actions', {}).get('edit_tool', {}).get('accepted_count', 0) or 0)
+                + (record.get('claude_code_metrics', {}).get('tool_actions', {}).get('multi_edit_tool', {}).get('accepted_count', 0) or 0)
+                + (record.get('claude_code_metrics', {}).get('tool_actions', {}).get('write_tool', {}).get('accepted_count', 0) or 0)
+                + (record.get('claude_code_metrics', {}).get('tool_actions', {}).get('notebook_edit_tool', {}).get('accepted_count', 0) or 0) }}
+          - type: AddedFieldDefinition
+            path:
+              - code_tool_rejected_count
+            value: >-
+              {{ (record.get('claude_code_metrics', {}).get('tool_actions', {}).get('edit_tool', {}).get('rejected_count', 0) or 0)
+                + (record.get('claude_code_metrics', {}).get('tool_actions', {}).get('multi_edit_tool', {}).get('rejected_count', 0) or 0)
+                + (record.get('claude_code_metrics', {}).get('tool_actions', {}).get('write_tool', {}).get('rejected_count', 0) or 0)
+                + (record.get('claude_code_metrics', {}).get('tool_actions', {}).get('notebook_edit_tool', {}).get('rejected_count', 0) or 0) }}
+          - type: AddedFieldDefinition
+            path:
+              - web_search_count
+            value: "{{ record.get('web_search_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - excel_session_count
+            value: "{{ record.get('office_metrics', {}).get('excel', {}).get('distinct_session_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - excel_message_count
+            value: "{{ record.get('office_metrics', {}).get('excel', {}).get('message_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - powerpoint_session_count
+            value: "{{ record.get('office_metrics', {}).get('powerpoint', {}).get('distinct_session_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - powerpoint_message_count
+            value: "{{ record.get('office_metrics', {}).get('powerpoint', {}).get('message_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - cowork_session_count
+            value: "{{ record.get('cowork_metrics', {}).get('distinct_session_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - cowork_message_count
+            value: "{{ record.get('cowork_metrics', {}).get('message_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - cowork_action_count
+            value: "{{ record.get('cowork_metrics', {}).get('action_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - cowork_dispatch_turn_count
+            value: "{{ record.get('cowork_metrics', {}).get('dispatch_turn_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - cowork_skills_used_count
+            value: "{{ record.get('cowork_metrics', {}).get('distinct_skills_used_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - chat_metrics_json
+            value: "{{ record.get('chat_metrics', {}) | tojson }}"
+          - type: AddedFieldDefinition
+            path:
+              - claude_code_metrics_json
+            value: "{{ record.get('claude_code_metrics', {}) | tojson }}"
+          - type: AddedFieldDefinition
+            path:
+              - office_metrics_json
+            value: "{{ record.get('office_metrics', {}) | tojson }}"
+          - type: AddedFieldDefinition
+            path:
+              - cowork_metrics_json
+            value: "{{ record.get('cowork_metrics', {}) | tojson }}"
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ stream_interval['start_time'][:10] }}-{{
+              record.get('user', {}).get('id') }}
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Stream 3: claude_enterprise_chat_projects (incremental, 1-day step)
+  # GET /v1/organizations/analytics/apps/chat/projects?date=YYYY-MM-DD
+  # ─────────────────────────────────────────────────────────────────────────
+  - type: DeclarativeStream
+    name: claude_enterprise_chat_projects
+    primary_key:
+      - unique_key
+    supported_sync_modes:
+      - full_refresh
+      - incremental
+    retriever:
+      type: SimpleRetriever
+      decoder:
+        type: JsonDecoder
+      requester:
+        type: HttpRequester
+        url: "{{ config.get('base_url', 'https://api.anthropic.com') }}/v1/organizations/analytics/apps/chat/projects"
+        http_method: GET
+        authenticator:
+          $ref: "#/definitions/linked/HttpRequester/authenticator"
+        request_headers:
+          $ref: "#/definitions/linked/HttpRequester/request_headers"
+        error_handler:
+          $ref: "#/definitions/retryable_error_handler"
+        request_parameters:
+          limit: "1000"
+      paginator:
+        $ref: "#/definitions/linked/SimpleRetriever/paginator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: date
+      cursor_datetime_formats:
+        - "%Y-%m-%d"
+      datetime_format: "%Y-%m-%d"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('start_date') or day_delta(-14, format='%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+        min_datetime: "2026-01-01"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ day_delta(-3, format='%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+      step: P1D
+      cursor_granularity: P1D
+      start_time_option:
+        type: RequestOption
+        field_name: date
+        inject_into: request_parameter
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key:
+            type: string
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          date:
+            type: string
+          project_id:
+            type:
+              - string
+              - "null"
+          project_name:
+            type:
+              - string
+              - "null"
+          distinct_user_count:
+            type:
+              - integer
+              - "null"
+          distinct_conversation_count:
+            type:
+              - integer
+              - "null"
+          message_count:
+            type:
+              - integer
+              - "null"
+          created_at:
+            type:
+              - string
+              - "null"
+          created_by_id:
+            type:
+              - string
+              - "null"
+          created_by_email:
+            type:
+              - string
+              - "null"
+          collected_at:
+            type:
+              - string
+              - "null"
+          data_source:
+            type:
+              - string
+              - "null"
+        required:
+          - unique_key
+          - tenant_id
+          - source_id
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - data_source
+            value: insight_claude_enterprise
+          - type: AddedFieldDefinition
+            path:
+              - collected_at
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path:
+              - date
+            value: "{{ stream_interval['start_time'][:10] }}"
+          - type: AddedFieldDefinition
+            path:
+              - created_by_id
+            value: "{{ record.get('created_by', {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path:
+              - created_by_email
+            value: "{{ record.get('created_by', {}).get('email_address') }}"
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ stream_interval['start_time'][:10] }}-{{ record.get('project_id') }}
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Stream 4: claude_enterprise_skills (incremental, 1-day step)
+  # GET /v1/organizations/analytics/skills?date=YYYY-MM-DD
+  # ─────────────────────────────────────────────────────────────────────────
+  - type: DeclarativeStream
+    name: claude_enterprise_skills
+    primary_key:
+      - unique_key
+    supported_sync_modes:
+      - full_refresh
+      - incremental
+    retriever:
+      type: SimpleRetriever
+      decoder:
+        type: JsonDecoder
+      requester:
+        type: HttpRequester
+        url: "{{ config.get('base_url', 'https://api.anthropic.com') }}/v1/organizations/analytics/skills"
+        http_method: GET
+        authenticator:
+          $ref: "#/definitions/linked/HttpRequester/authenticator"
+        request_headers:
+          $ref: "#/definitions/linked/HttpRequester/request_headers"
+        error_handler:
+          $ref: "#/definitions/retryable_error_handler"
+        request_parameters:
+          limit: "1000"
+      paginator:
+        $ref: "#/definitions/linked/SimpleRetriever/paginator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: date
+      cursor_datetime_formats:
+        - "%Y-%m-%d"
+      datetime_format: "%Y-%m-%d"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('start_date') or day_delta(-14, format='%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+        min_datetime: "2026-01-01"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ day_delta(-3, format='%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+      step: P1D
+      cursor_granularity: P1D
+      start_time_option:
+        type: RequestOption
+        field_name: date
+        inject_into: request_parameter
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key:
+            type: string
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          date:
+            type: string
+          skill_name:
+            type:
+              - string
+              - "null"
+          distinct_user_count:
+            type:
+              - integer
+              - "null"
+          chat_conversation_skill_used_count:
+            type:
+              - integer
+              - "null"
+          code_session_skill_used_count:
+            type:
+              - integer
+              - "null"
+          excel_session_skill_used_count:
+            type:
+              - integer
+              - "null"
+          powerpoint_session_skill_used_count:
+            type:
+              - integer
+              - "null"
+          cowork_session_skill_used_count:
+            type:
+              - integer
+              - "null"
+          surface_metrics_json:
+            type:
+              - string
+              - "null"
+          collected_at:
+            type:
+              - string
+              - "null"
+          data_source:
+            type:
+              - string
+              - "null"
+        required:
+          - unique_key
+          - tenant_id
+          - source_id
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - data_source
+            value: insight_claude_enterprise
+          - type: AddedFieldDefinition
+            path:
+              - collected_at
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path:
+              - date
+            value: "{{ stream_interval['start_time'][:10] }}"
+          - type: AddedFieldDefinition
+            path:
+              - chat_conversation_skill_used_count
+            value: "{{ record.get('chat_metrics', {}).get('distinct_conversation_skill_used_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - code_session_skill_used_count
+            value: "{{ record.get('claude_code_metrics', {}).get('distinct_session_skill_used_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - excel_session_skill_used_count
+            value: "{{ record.get('office_metrics', {}).get('excel', {}).get('distinct_session_skill_used_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - powerpoint_session_skill_used_count
+            value: "{{ record.get('office_metrics', {}).get('powerpoint', {}).get('distinct_session_skill_used_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - cowork_session_skill_used_count
+            value: "{{ record.get('cowork_metrics', {}).get('distinct_session_skill_used_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - surface_metrics_json
+            value: >-
+              {{ {'chat': record.get('chat_metrics', {}),
+                  'claude_code': record.get('claude_code_metrics', {}),
+                  'office': record.get('office_metrics', {}),
+                  'cowork': record.get('cowork_metrics', {})} | tojson }}
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ stream_interval['start_time'][:10] }}-{{ record.get('skill_name') }}
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Stream 5: claude_enterprise_connectors (incremental, 1-day step)
+  # GET /v1/organizations/analytics/connectors?date=YYYY-MM-DD
+  # ─────────────────────────────────────────────────────────────────────────
+  - type: DeclarativeStream
+    name: claude_enterprise_connectors
+    primary_key:
+      - unique_key
+    supported_sync_modes:
+      - full_refresh
+      - incremental
+    retriever:
+      type: SimpleRetriever
+      decoder:
+        type: JsonDecoder
+      requester:
+        type: HttpRequester
+        url: "{{ config.get('base_url', 'https://api.anthropic.com') }}/v1/organizations/analytics/connectors"
+        http_method: GET
+        authenticator:
+          $ref: "#/definitions/linked/HttpRequester/authenticator"
+        request_headers:
+          $ref: "#/definitions/linked/HttpRequester/request_headers"
+        error_handler:
+          $ref: "#/definitions/retryable_error_handler"
+        request_parameters:
+          limit: "1000"
+      paginator:
+        $ref: "#/definitions/linked/SimpleRetriever/paginator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - data
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: date
+      cursor_datetime_formats:
+        - "%Y-%m-%d"
+      datetime_format: "%Y-%m-%d"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('start_date') or day_delta(-14, format='%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+        min_datetime: "2026-01-01"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ day_delta(-3, format='%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+      step: P1D
+      cursor_granularity: P1D
+      start_time_option:
+        type: RequestOption
+        field_name: date
+        inject_into: request_parameter
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key:
+            type: string
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          date:
+            type: string
+          connector_name:
+            type:
+              - string
+              - "null"
+          distinct_user_count:
+            type:
+              - integer
+              - "null"
+          chat_conversation_connector_used_count:
+            type:
+              - integer
+              - "null"
+          code_session_connector_used_count:
+            type:
+              - integer
+              - "null"
+          excel_session_connector_used_count:
+            type:
+              - integer
+              - "null"
+          powerpoint_session_connector_used_count:
+            type:
+              - integer
+              - "null"
+          cowork_session_connector_used_count:
+            type:
+              - integer
+              - "null"
+          surface_metrics_json:
+            type:
+              - string
+              - "null"
+          collected_at:
+            type:
+              - string
+              - "null"
+          data_source:
+            type:
+              - string
+              - "null"
+        required:
+          - unique_key
+          - tenant_id
+          - source_id
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - data_source
+            value: insight_claude_enterprise
+          - type: AddedFieldDefinition
+            path:
+              - collected_at
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path:
+              - date
+            value: "{{ stream_interval['start_time'][:10] }}"
+          - type: AddedFieldDefinition
+            path:
+              - chat_conversation_connector_used_count
+            value: "{{ record.get('chat_metrics', {}).get('distinct_conversation_connector_used_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - code_session_connector_used_count
+            value: "{{ record.get('claude_code_metrics', {}).get('distinct_session_connector_used_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - excel_session_connector_used_count
+            value: "{{ record.get('office_metrics', {}).get('excel', {}).get('distinct_session_connector_used_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - powerpoint_session_connector_used_count
+            value: "{{ record.get('office_metrics', {}).get('powerpoint', {}).get('distinct_session_connector_used_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - cowork_session_connector_used_count
+            value: "{{ record.get('cowork_metrics', {}).get('distinct_session_connector_used_count') }}"
+          - type: AddedFieldDefinition
+            path:
+              - surface_metrics_json
+            value: >-
+              {{ {'chat': record.get('chat_metrics', {}),
+                  'claude_code': record.get('claude_code_metrics', {}),
+                  'office': record.get('office_metrics', {}),
+                  'cowork': record.get('cowork_metrics', {})} | tojson }}
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ stream_interval['start_time'][:10] }}-{{ record.get('connector_name') }}
+
+# default_concurrency: 1 is intentional — the Enterprise Analytics API enforces
+# org-level rate limits (not documented numerically). Sequential stream processing
+# avoids rate-limit exhaustion during backfill. Consider bumping to 2-3 after
+# observing real API behavior in production.
+concurrency_level:
+  type: ConcurrencyLevel
+  default_concurrency: 1
+
+spec:
+  type: Spec
+  connection_specification:
+    type: object
+    $schema: http://json-schema.org/draft-07/schema#
+    required:
+      - insight_tenant_id
+      - insight_source_id
+      - analytics_api_key
+    properties:
+      insight_tenant_id:
+        type: string
+        title: Insight Tenant ID
+        description: Insight tenant identifier stamped onto every emitted record.
+        order: 0
+      insight_source_id:
+        type: string
+        title: Insight Source ID
+        description: Instance discriminator (e.g., claude-enterprise-main).
+        order: 1
+      analytics_api_key:
+        type: string
+        title: Analytics API Key
+        description: >-
+          Enterprise Analytics API key with read:analytics scope. Created at
+          claude.ai/analytics/api-keys by an organization Primary Owner.
+        airbyte_secret: true
+        order: 2
+      start_date:
+        type: string
+        title: Start Date
+        description: >-
+          Optional earliest date to collect from (YYYY-MM-DD). Defaults to 14
+          days ago. Values earlier than 2026-01-01 are silently clamped to that
+          floor (the API rejects pre-2026 dates).
+        format: date
+        order: 3
+      base_url:
+        type: string
+        title: API Base URL (override)
+        description: >-
+          Optional API base URL override for development against a stub
+          service. Defaults to https://api.anthropic.com — production
+          deployments should leave the default in place.
+        default: https://api.anthropic.com
+        order: 4
+    additionalProperties: true
+
+metadata:
+  autoImportSchema:
+    claude_enterprise_summaries: false
+    claude_enterprise_users: false
+    claude_enterprise_chat_projects: false
+    claude_enterprise_skills: false
+    claude_enterprise_connectors: false

@@ -284,6 +284,16 @@ name = "ADR-001: Cursor granularity PT1S for consistency with claude-api"
 
 [[systems.artifacts]]
 kind = "PRD"
+path = "docs/components/connectors/ai/claude-enterprise/specs/PRD.md"
+name = "Claude Enterprise Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/ai/claude-enterprise/specs/DESIGN.md"
+name = "Claude Enterprise Connector Design"
+
+[[systems.artifacts]]
+kind = "PRD"
 path = "docs/components/connectors/ai/chatgpt-team/specs/PRD.md"
 name = "ChatGPT Team Connector PRD"
 

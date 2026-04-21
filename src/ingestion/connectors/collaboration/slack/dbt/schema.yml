@@ -48,3 +48,23 @@ models:
       - name: source_id
         tests:
           - not_null
+
+  - name: slack__collab_chat_activity
+    description: "Slack chat activity aggregated per user per day → staging, feeds class_collab_chat_activity"
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: insight_source_id
+        tests:
+          - not_null
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: person_key
+        tests:
+          - not_null
+      - name: date
+        tests:
+          - not_null

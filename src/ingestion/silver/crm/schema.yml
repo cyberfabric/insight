@@ -1,0 +1,78 @@
+version: 2
+
+models:
+  - name: class_crm_users
+    description: "Unified CRM users from all sources (Salesforce, HubSpot)"
+    columns:
+      - name: user_id
+        description: "Source-specific user ID"
+        tests:
+          - not_null
+      - name: email
+        description: "Email — identity key for Silver Step 2"
+        tests:
+          - not_null
+      - name: data_source
+        description: "Source discriminator"
+        tests:
+          - not_null
+
+  - name: class_crm_deals
+    description: "Unified CRM deals/opportunities from all sources"
+    columns:
+      - name: deal_id
+        description: "Source-specific deal ID"
+        tests:
+          - not_null
+      - name: owner_id
+        description: "Salesperson ID — joins to class_crm_users.user_id"
+        tests:
+          - not_null
+      - name: data_source
+        description: "Source discriminator"
+        tests:
+          - not_null
+
+  - name: class_crm_activities
+    description: "Unified CRM activities (calls, meetings, tasks, emails) from all sources"
+    columns:
+      - name: activity_id
+        description: "Source-specific activity ID"
+        tests:
+          - not_null
+      - name: activity_type
+        description: "Normalised type: call, email, task, event, meeting"
+        tests:
+          - not_null
+      - name: owner_id
+        description: "Activity owner — joins to class_crm_users.user_id"
+        tests:
+          - not_null
+      - name: data_source
+        description: "Source discriminator"
+        tests:
+          - not_null
+
+  - name: class_crm_contacts
+    description: "Unified CRM contacts (external customers) from all sources"
+    columns:
+      - name: contact_id
+        description: "Source-specific contact ID"
+        tests:
+          - not_null
+      - name: data_source
+        description: "Source discriminator"
+        tests:
+          - not_null
+
+  - name: class_crm_accounts
+    description: "Unified CRM accounts/companies from all sources"
+    columns:
+      - name: account_id
+        description: "Source-specific account ID"
+        tests:
+          - not_null
+      - name: data_source
+        description: "Source discriminator"
+        tests:
+          - not_null

@@ -1,0 +1,105 @@
+version: 2
+
+models:
+  - name: class_hr_working_hours
+    description: "Scheduled working hours per active employee from all HR sources"
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - insight_tenant_id
+            - email
+    columns:
+      - name: insight_tenant_id
+        tests:
+          - not_null
+      - name: source_person_id
+        description: "Source-specific employee ID"
+        tests:
+          - not_null
+      - name: email
+        description: "Work email — identity key for Gold layer joins"
+        tests:
+          - not_null
+      - name: source
+        description: "Source discriminator (bamboohr, workday, …)"
+        tests:
+          - not_null
+      - name: working_hours_per_day
+        description: "Scheduled working hours per working day"
+        tests:
+          - not_null
+      - name: working_hours_per_week
+        description: "Scheduled working hours per week"
+        tests:
+          - not_null
+
+  - name: class_hr_events
+    description: "Unified HR events (leave, on-leave, etc.) from all HR sources"
+    columns:
+      - name: insight_tenant_id
+        tests:
+          - not_null
+      - name: unique_key
+        tests:
+          - not_null
+      - name: source_person_id
+        description: "Source-specific employee ID"
+        tests:
+          - not_null
+      - name: event_type
+        description: "Normalised event type: leave"
+        tests:
+          - not_null
+      - name: start_date
+        tests:
+          - not_null
+      - name: end_date
+        description: "Leave end date; NULL for open-ended leaves"
+      - name: source
+        tests:
+          - not_null
+
+  - name: class_focus_metrics
+    description: >
+      Daily pre-aggregation of focus_time_pct and dev_time_h per active employee.
+      Joins class_comms_events (Zoom meeting participations) with class_hr_working_hours.
+      One row per person per working day. Incremental with 3-day lookback for late events.
+      Users without HR working hours data default to 8h/day.
+    columns:
+      - name: insight_tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "tenant_id-email-day"
+        tests:
+          - not_null
+          - unique
+      - name: email
+        description: "Employee work email (lowercased)"
+        tests:
+          - not_null
+      - name: day
+        description: "Calendar date of the activity"
+        tests:
+          - not_null
+      - name: meetings_count
+        description: "Number of Zoom meeting participation events on this day"
+        tests:
+          - not_null
+      - name: meeting_hours
+        description: "Total hours spent in meetings (sum of duration_seconds / 3600)"
+        tests:
+          - not_null
+      - name: working_hours_per_day
+        description: "Scheduled working hours from class_hr_working_hours; defaults to 8.0 if missing"
+        tests:
+          - not_null
+      - name: focus_time_pct
+        description: "100 - (meeting_hours / working_hours_per_day) * 100, capped [0, 100]"
+        tests:
+          - not_null
+      - name: dev_time_h
+        description: "working_hours_per_day - meeting_hours, capped at 0 minimum"
+        tests:
+          - not_null

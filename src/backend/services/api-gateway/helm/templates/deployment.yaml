@@ -15,7 +15,7 @@ spec:
         {{- include "insight-api-gateway.selectorLabels" . | nindent 8 }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
-        {{- if not .Values.authDisabled }}
+        {{- if and (not .Values.authDisabled) (not .Values.oidc.existingSecret) }}
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
         {{- end }}
         {{- with .Values.podAnnotations }}
@@ -47,21 +47,8 @@ spec:
                 name: {{ include "insight-api-gateway.fullname" . }}-config
             {{- if not .Values.authDisabled }}
             - secretRef:
-                name: {{ include "insight-api-gateway.fullname" . }}-oidc
+                name: {{ .Values.oidc.existingSecret | default (printf "%s-oidc" (include "insight-api-gateway.fullname" .)) }}
             {{- end }}
-          env:
-            - name: CLICKHOUSE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: clickhouse-credentials
-                  key: password
-                  optional: true
-            - name: CLICKHOUSE_USER
-              valueFrom:
-                secretKeyRef:
-                  name: clickhouse-credentials
-                  key: username
-                  optional: true
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false

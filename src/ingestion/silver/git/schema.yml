@@ -1,0 +1,176 @@
+version: 2
+
+models:
+  - name: class_git_repositories
+    description: "Unified git repositories from all sources (GitHub, Bitbucket, GitLab)"
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key"
+        tests:
+          - not_null
+          - unique
+
+  - name: class_git_repository_branches
+    description: "Unified git repository branches from all sources (GitHub, Bitbucket, GitLab)"
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key"
+        tests:
+          - not_null
+          - unique
+
+  - name: class_git_commits
+    description: "Unified git commits from all sources (GitHub, Bitbucket, GitLab)"
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key"
+        tests:
+          - not_null
+          - unique
+
+  - name: class_git_file_changes
+    description: "Unified git file changes from all sources (GitHub, Bitbucket, GitLab)"
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key"
+        tests:
+          - not_null
+          - unique
+
+  - name: class_git_pull_requests
+    description: "Unified git pull requests from all sources (GitHub, Bitbucket, GitLab)"
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key"
+        tests:
+          - not_null
+          - unique
+
+  - name: class_git_pull_requests_reviewers
+    description: "Unified git pull request reviewers from all sources (GitHub, Bitbucket, GitLab)"
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key"
+        tests:
+          - not_null
+          - unique
+
+  - name: class_git_pull_requests_comments
+    description: "Unified git pull request comments from all sources (GitHub, Bitbucket, GitLab)"
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key"
+        tests:
+          - not_null
+          - unique
+
+  - name: class_git_pull_requests_commits
+    description: "Unified git pull request commits from all sources (GitHub, Bitbucket, GitLab)"
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key"
+        tests:
+          - not_null
+          - unique
+
+  - name: fct_git_pr
+    description: "PR-row facts: adds person_key, state_norm, cycle_time_h"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: unique_key
+        tests: [not_null, unique]
+      - name: person_key
+        description: "lower(author_email) with author_name fallback when email empty"
+        tests: [not_null]
+
+  - name: fct_git_commit
+    description: "Commit-row facts: adds person_key, week"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: unique_key
+        tests: [not_null, unique]
+      - name: person_key
+        description: "lower(author_email) with author_name fallback when email empty"
+        tests: [not_null]
+
+  - name: fct_git_file_change
+    description: "File-change-row facts: adds person_key (via commit), week, file_category. Inner-joined to fct_git_commit on commit_hash — orphan file changes excluded."
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: unique_key
+        tests: [not_null, unique]
+      - name: person_key
+        description: "inherited from the joined commit"
+        tests: [not_null]
+      - name: file_category
+        description: "spec | config | code"
+
+  - name: fct_git_review
+    description: "Review-row facts: adds reviewer person_key (reviewer-login namespace, not unified with email-based person_key)."
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: unique_key
+        tests: [not_null, unique]
+      - name: person_key
+        description: "lower(reviewer_name) — GitHub login or Bitbucket display_name"
+        tests: [not_null]
+
+  - name: mtr_git_person_totals
+    description: "Per-person git totals: prs, commits, loc, clean_loc, avg cycle time. Grain: (tenant_id, person_key)."
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: person_key
+        tests: [not_null]
+      - name: unique_key
+        description: "concat(tenant_id, '|', person_key) — enforces one row per person per tenant"
+        tests: [not_null, unique]
+
+  - name: mtr_git_person_weekly
+    description: "Per-person per-week git trend: commits, prs_merged, code_loc, spec_lines. Grain: (tenant_id, person_key, week)."
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: person_key
+        tests: [not_null]
+      - name: week
+        tests: [not_null]
+      - name: unique_key
+        description: "concat(tenant_id, '|', person_key, '|', week) — enforces one row per person per tenant per week"
+        tests: [not_null, unique]

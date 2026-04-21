@@ -272,8 +272,14 @@ src/ingestion/
 ├── dbt/                             # Shared dbt project
 │   ├── dbt_project.yml
 │   ├── profiles.yml
-│   ├── silver/                      #   Union models (class_*)
+│   ├── identity/                    #   Identity-resolution engine
 │   └── macros/                      #   union_by_tag
+│
+├── silver/                          # Silver layer, split by domain
+│   ├── _shared/                     #   Cross-domain (class_people, bootstrap_inputs)
+│   ├── git/                         #   class_git_* union models
+│   ├── collaboration/               #   class_comms_events
+│   └── crm/                         #   class_crm_*
 │
 ├── workflows/
 │   ├── templates/                   #   Argo WorkflowTemplates (tracked)

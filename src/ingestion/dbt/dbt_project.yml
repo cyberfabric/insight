@@ -5,8 +5,8 @@ config-version: 2
 profile: ingestion
 
 model-paths:
-  - silver
   - identity
+  - ../silver
   - ../connectors
 
 macro-paths:

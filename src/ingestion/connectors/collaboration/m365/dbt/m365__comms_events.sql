@@ -9,10 +9,13 @@ SELECT
     tenant_id,
     source_id,
     unique_key,
-    userPrincipalName AS user_email,
-    sendCount AS emails_sent,
-    reportRefreshDate AS activity_date,
-    'm365' AS source
+    userPrincipalName                    AS user_email,
+    CAST(NULL AS Nullable(String))       AS user_name,
+    sendCount                            AS emails_sent,
+    reportRefreshDate                    AS activity_date,
+    CAST(NULL AS Nullable(String))       AS event_type,
+    CAST(NULL AS Nullable(Int64))        AS duration_seconds,
+    'm365'                               AS source
 FROM {{ source('bronze_m365', 'email_activity') }}
 {% if is_incremental() %}
 WHERE reportRefreshDate > (SELECT max(activity_date) FROM {{ this }})

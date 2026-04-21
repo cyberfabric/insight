@@ -1,0 +1,18 @@
+version: 2
+
+models:
+  - name: class_people
+    description: "Unified person registry from all HR sources (BambooHR, Workday)"
+    columns:
+      - name: source_person_id
+        description: "Source-specific employee ID"
+        tests:
+          - not_null
+      - name: source
+        description: "Source discriminator"
+        tests:
+          - not_null
+      - name: workspace_id
+        description: "Tenant identifier"
+        tests:
+          - not_null

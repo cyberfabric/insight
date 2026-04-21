@@ -30,6 +30,19 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ .Values.existingSecret | default (printf "%s-config" (include "insight-identity-resolution.fullname" .)) }}
+          {{- if .Values.clickhouse.credentialsSecret.name }}
+          env:
+            - name: IDENTITY__clickhouse_user
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.clickhouse.credentialsSecret.name | quote }}
+                  key: {{ .Values.clickhouse.credentialsSecret.userKey | quote }}
+            - name: IDENTITY__clickhouse_password
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.clickhouse.credentialsSecret.name | quote }}
+                  key: {{ .Values.clickhouse.credentialsSecret.passwordKey | quote }}
+          {{- end }}
           {{- with .Values.livenessProbe }}
           livenessProbe:
             {{- toYaml . | nindent 12 }}
