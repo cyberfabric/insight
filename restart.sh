@@ -87,6 +87,20 @@ if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
     kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=mariadb -n "$NAMESPACE" --timeout=120s 2>/dev/null \
       || echo "  WARNING: MariaDB not ready"
 
+    # Clean up stale replication-job pods (Airbyte sync pods that didn't finish cleanly)
+    kubectl delete pod -n airbyte --field-selector=status.phase!=Running --force 2>/dev/null || true
+
+    # Ensure CoreDNS is patched (public DNS upstream — survives Kind restart normally,
+    # but guard against manual edits / cluster-wide reset).
+    if kubectl get configmap coredns -n kube-system -o yaml 2>/dev/null \
+      | grep -q "forward . /etc/resolv.conf"; then
+      echo "  Patching CoreDNS to use public DNS (8.8.8.8, 8.8.4.4)..."
+      kubectl get configmap coredns -n kube-system -o yaml \
+        | sed 's|forward \. /etc/resolv.conf|forward . 8.8.8.8 8.8.4.4|' \
+        | kubectl apply -f - >/dev/null
+      kubectl rollout restart deployment/coredns -n kube-system >/dev/null
+    fi
+
     # Clean up stuck helm releases
     for ns_release in "airbyte:airbyte" "argo:argo-workflows"; do
       ns="${ns_release%%:*}"

@@ -6,6 +6,12 @@
 --   - Database `insight` exists
 --   - Bronze databases: bronze_bamboohr, bronze_jira, bronze_m365, bronze_zoom
 --   - Table: silver.class_comms_events
+--
+-- Missing bronze tables (connectors without credentials) are handled by
+-- `scripts/create-bronze-placeholders.sh` which runs before migrations and
+-- creates empty placeholder tables only for connectors that have no secret.
+-- When the connector is later configured, Airbyte will drop the placeholder
+-- and create a real table via its first sync.
 
 -- =====================================================================
 -- 1. PEOPLE — deduped person lookup from BambooHR

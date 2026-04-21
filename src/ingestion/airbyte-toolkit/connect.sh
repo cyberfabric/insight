@@ -404,7 +404,7 @@ for connector_name, source_id_label, config in connector_instances:
                 stream_name = stream_def.get("name", "")
                 supported = stream_def.get("supportedSyncModes", ["full_refresh"])
                 sync_mode = "incremental" if "incremental" in supported else "full_refresh"
-                dest_sync_mode = "append_dedup" if sync_mode == "incremental" else "append"
+                dest_sync_mode = "append_dedup" if sync_mode == "incremental" else "overwrite"
                 stream_config = {
                     "syncMode": sync_mode,
                     "destinationSyncMode": dest_sync_mode,

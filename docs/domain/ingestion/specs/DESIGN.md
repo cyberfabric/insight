@@ -666,6 +666,10 @@ Key deployment decisions:
 - MariaDB deployed via Bitnami Helm chart (`helmfile/values/mariadb.yaml`); `up.sh` installs it idempotently before backend services
 - CDK connector build script (`airbyte-toolkit/build-connector.sh`) uses `CLUSTER_NAME` env var (default `insight`) for Kind image loading — not hardcoded
 - Airbyte port-forward uses `nohup ... & disown` to avoid blocking the terminal
+- Argo `dbt-run` WorkflowTemplate uses locally-built `insight-toolbox:local` image (with `imagePullPolicy: IfNotPresent`) — not `ghcr.io/cyberfabric/insight-toolbox:latest`. Local builds via `tools/toolbox/build.sh` pick up dbt model changes without requiring a registry push. Template also accepts `full_refresh` parameter (pass `--full-refresh` to recreate tables from scratch)
+- CoreDNS is patched to use public DNS upstream (`8.8.8.8`, `8.8.4.4`) — WSL's `/etc/resolv.conf` points to an internal WSL nameserver that cannot reliably resolve external domains (e.g. `login.microsoftonline.com`). Patch is applied by `up.sh` and verified by `restart.sh`
+- `restart.sh` also cleans up stale Airbyte replication-job pods (from previous syncs that did not exit cleanly)
+- Gold views migration (`20260417000000_gold-views.sql`) references bronze tables from optional connectors (jira, m365, zoom). For connectors **without a credential secret** (`secrets/connectors/<name>.yaml` missing), `scripts/create-bronze-placeholders.sh` creates empty placeholder tables with compatible schema so the migration succeeds. When the connector is later configured and syncs for the first time, Airbyte replaces the placeholder with a real table using its native schema. Script runs automatically via `init.sh` before migrations
 - All credentials managed via Kubernetes Secrets (see §4.1.1)
 - Service access via NodePort: Airbyte (8000), Argo UI (30500), ClickHouse (30123)
 
@@ -703,6 +707,10 @@ Argo UI uses `--auth-mode=client` in production — authentication via K8s Servi
 4. **Destination password sync.** `airbyte-toolkit/connect.sh` always updates the ClickHouse destination password from the K8s Secret on every run. This ensures password rotation takes effect without recreating connections.
 
 5. **Password rotation procedure.** Update Secret → apply to cluster → restart ClickHouse (Deployment uses `strategy: Recreate` to avoid PVC ReadWriteOnce conflicts) → run `airbyte-toolkit/connect.sh` to sync Airbyte destination password.
+
+6. **Destination sync modes.** `connect.sh` assigns destination sync modes based on source stream capabilities:
+   - `full_refresh` streams → `overwrite` (each sync replaces all data — no duplicate accumulation)
+   - `incremental` streams → `append_dedup` (appends new records, deduplicates by primary key)
 
 ### 4.2 Local Development (Kind K8s Cluster)
 

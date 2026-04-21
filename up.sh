@@ -123,6 +123,19 @@ if [[ "$CLUSTER_MODE" == "local" ]]; then
   fi
   kind export kubeconfig --name "${CLUSTER_NAME}" --kubeconfig "${KUBECONFIG_PATH}" 2>/dev/null || true
   export KUBECONFIG="${KUBECONFIG_PATH}"
+
+  # Patch CoreDNS to use public DNS upstream — WSL /etc/resolv.conf forwards to
+  # a WSL-internal nameserver that cannot reliably resolve external domains
+  # (login.microsoftonline.com, api.zoom.us, etc). Idempotent.
+  if kubectl get configmap coredns -n kube-system -o yaml 2>/dev/null \
+    | grep -q "forward . /etc/resolv.conf"; then
+    echo "  Patching CoreDNS to use public DNS (8.8.8.8, 8.8.4.4)..."
+    kubectl get configmap coredns -n kube-system -o yaml \
+      | sed 's|forward \. /etc/resolv.conf|forward . 8.8.8.8 8.8.4.4|' \
+      | kubectl apply -f - >/dev/null
+    kubectl rollout restart deployment/coredns -n kube-system >/dev/null
+    kubectl rollout status deployment/coredns -n kube-system --timeout=60s >/dev/null || true
+  fi
 else
   # remote: KUBECONFIG must already be set via env file or shell
   : "${KUBECONFIG:?ERROR: KUBECONFIG must be set for CLUSTER_MODE=remote (set it in $ENV_FILE)}"
