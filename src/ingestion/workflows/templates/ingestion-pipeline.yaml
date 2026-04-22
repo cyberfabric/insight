@@ -72,6 +72,8 @@ spec:
                   value: "{{inputs.parameters.insight_source_id}}"
                 - name: clickhouse_host
                   value: "{{inputs.parameters.clickhouse_host}}"
+                - name: clickhouse_port
+                  value: "{{inputs.parameters.clickhouse_port}}"
 
           - name: transform-jira-silver
             depends: enrich

@@ -22,21 +22,34 @@ SOURCE_ID="${2:-}"
 export KUBECONFIG="${KUBECONFIG:-${HOME}/.kube/insight.kubeconfig}"
 
 # Resolve insight_source_id from Secret annotation if not passed.
+# Filter by BOTH connector and tenant — in a multi-tenant cluster several Jira secrets
+# coexist and picking "the first one" gets the wrong source silently.
 if [[ -z "$SOURCE_ID" ]]; then
-    SOURCE_ID=$(kubectl get secret -n data \
+    SOURCE_ID=$(TENANT="$TENANT" kubectl get secret -n data \
         -l app.kubernetes.io/part-of=insight \
         -o json | \
         python3 -c "
-import json, sys
+import json, os, sys
+tenant = os.environ['TENANT']
 secrets = json.load(sys.stdin).get('items', [])
+matches = []
 for s in secrets:
     ann = s.get('metadata', {}).get('annotations', {}) or {}
-    if ann.get('insight.cyberfabric.com/connector') == 'jira':
-        print(ann.get('insight.cyberfabric.com/source-id', ''))
-        break
+    if ann.get('insight.cyberfabric.com/connector') != 'jira':
+        continue
+    if ann.get('insight.cyberfabric.com/tenant') != tenant:
+        continue
+    sid = ann.get('insight.cyberfabric.com/source-id', '')
+    if sid:
+        matches.append(sid)
+if len(matches) == 1:
+    print(matches[0])
+elif len(matches) > 1:
+    sys.stderr.write(f'ERROR: multiple Jira secrets match tenant {tenant}: {matches}\n')
+    sys.exit(2)
 ")
 fi
-[[ -n "$SOURCE_ID" ]] || { echo "ERROR: could not resolve insight_source_id; pass it explicitly as the second arg" >&2; exit 1; }
+[[ -n "$SOURCE_ID" ]] || { echo "ERROR: could not resolve insight_source_id for tenant '${TENANT}'; pass it explicitly as the second arg" >&2; exit 1; }
 
 echo "Running Jira Silver transforms (dbt jira → enrich → dbt silver)"
 echo "  tenant:            ${TENANT}"

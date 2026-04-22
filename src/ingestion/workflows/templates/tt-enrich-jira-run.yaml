@@ -17,7 +17,7 @@ spec:
           - name: clickhouse_host
             default: "clickhouse.data.svc.cluster.local"
           - name: clickhouse_port
-            default: "9000"
+            default: "8123"
           - name: clickhouse_user
             default: "default"
           - name: batch_size
