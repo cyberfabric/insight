@@ -22,6 +22,7 @@ spec:
       activeDeadlineSeconds: 1800
       script:
         image: "{{inputs.parameters.toolbox_image}}"
+        imagePullPolicy: Always
         command: [bash]
         env:
           - name: CLICKHOUSE_PASSWORD
@@ -44,5 +45,8 @@ spec:
                 user: default
                 password: "${CH_PASS}"
                 secure: false
+                send_receive_timeout: 1500
+                query_limit: 0
+                connect_timeout: 30
           PROFILES
           dbt run --profiles-dir . --select "{{inputs.parameters.dbt_select}}"
