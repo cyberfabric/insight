@@ -2,9 +2,17 @@
 -- depends_on: {{ ref('bitbucket_cloud__repositories') }}
 {{ config(
     materialized='incremental',
-    unique_key='unique_key',
+    incremental_strategy='append',
     schema='silver',
+    engine='ReplacingMergeTree(_version)',
+    order_by='(unique_key)',
+    settings={'allow_nullable_key': 1},
     tags=['silver']
 ) }}
 
-{{ union_by_tag('silver:class_git_repositories') }}
+SELECT * FROM (
+    {{ union_by_tag('silver:class_git_repositories') }}
+)
+{% if is_incremental() %}
+WHERE _version > (SELECT max(_version) FROM {{ this }})
+{% endif %}
