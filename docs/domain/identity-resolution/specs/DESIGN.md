@@ -29,9 +29,9 @@
   - [4.8 Operational Considerations](#48-operational-considerations)
 - [5. Implementation Recommendations](#5-implementation-recommendations)
   - [REC-IR-01: ClickHouse atomicity for merge/split (Phase 3+)](#rec-ir-01-clickhouse-atomicity-for-mergesplit-phase-3)
-  - [REC-IR-02: identity_inputs incremental watermark (Phase 2)](#rec-ir-02-identity_inputs-incremental-watermark-phase-2)
+  - [REC-IR-02: identity_inputs incremental watermark (Phase 2)](#rec-ir-02-identityinputs-incremental-watermark-phase-2)
   - [REC-IR-03: Shared unmapped table for all domains — RESOLVED](#rec-ir-03-shared-unmapped-table-for-all-domains--resolved)
-  - [REC-IR-04: Temporary insight\_tenant\_id / insight\_source\_id derivation via sipHash128 (Phase 1)](#rec-ir-04-temporary-insight_tenant_id--insight_source_id-derivation-via-siphash128-phase-1)
+  - [REC-IR-04: Temporary `insight_tenant_id` / `insight_source_id` derivation via sipHash128 (Phase 1)](#rec-ir-04-temporary-insighttenantid--insightsourceid-derivation-via-siphash128-phase-1)
 - [6. Traceability](#6-traceability)
 
 <!-- /toc -->
@@ -612,7 +612,7 @@ All tables are in ClickHouse. Naming follows PR #55 conventions. No Nullable unl
 
 #### Table: `identity_inputs`
 
-**ID**: `cpt-insightspec-ir-dbtable-bootstrap-inputs`
+**ID**: `cpt-insightspec-ir-dbtable-identity-inputs`
 
 Alias observations from connectors. Each row represents one changed alias value from one source.
 
@@ -707,26 +707,6 @@ Resolved alias-to-person mapping. Each row links one `(alias_type, alias_value)`
 | `t-001` | `p-1001` | `email` | `anna.ivanova@acme.com` | `bamboohr` | 1.0 | 1 |
 | `t-001` | `p-1001` | `employee_id` | `E123` | `bamboohr` | 1.0 | 1 |
 | `t-001` | `p-1001` | `username` | `aivanova` | `gitlab` | 0.95 | 1 |
-
----
-
-#### View: `identity_inputs`
-
-**ID**: `cpt-insightspec-ir-dbview-identity-inputs`
-
-Canonical union of all identity observations from connectors. Replaces the legacy `bootstrap_inputs` view as the primary identity signal source. Materialized as a ClickHouse VIEW via `union_by_tag('identity:input')` in dbt.
-
-**Source models** (tagged `identity:input`):
-- `bamboohr__identity_input`, `zoom__identity_input` — via `identity_input_from_history` macro
-- `seed_identity_input_from_cursor`, `seed_identity_input_from_claude_admin` — direct Bronze seeds
-
-Column schema is identical to the `identity_inputs` (ex-`bootstrap_inputs`) table definition above.
-
-**dbt model**: `src/ingestion/dbt/identity/identity_inputs.sql`
-
-##### Naming convention inconsistency (known, non-blocking)
-
-The aggregated view is `identity_inputs` (plural, matching table-name convention for collections), while per-connector source models, the seed models and the helper macro use singular naming (`bamboohr__identity_input`, `seed_identity_input_from_*`, `identity_input_from_history`). The singular names are inherited from PR #182 and are kept to minimise divergence with that upstream change. Non-blocking; to be harmonised after PR #182 merges. A tracking comment on PR #182 is prepared in `docs/domain/identity-resolution/PR-182-review-comment.md`.
 
 ---
 

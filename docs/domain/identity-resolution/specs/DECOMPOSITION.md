@@ -109,6 +109,7 @@ These items have schema defined in DESIGN §3.7 (`cpt-insightspec-ir-dbtable-mer
 
   - [ ] `p3` - `cpt-insightspec-ir-db-schemas`
   - [ ] `p1` - `cpt-insightspec-ir-dbtable-aliases`
+  - [x] `p1` - `cpt-insightspec-ir-dbtable-persons-mariadb`
 
 - **Interfaces**:
 
@@ -189,7 +190,7 @@ These items have schema defined in DESIGN §3.7 (`cpt-insightspec-ir-dbtable-mer
 
 - **Data**:
 
-  - [x] `p1` - `cpt-insightspec-ir-dbtable-bootstrap-inputs`
+  - [x] `p1` - `cpt-insightspec-ir-dbtable-identity-inputs`
   - [ ] `p2` - `cpt-insightspec-ir-dbtable-unmapped`
   - [ ] `p2` - `cpt-insightspec-ir-dbtable-conflicts`
 
@@ -308,7 +309,8 @@ cpt-ir-feature-matching-engine
 | `cpt-insightspec-ir-component-conflict-detector` | Feature 2 (bootstrap-pipeline) |
 | `cpt-insightspec-ir-component-matching-engine` | Feature 3 (matching-engine) |
 | `cpt-insightspec-ir-dbtable-aliases` | Feature 1 (initial-seed) |
-| `cpt-insightspec-ir-dbtable-bootstrap-inputs` | Feature 2 (bootstrap-pipeline) |
+| `cpt-insightspec-ir-dbtable-identity-inputs` | Feature 2 (bootstrap-pipeline) |
+| `cpt-insightspec-ir-dbtable-persons-mariadb` | Feature 1 (initial-seed) |
 | `cpt-insightspec-ir-dbtable-unmapped` | Feature 2 (bootstrap-pipeline) |
 | `cpt-insightspec-ir-dbtable-conflicts` | Feature 2 (bootstrap-pipeline) |
 | `cpt-insightspec-ir-dbtable-match-rules` | Feature 3 (matching-engine) |
