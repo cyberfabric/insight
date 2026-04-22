@@ -57,7 +57,7 @@ def _make_unique_key(tenant_id: str, source_id: str, *parts: str) -> str:
 
 
 _TRUNCATE_SUFFIX = "…[truncated]"
-_TRUNCATE_LIMIT = 2_048  # 2 KB UTF-8
+_TRUNCATE_LIMIT = 1_024  # 1 KB UTF-8
 
 
 def _truncate(text: Optional[str], limit: int = _TRUNCATE_LIMIT) -> Optional[str]:

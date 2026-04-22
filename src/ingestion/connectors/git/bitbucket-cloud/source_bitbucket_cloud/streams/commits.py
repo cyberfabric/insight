@@ -9,23 +9,30 @@ Three load-bearing optimizations (paired, not independent):
 2. **Force-push detection**: when stored head_sha != current HEAD, reset that
    branch's cursor to ``start_date`` and re-fetch. Catches rebases that
    preserve author_date (cursor alone would silently miss rewritten commits).
-3. **Bloom filter cross-branch pagination-stop**: once a feature branch
-   re-enters main's shared history, stop paginating. Bounded to ~17MB
-   (10M shas x 0.1% FP). Bloom hits are advisory — records are always
-   emitted (destination dedupes by unique_key) so a false positive only
-   costs one extra page of pagination, never dropped data.
+3. **SQLite-backed cross-branch dedup + pagination-stop**: once a feature
+   branch re-enters main's shared history, skip re-emitting the shared
+   commit AND stop paginating (those older commits will be reached via
+   main's iteration anyway). Dedup set is kept per-repo in a /tmp sqlite
+   so memory stays bounded by the page cache (~8 MB) regardless of commit
+   count, and there is no probabilistic data-loss. Destination bronze is
+   append-mode and does not dedupe, so without this skip, shared history
+   between main and N feature branches would bloat bronze N× (measured:
+   4× on typical repos, up to 76× on repos with many release-tag-pointing
+   branches).
 
-Default branch is iterated first within each repo so the bloom fills with
-main's history before feature branches iterate.
+Default branch is iterated first within each repo so main's history fills
+the dedup set before feature branches iterate.
 """
 
 import logging
+import os
 import re
+import sqlite3
+import tempfile
 from typing import Any, Iterable, List, Mapping, MutableMapping, Optional
 
 from airbyte_cdk.models import SyncMode
 from airbyte_cdk.sources.streams.http import HttpSubStream
-from pybloom_live import BloomFilter
 
 from source_bitbucket_cloud.streams.base import (
     BitbucketCloudStream,
@@ -38,9 +45,6 @@ from source_bitbucket_cloud.streams.base import (
 logger = logging.getLogger("airbyte")
 
 _AUTHOR_RAW_RE = re.compile(r"^(.*?)\s*<([^>]+)>\s*$")
-
-_BLOOM_CAPACITY = 10_000_000
-_BLOOM_ERROR_RATE = 0.001
 
 
 class CommitsStream(HttpSubStream, BitbucketCloudStream):
@@ -63,9 +67,70 @@ class CommitsStream(HttpSubStream, BitbucketCloudStream):
     ) -> None:
         super().__init__(parent=parent, **kwargs)
         self._start_date = _normalize_start_date(start_date)
-        self._bloom: Optional[BloomFilter] = None
+        self._dedup_conn: Optional[sqlite3.Connection] = None
+        self._dedup_path: Optional[str] = None
         self._current_repo_key: Optional[tuple] = None
         self._stop_pagination: bool = False
+
+    def __del__(self) -> None:
+        # Best-effort cleanup of the on-disk dedup sqlite. Pod termination
+        # clears /tmp anyway, but tidy up when we can.
+        try:
+            if self._dedup_conn is not None:
+                self._dedup_conn.close()
+        except Exception:
+            pass
+        try:
+            if self._dedup_path and os.path.exists(self._dedup_path):
+                os.unlink(self._dedup_path)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Dedup storage (per-repo, exact, bounded memory)
+    # ------------------------------------------------------------------
+
+    def _open_dedup_db(self) -> None:
+        if self._dedup_conn is not None:
+            return
+        fd, self._dedup_path = tempfile.mkstemp(
+            prefix="bbc_commits_dedup_", suffix=".sqlite",
+        )
+        os.close(fd)
+        conn = sqlite3.connect(self._dedup_path, isolation_level=None)  # autocommit
+        # Tuned for speed-not-durability: this is throwaway state that the
+        # next sync starts fresh from.
+        conn.execute("PRAGMA journal_mode = MEMORY")
+        conn.execute("PRAGMA synchronous = OFF")
+        conn.execute("PRAGMA temp_store = MEMORY")
+        # WITHOUT ROWID lets the primary key be the physical storage → denser,
+        # faster lookup.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS seen (h BLOB PRIMARY KEY) WITHOUT ROWID"
+        )
+        self._dedup_conn = conn
+        logger.info(f"commits: dedup sqlite at {self._dedup_path}")
+
+    def _reset_dedup_for_repo(self) -> None:
+        if self._dedup_conn is not None:
+            self._dedup_conn.execute("DELETE FROM seen")
+
+    def _seen_and_mark(self, commit_hash: str) -> bool:
+        """INSERT-OR-IGNORE the hash; return True if it was already seen.
+
+        Stores the SHA as 20 raw bytes (when parseable) for density. Non-hex
+        identifiers fall back to utf-8 bytes.
+        """
+        if self._dedup_conn is None:
+            return False
+        try:
+            raw = bytes.fromhex(commit_hash)
+        except ValueError:
+            raw = commit_hash.encode("utf-8")
+        cur = self._dedup_conn.execute(
+            "INSERT OR IGNORE INTO seen (h) VALUES (?)", (raw,),
+        )
+        return cur.rowcount == 0
 
     # ------------------------------------------------------------------
     # Path
@@ -94,9 +159,10 @@ class CommitsStream(HttpSubStream, BitbucketCloudStream):
         stream_state: Optional[Mapping[str, Any]] = None,
     ) -> Iterable[Optional[Mapping[str, Any]]]:
         # Reset per-invocation state. Critical when this stream is re-invoked
-        # as a parent (file_changes) — otherwise the bloom is still populated
-        # from the prior run and every SHA hits immediately.
-        self._bloom = None
+        # as a parent (file_changes) — otherwise the dedup set still holds
+        # the prior run's SHAs and every commit registers as "seen".
+        self._open_dedup_db()
+        self._reset_dedup_for_repo()
         self._current_repo_key = None
         self._stop_pagination = False
         logger.info(
@@ -129,7 +195,7 @@ class CommitsStream(HttpSubStream, BitbucketCloudStream):
         branches: List[Mapping[str, Any]],
         state: Mapping[str, Any],
     ) -> Iterable[Mapping[str, Any]]:
-        # Sort: default branch first so the bloom fills with main's history
+        # Sort: default branch first so main's history fills the dedup set
         # before feature branches iterate.
         def sort_key(ps: Mapping[str, Any]) -> int:
             return 0 if ps["parent"].get("is_default") else 1
@@ -226,16 +292,14 @@ class CommitsStream(HttpSubStream, BitbucketCloudStream):
         repo_key = (workspace, slug)
         if repo_key != self._current_repo_key:
             logger.info(
-                f"commits: new repo {workspace}/{slug} — resetting bloom filter"
+                f"commits: new repo {workspace}/{slug} — resetting dedup set"
             )
-            self._bloom = BloomFilter(
-                capacity=_BLOOM_CAPACITY, error_rate=_BLOOM_ERROR_RATE,
-            )
+            self._reset_dedup_for_repo()
             self._current_repo_key = repo_key
 
         hit_seen = False
         emitted = 0
-        bloom_hits = 0
+        seen_hits = 0
         for commit in self._iter_values(response):
             commit_hash = commit.get("hash", "") or ""
             commit_date = commit.get("date", "") or ""
@@ -245,7 +309,7 @@ class CommitsStream(HttpSubStream, BitbucketCloudStream):
                 logger.info(
                     f"commits: {workspace}/{slug}/{branch_name} cursor early-exit "
                     f"at {commit_date} cursor={cursor_value} "
-                    f"(page emitted={emitted} bloom_hits={bloom_hits})"
+                    f"(page emitted={emitted} seen_hits={seen_hits})"
                 )
                 return
 
@@ -253,18 +317,19 @@ class CommitsStream(HttpSubStream, BitbucketCloudStream):
                 self._stop_pagination = True
                 logger.info(
                     f"commits: {workspace}/{slug}/{branch_name} start_date cutoff "
-                    f"at {commit_date} (page emitted={emitted} bloom_hits={bloom_hits})"
+                    f"at {commit_date} (page emitted={emitted} seen_hits={seen_hits})"
                 )
                 return
 
-            # Bloom membership is advisory — always emit the record so a
-            # 0.1% false positive cannot drop a real commit. Destination
-            # dedupes by unique_key. Bloom hits only signal pagination-stop.
-            if commit_hash and commit_hash in self._bloom:
+            # Cross-branch exact dedup: if a commit has already been emitted
+            # on an earlier branch in this repo (default branch first), skip
+            # re-emission. Destination bronze is append-mode → without this,
+            # shared history between main and N feature branches bloats
+            # bronze N×. Exact-match via on-disk sqlite = zero data loss.
+            if commit_hash and self._seen_and_mark(commit_hash):
                 hit_seen = True
-                bloom_hits += 1
-            elif commit_hash:
-                self._bloom.add(commit_hash)
+                seen_hits += 1
+                continue
             emitted += 1
 
             author = commit.get("author") or {}
@@ -302,12 +367,12 @@ class CommitsStream(HttpSubStream, BitbucketCloudStream):
 
         logger.debug(
             f"commits: {workspace}/{slug}/{branch_name} page emitted={emitted} "
-            f"bloom_hits={bloom_hits}"
+            f"seen_hits={seen_hits}"
         )
         if hit_seen:
             self._stop_pagination = True
             logger.info(
-                f"commits: {workspace}/{slug}/{branch_name} bloom hit — "
+                f"commits: {workspace}/{slug}/{branch_name} seen hit — "
                 f"stopping pagination (branch merged into already-seen history)"
             )
 
