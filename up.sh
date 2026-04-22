@@ -262,16 +262,11 @@ GRANT ALL PRIVILEGES ON \`${IDENTITY_DB}\`.* TO '${MARIADB_USER}'@'%';
 FLUSH PRIVILEGES;
 SQL
 
-  # Apply MariaDB schema migrations BEFORE backend services start.
-  # Analytics-api / identity-resolution read persons and future
-  # schema_migrations-owned tables on startup; bringing them up while
-  # migrations are still running violates ADR-0005's lifecycle ordering.
-  if [[ -x "$ROOT_DIR/src/ingestion/scripts/run-migrations-mariadb.sh" ]]; then
-    echo "=== Running MariaDB migrations ==="
-    MARIADB_USER="$MARIADB_USER" MARIADB_PASSWORD="$MARIADB_PASSWORD" \
-    MARIADB_DB="$IDENTITY_DB" MARIADB_NAMESPACE="$NAMESPACE" \
-      "$ROOT_DIR/src/ingestion/scripts/run-migrations-mariadb.sh"
-  fi
+  # MariaDB schema migrations: each backend service now owns and
+  # applies its own migrations at startup via SeaORM Migrator::up
+  # (see ADR-0006). No global migration step needed here -- up.sh is
+  # only responsible for provisioning the MariaDB instance + databases
+  # + user grants; the per-service schema arrives with the service.
 
   # Plain Deployment + Service. Cache only — no persistence, no auth.
   # (Using redis:7-alpine from Docker Hub; bitnami/redis chart images moved
@@ -433,11 +428,17 @@ if [[ "$COMPONENT" == "all" || "$COMPONENT" == "app" || "$COMPONENT" == "backend
     --set-string podAnnotations.deployedAt="$DEPLOY_TS" \
     --wait --timeout 3m
 
+  # Identity-resolution owns the `identity` MariaDB database and applies
+  # its schema via its own SeaORM Migrator (init container, see helm
+  # deployment.yaml). The URL points at the dedicated `identity` DB.
+  IDENTITY_DB_URL="${IDENTITY_DB_URL:-mysql://${MARIADB_USER}:${MARIADB_PASSWORD}@insight-mariadb:3306/${IDENTITY_DB}}"
+
   echo "=== Deploying Identity Resolution ==="
   # shellcheck disable=SC2046
   helm upgrade --install insight-identity src/backend/services/identity/helm/ \
     --namespace "$NAMESPACE" \
     $(helm_image_args "$IDENTITY_IMG") \
+    --set database.url="$IDENTITY_DB_URL" \
     --set clickhouse.url="$CLICKHOUSE_URL" \
     --set clickhouse.database="$CLICKHOUSE_DB" \
     "${CH_CREDS_ARGS[@]}" \

@@ -9,6 +9,10 @@ pub struct AppConfig {
     #[serde(default = "default_bind_addr")]
     pub bind_addr: String,
 
+    /// MariaDB connection URL for the service-owned `identity` database.
+    /// Example: `mysql://insight:pass@insight-mariadb:3306/identity`
+    pub database_url: String,
+
     pub clickhouse_url: String,
 
     #[serde(default = "default_clickhouse_database")]

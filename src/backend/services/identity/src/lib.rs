@@ -1,5 +1,7 @@
-pub mod people;
 pub mod config;
+pub mod infra;
+pub mod migration;
+pub mod people;
 
 pub use crate::people::PeopleStore;
 
