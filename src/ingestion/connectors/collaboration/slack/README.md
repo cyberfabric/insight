@@ -5,9 +5,7 @@ Per-day user activity snapshots from Slack Analytics API (`admin.analytics.getFi
 ## Prerequisites
 
 - Slack workspace on **Business+** or **Enterprise Grid** (Analytics API is not available on lower plans).
-- Slack OAuth token with `admin.analytics:read` scope, installed by an **Org Owner/Admin**.
-  - User token (`xoxp-*`) is the typical form — `admin.*` scopes are granted to user tokens.
-  - Bot token (`xoxb-*`) also works if `admin.analytics:read` has been granted to the app.
+- Slack **user OAuth token** (`xoxp-*`) with `admin.analytics:read` scope, installed by an **Org Owner/Admin**. Slack restricts `admin.*` scopes to user tokens — bot tokens (`xoxb-*`) are not supported by `admin.analytics.getFile`.
 
 ### Creating the token
 
@@ -64,7 +62,7 @@ stringData:
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `slack_bot_token` | Yes | OAuth token (user or bot) with `admin.analytics:read` |
+| `slack_bot_token` | Yes | User OAuth token (`xoxp-*`) with `admin.analytics:read` |
 | `slack_start_date` | Yes | Earliest analytics date (YYYY-MM-DD). Recommended: 14 days ago. |
 
 ### Automatically injected
@@ -77,5 +75,5 @@ stringData:
 ## Notes
 
 - Slack publishes analytics with a ~2-day delay. The connector pins `end_date = today - 2 days` to avoid `file_not_yet_available`.
-- Data retention on Slack's side varies by plan; historical backfill beyond ~2 years is generally not available.
+- Slack analytics data is available on a rolling 13-month basis; recently upgraded workspaces may have less history.
 - Response content is `application/gzip` containing JSONL (one JSON record per line).

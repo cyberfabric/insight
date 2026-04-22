@@ -8,7 +8,7 @@ sources:
 
 models:
   - name: slack__users_latest
-    description: "Deduplicated (user_id, email) view over Slack analytics member snapshots — latest row per pair with non-null email."
+    description: "Latest analytics snapshot per Slack user (tenant_id, source_id, user_id). Email is kept as a tracked attribute so downstream SCD2 records email changes instead of creating new entities."
     columns:
       - name: tenant_id
         tests:

@@ -116,11 +116,13 @@ spec:
         order: 1
       slack_bot_token:
         type: string
-        title: Slack OAuth Token
+        title: Slack User OAuth Token
         description: >-
-          Slack OAuth token (user xoxp-* or bot xoxb-*) with admin.analytics:read
-          scope. Token must be installed by an Org Owner/Admin. Plan must support
-          Analytics API (Business+ or Enterprise Grid).
+          Slack user OAuth token (xoxp-*) with admin.analytics:read scope.
+          Slack's admin.analytics.getFile requires a user token — bot tokens
+          (xoxb-*) are not supported. Token must be installed by an Org
+          Owner/Admin. Plan must support Analytics API (Business+ or
+          Enterprise Grid).
         airbyte_secret: true
         order: 2
       slack_start_date:
