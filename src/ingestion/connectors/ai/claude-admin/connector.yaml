@@ -21,7 +21,7 @@ definitions:
     type: AddFields
     fields:
       - path: [tenant_id]
-        value: "{{ config['tenant_id'] }}"
+        value: "{{ config['insight_tenant_id'] }}"
       - path: [insight_source_id]
         value: "{{ config.get('insight_source_id', '') }}"
       - path: [collected_at]
@@ -824,13 +824,13 @@ spec:
     $schema: http://json-schema.org/draft-07/schema#
     type: object
     required:
-      - tenant_id
+      - insight_tenant_id
       - admin_api_key
     properties:
-      tenant_id:
+      insight_tenant_id:
         type: string
-        title: Tenant ID
-        description: Tenant isolation identifier (UUID)
+        title: Insight Tenant ID
+        description: Tenant isolation identifier (UUID), injected as tenant_id field into every record
         order: 0
       admin_api_key:
         type: string
