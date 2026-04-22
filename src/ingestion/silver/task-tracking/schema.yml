@@ -13,11 +13,17 @@ models:
         tests:
           - not_null
       - name: event_id
-        description: "Natural identifier of the event (changelog_id for real changes, 'initial:<issue>:<field>' for synthetic bootstrap rows)"
+        description: "Natural identifier of the event. For `event_kind='changelog'` this is `jira_issue_history.changelog_id` (shared across all fields changed in one changelog). For `event_kind='synthetic_initial'` it is `'initial:<issue_id>'` (shared across all initial fields of one issue). Per ADR-005, operator audit JOIN key is (insight_source_id, id_readable, event_id, field_id)."
         tests:
           - not_null
+      - name: event_kind
+        description: "Discriminator for event origin. Enum8: `changelog` = real field change from jira_issue_history; `synthetic_initial` = bootstrap row emitted for every tracked field on first observation of an issue."
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['changelog', 'synthetic_initial']
       - name: field_id
-        description: "Field identifier (e.g. 'status', 'assignee', 'customfield_10020')"
+        description: "Field identifier (e.g. 'status', 'assignee', 'customfield_10020'). Part of the ReplacingMergeTree ORDER BY together with (insight_source_id, data_source, id_readable, event_id) — see ADR-005."
         tests:
           - not_null
 
