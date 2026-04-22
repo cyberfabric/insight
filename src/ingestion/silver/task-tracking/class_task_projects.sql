@@ -1,9 +1,17 @@
 -- depends_on: {{ ref('jira__task_projects') }}
 {{ config(
     materialized='incremental',
-    unique_key='(insight_source_id, data_source, project_id)',
+    incremental_strategy='append',
     schema='silver',
+    engine='ReplacingMergeTree(_version)',
+    order_by='(insight_source_id, data_source, project_key)',
+    settings={'allow_nullable_key': 1},
     tags=['silver']
 ) }}
 
-{{ union_by_tag('silver:class_task_projects') }}
+SELECT * FROM (
+    {{ union_by_tag('silver:class_task_projects') }}
+)
+{% if is_incremental() %}
+WHERE _version > (SELECT max(_version) FROM {{ this }})
+{% endif %}
