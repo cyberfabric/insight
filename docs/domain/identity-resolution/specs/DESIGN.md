@@ -702,6 +702,116 @@ Resolved alias-to-person mapping. Each row links one `(alias_type, alias_value)`
 
 ---
 
+#### View: `identity_inputs`
+
+**ID**: `cpt-insightspec-ir-dbview-identity-inputs`
+
+Canonical union of all identity observations from connectors. Replaces the legacy `bootstrap_inputs` view as the primary identity signal source. Materialized as a ClickHouse VIEW via `union_by_tag('identity:input')` in dbt.
+
+**Source models** (tagged `identity:input`):
+- `bamboohr__identity_input`, `zoom__identity_input` — via `identity_input_from_history` macro
+- `seed_identity_input_from_cursor`, `seed_identity_input_from_claude_team` — direct Bronze seeds
+
+Column schema is identical to the `identity_inputs` (ex-`bootstrap_inputs`) table definition above.
+
+**dbt model**: `src/ingestion/dbt/identity/identity_inputs.sql`
+
+##### Naming convention inconsistency (known, non-blocking)
+
+The aggregated view is `identity_inputs` (plural, matching table-name convention for collections), while per-connector source models, the seed models and the helper macro use singular naming (`bamboohr__identity_input`, `seed_identity_input_from_*`, `identity_input_from_history`). The singular names are inherited from PR #182 and are kept to minimise divergence with that upstream change. Non-blocking; to be harmonised after PR #182 merges. A tracking comment on PR #182 is prepared in `docs/domain/identity-resolution/PR-182-review-comment.md`.
+
+---
+
+#### Table: `persons` (MariaDB)
+
+**ID**: `cpt-insightspec-ir-dbtable-persons-mariadb`
+
+Field-level identity attribute history for persons, stored in MariaDB. Each row represents one observed field value for a person at a specific point in time — an SCD-style append-only log. Unlike `aliases` (resolved alias→person mapping in ClickHouse), `persons` captures the **history of field changes** that contribute to a person's identity: `email`, `display_name`, `platform_id`, `employee_id`, etc. This is the canonical CRUD-accessible person attribute store used by backend services.
+
+**Database**: MariaDB (`analytics` database, shared with analytics-api for now)
+
+**DDL**: `src/ingestion/scripts/migrations/mariadb/20260421000000_persons.sql`
+
+##### Columns
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | `BIGINT UNSIGNED AUTO_INCREMENT` | PK |
+| `alias_type` | `VARCHAR(50) NOT NULL` | Field kind — one of `email`, `display_name`, `platform_id`, `employee_id` (extensible) |
+| `insight_source_type` | `VARCHAR(100) NOT NULL` | Source system: `bamboohr`, `zoom`, `cursor`, `claude_team`, `gitlab`, etc. |
+| `insight_source_id` | `CHAR(36) NOT NULL` | Connector instance UUID (temporary: sipHash128 from Bronze string `source_id` until `sources` table exists — see REC-IR-04) |
+| `insight_tenant_id` | `CHAR(36) NOT NULL` | Tenant UUID (temporary: sipHash128 from Bronze string `tenant_id` until `tenants` table exists — see REC-IR-04) |
+| `alias_value` | `TEXT NOT NULL` | Field value — email address, display name, platform ID, etc. |
+| `person_id` | `CHAR(36) NOT NULL` | Person UUID — groups all field observations that belong to one person |
+| `author_person_id` | `CHAR(36) NOT NULL` | Person UUID of who/what made this change (for initial seed: equals `person_id` — the record is self-authored by the synthetic person) |
+| `reason` | `TEXT NOT NULL DEFAULT ''` | Optional change-reason comment (empty for initial seed) |
+| `created_at` | `DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)` | When this record was inserted |
+
+**Primary key**: `id` (auto-increment integer — MariaDB convention, persons is a write-heavy append-only log).
+
+**Indexes**:
+- `idx_person_id (person_id)` — lookup all fields for a person
+- `idx_tenant_person (insight_tenant_id, person_id)` — tenant-scoped person lookup
+- `idx_alias_lookup (insight_tenant_id, alias_type, alias_value(255))` — reverse lookup: find person(s) by email / display name / platform id
+- `idx_source (insight_source_type, insight_source_id)` — filter by source system + instance
+
+##### Semantics — SCD-style append-only log
+
+`persons` is **append-only**. A change to a person's attribute does **not** update an existing row; it inserts a new row with a later `created_at`. The "current" value of any field is the row with the latest `created_at` for that `(insight_tenant_id, person_id, alias_type)` triple (or, for multi-valued fields, the latest non-empty row per source).
+
+Field-change example for a single person (`p-1001`):
+
+| id | alias_type | alias_value | insight_source_type | created_at |
+|---|---|---|---|---|
+| 1 | `email` | `anna.ivanova@acme.com` | `bamboohr` | 2026-04-01 |
+| 5 | `display_name` | `Anna Ivanova` | `bamboohr` | 2026-04-01 |
+| 120 | `display_name` | `Anna Ivanova-Petrova` | `bamboohr` | 2026-07-15 |
+
+Row 120 supersedes row 5 as the current `display_name` for person `p-1001` (latest by `created_at`); row 5 is retained as history.
+
+##### Initial seed (idempotent upsert from `identity_inputs`)
+
+**Scripts** — two-file split by separation of concerns:
+
+| File | Role | Responsibilities |
+|---|---|---|
+| `src/ingestion/scripts/seed-persons.sh` | Environment orchestrator (bash) | Resolve ClickHouse password from the `clickhouse-credentials` K8s secret (fallback to env); compute `MARIADB_URL` from local-cluster defaults; start `kubectl port-forward svc/insight-mariadb 3306:3306` if port 3306 is not open; `pip install pymysql` if missing; invoke the Python script. Does **not** apply DDL — that is the MariaDB migration runner's responsibility. |
+| `src/ingestion/scripts/seed-persons-from-identity-input.py` | Pure data transform (Python) | HTTP-read `identity.identity_inputs` from ClickHouse (`FORMAT JSONEachRow`); group observations by source-account; assign deterministic `person_id`; `INSERT IGNORE` every observation into `persons`; report added / skipped / total counts. |
+
+**Rationale for the split**:
+- Bash is the right tool for kubectl, port-forwards, and secret lookup. Python is the right tool for typed grouping, UUIDv5 hashing, dedup, and parameterised DB writes.
+- The Python script is **independently runnable** — set `CLICKHOUSE_*` and `MARIADB_URL` env vars, ensure the DDL is already applied (via the migration runner), and run `python3 seed-persons-from-identity-input.py`. Used by CI, by non-Kind environments, and for dry runs.
+- The Python script is **testable in isolation** — the ClickHouse HTTP call and the pymysql connection are the only external dependencies and are trivially mockable; bash is not.
+
+**Schema ownership**: the `persons` table DDL lives at
+`src/ingestion/scripts/migrations/mariadb/20260421000000_persons.sql`
+and is applied by the MariaDB migration runner (`run-migrations-mariadb.sh`,
+invoked automatically from `init.sh`). See [ADR-0004](../../../ingestion/specs/ADR/0004-mariadb-migration-runner.md)
+for the migration mechanism. The seed scripts here operate on the already-
+created table; they never issue `CREATE`, `ALTER`, `TRUNCATE`, or `DELETE`.
+
+**Process** (data flow executed by the Python script):
+
+1. Read all rows from `identity.identity_inputs` (ClickHouse) where `operation_type = 'UPSERT'` and `alias_value` is non-empty.
+2. Group observations by `(insight_tenant_id, insight_source_type, insight_source_id, source_account_id)` — a "source account" = one user in one connector instance.
+3. For each source-account group, pick the **email** observation. **Email is the sole key for person creation in initial seed** — accounts without an email are skipped.
+4. Within a tenant, normalise emails (`lower(trim())`). Each unique `(tenant, email)` pair maps to a **deterministic** `person_id = uuid5(project_namespace, "tenant_id:email")` — same inputs always produce the same UUID. See [ADR-0002](ADR/0002-deterministic-person-id-for-seed.md).
+5. For each source-account assigned to a `person_id`, write **all** its field observations (email, display_name, platform_id, employee_id) as separate rows in `persons` with that `person_id`, `author_person_id = person_id` (self-authored), `reason = ''`, `created_at = now()`. The write uses `INSERT IGNORE`; the `uq_person_observation` UNIQUE key on `(insight_tenant_id, person_id, insight_source_type, insight_source_id, alias_type, alias_value)` skips any row that already exists.
+
+**Safety / idempotency**:
+- Re-running the script is **safe**: deterministic `person_id` keeps prior rows' keys stable, and `INSERT IGNORE` skips duplicates. Added/skipped counts are reported at the end.
+- The script never issues `TRUNCATE`, `DELETE`, `CREATE`, or `ALTER`. To wipe and re-seed, an operator must `TRUNCATE TABLE persons` explicitly outside the script.
+
+**Prerequisites and ordering** (end-to-end bootstrap):
+
+1. Connector secrets applied (`./secrets/apply.sh`).
+2. `./init.sh` — runs ClickHouse migrations, runs MariaDB migrations (creates `persons` table), registers connectors, creates connections.
+3. Airbyte sync produced Bronze data (`./sync-all.sh` + wait).
+4. dbt models run to populate `identity.identity_inputs` (`dbt run --select +identity_inputs`).
+5. Seed run (`./scripts/seed-persons.sh`) — invokes the Python seed.
+
+---
+
 #### Table: `match_rules`
 
 **ID**: `cpt-insightspec-ir-dbtable-match-rules`
