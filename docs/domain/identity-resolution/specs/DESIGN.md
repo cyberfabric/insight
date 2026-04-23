@@ -778,7 +778,7 @@ Stable binding `(tenant, source-instance, source-account) → person_id`. Writte
 | `insight_source_type` | `VARCHAR(100) NOT NULL` | Source system: `bamboohr`, `zoom`, etc. |
 | `insight_source_id` | `BINARY(16) NOT NULL` | Connector instance UUID |
 | `source_account_id` | `VARCHAR(255) NOT NULL` | Source-native account identifier (employee id, platform id, email-as-id, etc.) |
-| `person_id` | `BINARY(16) NOT NULL` | Person UUID — UUIDv7, minted at first observation |
+| `person_id` | `BINARY(16) NOT NULL` | Person UUID — random UUIDv7, minted at first observation |
 | `created_reason` | `VARCHAR(50) NOT NULL` | `initial-bootstrap` \| `new-account` \| `operator-merge` — how this binding came into existence |
 | `created_at` | `TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP` | When the mapping was created (UTC) |
 
@@ -806,7 +806,7 @@ See ADR-0002 for the full decision record (why mapping table, two seed modes, al
 | File | Role | Responsibilities |
 |---|---|---|
 | `seed-persons.sh` | Environment orchestrator (bash) | Resolve ClickHouse password from the `clickhouse-credentials` K8s secret (fallback to env); compute `MARIADB_URL` from local-cluster defaults (URL-encoded credentials); start `kubectl port-forward svc/insight-mariadb 3306:3306` if port 3306 is not open; `pip install pymysql` if missing; invoke the Python script. Does **not** apply DDL. |
-| `seed-persons-from-identity-input.py` | Pure data transform (Python) | HTTP-read `identity.identity_inputs` from ClickHouse (`FORMAT JSONEachRow`) with a bounded timeout; read existing `account_person_map`; assign `person_id` per account (lookup if known, UUIDv7 otherwise); write new mappings; `INSERT IGNORE` observations into `persons`; report counts. |
+| `seed-persons-from-identity-input.py` | Pure data transform (Python) | HTTP-read `identity.identity_inputs` from ClickHouse (`FORMAT JSONEachRow`) with a bounded timeout; read existing `account_person_map`; assign `person_id` per account (lookup if known, random UUIDv7 otherwise); write new mappings; `INSERT IGNORE` observations into `persons`; report counts. |
 
 **Rationale for the split**:
 - Bash is the right tool for kubectl, port-forwards, and secret lookup. Python is the right tool for typed grouping, mapping lookup, UUID minting, and parameterised DB writes.
@@ -829,8 +829,8 @@ operate on the already-created table; they never issue `CREATE`,
 1. Read all rows from `identity.identity_inputs` (ClickHouse) where `operation_type = 'UPSERT'` and `alias_value` is non-empty.
 2. Group observations by `(insight_tenant_id, insight_source_type, insight_source_id, source_account_id)` — a "source account" = one user in one connector instance.
 3. Connect to MariaDB and load the existing `account_person_map`. Its emptiness determines the mode:
-   - **Initial bootstrap** — map is empty: source-accounts sharing a normalised email (`lower(trim())`) within a tenant get **one** `person_id` (UUIDv7, minted once per unique email in this run). `created_reason='initial-bootstrap'`.
-   - **Steady-state** — map is non-empty: every unknown account gets its **own, isolated** `person_id` (UUIDv7). Email-automerge is disabled. `created_reason='new-account'`. Merging into existing persons is deferred to the operator workflow (out of scope for this seed).
+   - **Initial bootstrap** — map is empty: source-accounts sharing a normalised email (`lower(trim())`) within a tenant get **one** `person_id` (random UUIDv7, minted once per unique email in this run). `created_reason='initial-bootstrap'`.
+   - **Steady-state** — map is non-empty: every unknown account gets its **own, isolated** `person_id` (random UUIDv7). Email-automerge is disabled. `created_reason='new-account'`. Merging into existing persons is deferred to the operator workflow (out of scope for this seed).
 4. Accounts without an email observation are skipped in either mode (email remains the sole identity anchor in the bootstrap flow).
 5. Insert new bindings into `account_person_map` via `INSERT IGNORE` (PK-scoped idempotency).
 6. For each source-account with a mapped `person_id`, write **all** its field observations (email, display_name, platform_id, employee_id) as separate rows in `persons` with that `person_id`, `author_person_id = person_id` (self-authored), `reason = ''`, `created_at = now()`. The write uses `INSERT IGNORE`; the `uq_person_observation` UNIQUE key on `(insight_tenant_id, person_id, insight_source_type, insight_source_id, alias_type, alias_value)` skips any row that already exists.

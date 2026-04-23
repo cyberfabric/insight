@@ -39,7 +39,7 @@ scopes the cross-source auto-merge to the initial-bootstrap pass only.
 
 ## Decision
 
-1. **`person_id` is a UUIDv7**, minted at the first observation
+1. **`person_id` is a random UUIDv7**, minted at the first observation
    of a source-account. Once minted it never changes and is never
    re-derived from any field value. UUIDv7 carries a 48-bit
    millisecond timestamp prefix so consecutive `person_id`s cluster

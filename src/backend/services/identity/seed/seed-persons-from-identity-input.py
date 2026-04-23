@@ -14,7 +14,7 @@ Two modes (detected automatically):
 
 - **Initial bootstrap** -- `account_person_map` is empty.
   Source-accounts sharing an email within a tenant are auto-merged
-  into one `person_id` (UUIDv7). This is a one-time pass at
+  into one `person_id` (random UUIDv7). This is a one-time pass at
   system initialisation.
 - **Steady-state** -- `account_person_map` already has entries.
   Unknown accounts get their own fresh `person_id`; email-automerge
@@ -222,9 +222,9 @@ def main():
     #    - Known accounts (present in map): use the mapped, stable id.
     #    - Unknown accounts during initial bootstrap: email-based automerge
     #      within this run -- source-accounts sharing an email in the same
-    #      tenant get one person_id (UUIDv7).
+    #      tenant get one person_id (random UUIDv7).
     #    - Unknown accounts during steady-state: each gets its own fresh
-    #      person_id (UUIDv7) -- no automerge. See ADR-0002.
+    #      person_id (random UUIDv7) -- no automerge. See ADR-0002.
     #
     #    Accounts without an email in their observations are still skipped
     #    (same as before -- email remains the sole identity anchor in the

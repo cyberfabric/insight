@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS account_person_map (
     source_account_id   VARCHAR(255) NOT NULL
                         COMMENT 'Source-native account identifier (email-external-system ID, employee ID, user ID, etc.)',
     person_id           BINARY(16)   NOT NULL
-                        COMMENT 'Person UUID (UUIDv7, minted at first observation)',
+                        COMMENT 'Person UUID (random UUIDv7, minted at first observation)',
     created_reason      VARCHAR(50)  NOT NULL
                         COMMENT 'Why this mapping was created: initial-bootstrap | new-account | operator-merge',
     created_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
