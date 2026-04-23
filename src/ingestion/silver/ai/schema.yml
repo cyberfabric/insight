@@ -20,7 +20,12 @@ models:
         tests:
           - not_null
       - name: unique_key
-        description: "Composite dedup key: tenant-source-email-day-tool"
+        description: >
+          Composite dedup key. Format varies per staging model:
+          cursor → tenant-source-userId-day;
+          claude_admin → tenant-source-email-day.
+          Uniqueness is per-source — a user active on BOTH Cursor and Claude Code
+          on the same day produces two rows, disambiguated by `source` / `tool`.
         tests:
           - not_null
           - unique
@@ -117,7 +122,12 @@ models:
         tests:
           - not_null
       - name: unique_key
-        description: "Composite dedup key: tenant-source-(email|workspace)-day-provider-channel"
+        description: >
+          Composite dedup key. Format varies per staging model:
+          claude_admin → tenant-source-ws:{workspace}-day-anthropic-api-{model}-{api_key}-{tier}-{ctx}
+          (finer grain than the documented tenant+workspace+day+provider+channel
+          because messages_usage Bronze is grouped by model/api_key/tier/ctx);
+          claude_enterprise → tenant-source-email-day-{web|office|cowork}.
         tests:
           - not_null
           - unique

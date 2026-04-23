@@ -40,7 +40,7 @@ SELECT
     toUInt32OrNull(toString(totalTabsAccepted))     AS tool_use_accepted,
     toUInt32OrNull(toString(totalTabsAccepted))     AS completions_count,
     toUInt32OrNull(toString(agentRequests))         AS agent_sessions,
-    toUInt32OrNull(toString(coalesce(chatRequests, 0) + coalesce(composerRequests, 0)))
+    toUInt32(coalesce(chatRequests, 0) + coalesce(composerRequests, 0))
                                                     AS chat_requests,
     CAST(NULL AS Nullable(UInt32))                  AS cost_cents,
     'cursor'                                        AS source,

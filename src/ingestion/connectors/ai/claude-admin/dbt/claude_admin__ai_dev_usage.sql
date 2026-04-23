@@ -22,7 +22,7 @@
 WITH agg AS (
     SELECT
         tenant_id,
-        source_id,
+        insight_source_id                                   AS source_id,
         lower(actor_identifier)                             AS email_lc,
         toDate(date)                                        AS day,
         sum(coalesce(session_count, 0))                     AS sessions_sum,
@@ -41,7 +41,7 @@ WITH agg AS (
           FROM {{ this }}
       )
     {% endif %}
-    GROUP BY tenant_id, source_id, lower(actor_identifier), toDate(date)
+    GROUP BY tenant_id, insight_source_id, lower(actor_identifier), toDate(date)
 )
 
 SELECT
