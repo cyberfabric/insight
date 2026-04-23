@@ -1,0 +1,20 @@
+{{/*
+Argo WorkflowTemplates для ingestion-пайплайнов.
+
+Эти файлы лежат в files/ingestion/*.yaml и эмитятся как есть через
+.Files.Get — без Helm-шаблонизации. Так сделано чтобы не экранировать
+Argo-синтаксис {{inputs.parameters.foo}}, которого в них много.
+
+Кастомизация URL/хостов — через arguments.parameters при создании
+CronWorkflow, а не через Helm. Дефолты в файлах уже правильные для
+ожидаемого namespace layout (см. ../values.yaml).
+
+Контроллер Argo должен следить за этой namespace — см. deploy/argo/values.yaml
+workflowNamespaces: [argo, insight].
+*/}}
+{{- if .Values.ingestion.templates.enabled }}
+{{- range $path, $_ := .Files.Glob "files/ingestion/*.yaml" }}
+---
+{{ $.Files.Get $path }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,51 @@
+{{/*
+Единый ConfigMap со всеми resolved координатами инфры.
+
+Любой pod в namespace'е insight монтирует его через `envFrom`:
+  envFrom:
+    - configMapRef:
+        name: {{ .Release.Name }}-platform
+
+и получает набор env переменных: CLICKHOUSE_URL, MARIADB_HOST,
+AIRBYTE_API_URL и т.д. — независимо от того, внутренние это сервисы
+или external (разница прячется в helper'ах).
+
+Это единственное место в umbrella, где видны DNS-имена сервисов.
+Если SRE захочет переименовать — правим только _helpers.tpl.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-platform
+  labels:
+    {{- include "insight.labels" . | nindent 4 }}
+data:
+  # ─── ClickHouse ───
+  CLICKHOUSE_HOST:     {{ include "insight.clickhouse.host" .     | quote }}
+  CLICKHOUSE_PORT:     {{ include "insight.clickhouse.port" .     | quote }}
+  CLICKHOUSE_URL:      {{ include "insight.clickhouse.url" .      | quote }}
+  CLICKHOUSE_DATABASE: {{ include "insight.clickhouse.database" . | quote }}
+
+  # ─── MariaDB ───
+  MARIADB_HOST:     {{ include "insight.mariadb.host" .     | quote }}
+  MARIADB_PORT:     {{ include "insight.mariadb.port" .     | quote }}
+  MARIADB_DATABASE: {{ include "insight.mariadb.database" . | quote }}
+
+  # ─── Redis ───
+  REDIS_HOST: {{ include "insight.redis.host" . | quote }}
+  REDIS_PORT: {{ include "insight.redis.port" . | quote }}
+  REDIS_URL:  {{ include "insight.redis.url"  . | quote }}
+
+  # ─── Redpanda (Kafka-compatible) ───
+  REDPANDA_BROKERS: {{ include "insight.redpanda.brokers" . | quote }}
+
+  # ─── Airbyte (external release, см. deploy/airbyte) ───
+  AIRBYTE_API_URL:          {{ .Values.airbyte.apiUrl       | quote }}
+  AIRBYTE_JWT_SECRET_NAME:  {{ .Values.airbyte.jwtSecret.name | quote }}
+  AIRBYTE_JWT_SECRET_KEY:   {{ .Values.airbyte.jwtSecret.key  | quote }}
+
+  # ─── App service hosts (для sidecar-ов и debug'а) ───
+  INSIGHT_API_GATEWAY_HOST:   {{ include "insight.apiGateway.host"   . | quote }}
+  INSIGHT_ANALYTICS_API_HOST: {{ include "insight.analyticsApi.host" . | quote }}
+  INSIGHT_IDENTITY_HOST:      {{ include "insight.identity.host"     . | quote }}
+  INSIGHT_FRONTEND_HOST:      {{ include "insight.frontend.host"     . | quote }}

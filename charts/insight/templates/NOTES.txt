@@ -1,0 +1,51 @@
+{{- include "insight.validate" . }}
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║   Insight v{{ .Chart.AppVersion }} installed into namespace {{ .Release.Namespace | printf "%-15s" }}    ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+Release:    {{ .Release.Name }}
+Revision:   {{ .Release.Revision }}
+
+Resolved infra endpoints (see ConfigMap {{ .Release.Name }}-platform):
+  ClickHouse:  {{ include "insight.clickhouse.url" . }}  {{ if not .Values.clickhouse.enabled }}[external]{{ end }}
+  MariaDB:     {{ include "insight.mariadb.host" . }}:{{ include "insight.mariadb.port" . }}  {{ if not .Values.mariadb.enabled }}[external]{{ end }}
+  Redis:       {{ include "insight.redis.url" . }}  {{ if not .Values.redis.enabled }}[external]{{ end }}
+  Redpanda:    {{ include "insight.redpanda.brokers" . }}  {{ if not .Values.redpanda.enabled }}[external]{{ end }}
+  Airbyte:     {{ .Values.airbyte.apiUrl }}
+
+Application services:
+{{- if .Values.apiGateway.enabled }}
+  ✓ API Gateway        http://{{ include "insight.apiGateway.host" . }}:8080
+{{- end }}
+{{- if .Values.analyticsApi.enabled }}
+  ✓ Analytics API      http://{{ include "insight.analyticsApi.host" . }}:8081
+{{- end }}
+{{- if .Values.identity.enabled }}
+  ✓ Identity           http://{{ include "insight.identity.host" . }}:8082
+{{- end }}
+{{- if .Values.frontend.enabled }}
+  ✓ Frontend           http://{{ include "insight.frontend.host" . }}:80
+{{- end }}
+{{- if .Values.ingestion.templates.enabled }}
+  ✓ Ingestion templates: airbyte-sync, dbt-run, ingestion-pipeline
+{{- end }}
+
+NOT installed by this chart (see deploy/):
+  ✗ Airbyte          → deploy/scripts/install-airbyte.sh
+  ✗ Argo Workflows   → deploy/scripts/install-argo.sh
+
+Next steps:
+
+  1. Wait for all pods to be ready:
+       kubectl -n {{ .Release.Namespace }} rollout status -l app.kubernetes.io/part-of=insight deploy --timeout=5m
+
+  2. Open the frontend locally:
+       kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "insight.frontend.host" . }} 8080:80
+
+  3. Docs: https://github.com/cyberfabric/insight
+
+{{ if not .Values.apiGateway.oidc.existingSecret -}}
+⚠  WARNING: apiGateway.oidc.existingSecret is empty. For production set
+            existingSecret or inline issuer/clientId/redirectUri.
+{{- end }}

@@ -1,0 +1,47 @@
+##
+## App-of-Apps root Application.
+##
+## Одна точка входа: применяется в кластер, затем ArgoCD находит внутри
+## `deploy/gitops/` все остальные Application-манифесты и создаёт их тоже.
+##
+## Удобно для enterprise-клиентов: vendor присылает ссылку на Git-репо,
+## клиент применяет ОДИН файл, дальше всё живёт в Git.
+##
+## Usage:
+##   # 1. Форкни insight-репо или создай свой config-репо
+##   # 2. Отредактируй source.repoURL и source.path ниже на свой fork
+##   # 3. kubectl apply -f root-app.yaml
+##
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: insight-root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+
+spec:
+  project: default
+
+  source:
+    # ────────────────────────────────────────────────────────
+    # CHANGE THIS: свой форк или внутренний репо клиента.
+    # ────────────────────────────────────────────────────────
+    repoURL: https://github.com/cyberfabric/insight.git
+    targetRevision: main
+    path: deploy/gitops
+    directory:
+      recurse: false
+      # Игнорируем сам root-app.yaml и README чтобы не зациклиться.
+      exclude: '{root-app.yaml,README.md}'
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

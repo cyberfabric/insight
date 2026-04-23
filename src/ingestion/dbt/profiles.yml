@@ -11,7 +11,7 @@ ingestion:
       secure: false
     k8s:
       type: clickhouse
-      host: clickhouse.data.svc.cluster.local
+      host: insight-clickhouse.insight.svc.cluster.local
       port: 8123
       schema: default
       user: default

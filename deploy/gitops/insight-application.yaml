@@ -1,0 +1,131 @@
+##
+## ArgoCD Application: Insight umbrella
+##
+## Sync wave 1 — ставится ПОСЛЕ Airbyte (wave 0).
+## ArgoCD дожидается, пока предыдущая волна не станет Healthy.
+##
+## Version pin: targetRevision — ЕДИНСТВЕННАЯ точка обновления Insight.
+## Сменить версию продукта = PR с изменением одной строки здесь.
+##
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: insight
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+
+spec:
+  project: default
+
+  source:
+    # Chart публикуется в OCI registry (см. release pipeline).
+    # Для разработки / self-hosted: замени на git-репо с `path: charts/insight`.
+    repoURL: ghcr.io/cyberfabric/charts
+    chart: insight
+    targetRevision: 0.1.0
+
+    helm:
+      releaseName: insight
+
+      # Values inlined. Для крупных клиентов — выноси в их own config-repo
+      # и используй multi-source (см. README про multi-source pattern).
+      values: |
+        # ────────────────────────────────────────────────────────
+        # Интеграция с Airbyte, установленным отдельным Application
+        # ────────────────────────────────────────────────────────
+        airbyte:
+          apiUrl: "http://airbyte-airbyte-server-svc.airbyte.svc.cluster.local:8001"
+          # JWT signature secret должен быть зеркалирован в insight namespace.
+          # Реализовать через:
+          #   - Reflector (https://github.com/emberstack/kubernetes-reflector), или
+          #   - External Secrets Operator с source = Airbyte namespace, или
+          #   - Ручное создание через kubectl post-install
+          jwtSecret:
+            name: insight-airbyte-jwt
+            key: signature-secret
+
+        # ────────────────────────────────────────────────────────
+        # Infrastructure
+        # ────────────────────────────────────────────────────────
+        clickhouse:
+          enabled: true
+          persistence:
+            size: 20Gi
+          resources:
+            requests: { cpu: 500m, memory: 1Gi }
+            limits:   { cpu: "4",  memory: 8Gi }
+
+        mariadb:
+          enabled: true
+          primary:
+            persistence:
+              size: 10Gi
+
+        redis:
+          enabled: true
+
+        redpanda:
+          enabled: true
+          statefulset:
+            replicas: 1
+
+        # ────────────────────────────────────────────────────────
+        # Application services
+        # ────────────────────────────────────────────────────────
+        apiGateway:
+          enabled: true
+          replicaCount: 2
+          authDisabled: false
+          oidc:
+            # В prod — предсозданный Secret с полями
+            # issuer/clientId/audience/redirectUri:
+            existingSecret: insight-oidc
+          ingress:
+            enabled: true
+            className: nginx
+            host: insight.example.com
+            tls:
+              enabled: true
+              secretName: insight-tls
+
+        analyticsApi:
+          enabled: true
+          replicaCount: 2
+          clickhouse:
+            credentialsSecret:
+              name: insight-clickhouse-creds
+
+        identity:
+          enabled: false
+
+        frontend:
+          enabled: true
+          replicaCount: 1
+          oidc:
+            # Должно совпадать с apiGateway.oidc.clientId публичной частью.
+            clientId: insight-frontend
+          ingress:
+            enabled: true
+            className: nginx
+            host: app.insight.example.com
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: insight
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

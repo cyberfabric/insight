@@ -1,0 +1,127 @@
+##
+## Airbyte — curated values for Insight.
+##
+## Применяется к ОФИЦИАЛЬНОМУ чарту airbyte/airbyte, а не к какому-то
+## своему wrapper'у — кастомизация только через values (см. install-airbyte.sh).
+##
+## Версия чарта: пиним отдельно в скрипте/GitOps-манифесте. Текущий выбор: 1.5.1.
+##
+## Что здесь:
+##   - безопасные дефолты для eval/demo (embedded Postgres + MinIO)
+##   - документированные точки кастомизации для prod (external DB, S3, auth)
+##   - отключён Keycloak (Insight использует свою OIDC-плоскость)
+##
+## Конвенции для интеграции с Insight:
+##   - namespace: airbyte
+##   - release name: airbyte
+##   - server service: airbyte-airbyte-server-svc
+##   - port: 8001
+##   - auth: JWT signed with AB_JWT_SIGNATURE_SECRET
+## Ingestion-код в `src/ingestion/` ожидает именно эти имена.
+##
+
+global:
+  # Deployment mode. community = OSS, enterprise = коммерческая лицензия.
+  edition: community
+
+  # Auth. Keycloak тянет ещё один Postgres + сервис. У нас своя OIDC-плоскость
+  # через apiGateway.oidc в umbrella, поэтому выключаем.
+  auth:
+    enabled: false
+
+  # Хранилище для логов и state.
+  # По дефолту — embedded MinIO. Для prod → s3/gcs/azure (см. ниже).
+  storage:
+    type: minio
+    # ── Пример переопределения на S3 (раскомментировать в prod-values):
+    # type: s3
+    # bucket:
+    #   log: insight-airbyte-logs
+    #   state: insight-airbyte-state
+    #   workloadOutput: insight-airbyte-output
+    # s3:
+    #   region: eu-west-1
+    #   authenticationType: credentials   # или instanceProfile
+    # # Creds в предсозданном Secret в namespace airbyte:
+    # #   kubectl -n airbyte create secret generic airbyte-s3-creds \
+    # #     --from-literal=AWS_ACCESS_KEY_ID=... \
+    # #     --from-literal=AWS_SECRET_ACCESS_KEY=...
+    # storageSecretName: airbyte-s3-creds
+
+  # БД состояния Airbyte. По дефолту — embedded Postgres (subchart).
+  # Для prod → внешняя managed БД.
+  database:
+    type: internal
+    # ── Пример external:
+    # type: external
+    # host: postgres.insight.svc.cluster.local
+    # port: 5432
+    # database: airbyte
+    # user: airbyte
+    # secretName: airbyte-db-secret
+    # passwordSecretKey: password
+
+# ─── Embedded subcharts ─────────────────────────────────────────────────
+# В prod оба выключаются — тогда global.database.type=external
+# и global.storage.type=s3 должны указывать на внешние ресурсы.
+postgresql:
+  enabled: true
+minio:
+  enabled: true
+
+# ─── Keycloak выключен ──────────────────────────────────────────────────
+# Authentication к Airbyte API идёт через server-signed JWT (см. env.sh).
+# Настоящий enterprise-auth будет реализован на уровне Insight.
+keycloak:
+  enabled: false
+keycloak-setup:
+  enabled: false
+
+# ─── Ресурсы (минимальный eval-профиль) ─────────────────────────────────
+# Для prod — 3-5x по лимитам, см. deploy/airbyte/values-prod.yaml
+server:
+  replicaCount: 1
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: "1",  memory: 1Gi }
+
+webapp:
+  replicaCount: 1
+  resources:
+    requests: { cpu: 50m,  memory: 128Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+  # Ingress к Airbyte UI. В prod обычно за своим OIDC-прокси,
+  # для eval — port-forward достаточно.
+  ingress:
+    enabled: false
+
+worker:
+  replicaCount: 1
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits:   { cpu: "2",  memory: 2Gi }
+
+workload-launcher:
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+workload-api-server:
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+temporal:
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+cron:
+  resources:
+    requests: { cpu: 50m,  memory: 128Mi }
+    limits:   { cpu: 200m, memory: 256Mi }
+
+# Connector Builder UI. Для dev можно выключить чтобы экономить ресурсы;
+# для prod держим включённым — пригодится для Low-Code Connectors.
+connectorBuilderServer:
+  enabled: true

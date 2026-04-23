@@ -1,0 +1,324 @@
+##
+## Insight umbrella — дефолтные values.
+##
+## Клиент поверх этого кладёт СВОЙ values.yaml с секретами/хостами/тюнингом.
+##
+## Команды для проверки:
+##   helm dependency update charts/insight
+##   helm template insight charts/insight | less
+##   helm template insight charts/insight -f my-values.yaml | less
+##
+## ─────────────────────────────────────────────────────────────────────────
+## Conventions
+## ─────────────────────────────────────────────────────────────────────────
+## 1. Release name = `insight`. Все внутренние DNS-имена собираются как
+##    `{.Release.Name}-{component}` (insight-clickhouse, insight-mariadb,
+##    insight-api-gateway, …). При смене release-имени переопредели
+##    соответствующие URL-ы в своих values.
+##
+## 2. Все зависимости деплоятся в ОДНУ namespace — namespace релиза.
+##    Airbyte и Argo Workflows — отдельные релизы в своих ns (см. deploy/).
+##
+## 3. Каждая инфра-зависимость имеет `enabled: true/false`:
+##      - enabled: true  → поднимается встроенный subchart
+##      - enabled: false → используется внешний сервис; обязательно заполни
+##                         блок `external:` (host/port/secrets)
+##    Валидатор в templates/_helpers.tpl падает с понятной ошибкой,
+##    если `enabled: false` без `external.host`.
+##
+## 4. Resolved координаты инфры (URL-ы, host'ы) живут в одном ConfigMap
+##    `{release}-platform` (см. templates/platform-config.yaml). Любой pod
+##    в ns может прочитать их через `envFrom`.
+##
+
+# ─── Global values ────────────────────────────────────────────────────────
+# Всё под `global:` видно всем subchart'ам автоматически.
+# ВАЖНО: bitnami-чарты читают `global.imageRegistry` и перекраивают свои
+# образы. НЕ ставим `imageRegistry` глобально — каждый наш сервис указывает
+# свой `image.repository` явно.
+global:
+  imagePullSecrets: []         # pull-secrets для приватного registry
+  storageClass: ""             # пусто = дефолтный StorageClass кластера
+  security:
+    # bitnami-чарты проверяют, что образ — из их "secure images" списка.
+    # Мы используем bitnamilegacy (см. mariadb.image/redis.image) — нужно
+    # разрешить "небезопасные" образы, иначе чарт отказывается деплоить.
+    allowInsecureImages: true
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  EXTERNAL — Airbyte (ставится отдельным Helm release)
+# ═══════════════════════════════════════════════════════════════════════════
+airbyte:
+  apiUrl: "http://airbyte-airbyte-server-svc.airbyte.svc.cluster.local:8001"
+  jwtSecret:
+    name: airbyte-auth-secrets       # зеркалится install-airbyte.sh
+    key:  jwt-signature-secret
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  INGESTION — WorkflowTemplates (контент для Argo)
+# ═══════════════════════════════════════════════════════════════════════════
+ingestion:
+  templates:
+    enabled: true
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  INFRASTRUCTURE
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Паттерн для каждой:
+#   <dep>.enabled      — true = поднять встроенный subchart
+#   <dep>.external.*   — координаты внешнего сервиса, когда enabled=false
+#   <dep>.auth.*       — creds для встроенного subchart, когда enabled=true
+#
+
+# ─── ClickHouse ──────────────────────────────────────────────────────────
+clickhouse:
+  enabled: true
+  database: "insight"           # имя БД, используется и внутренним и external
+
+  image:
+    repository: clickhouse/clickhouse-server
+    tag: "25.3"
+  auth:
+    username: insight
+    password: "changeme"        # override в prod
+  persistence:
+    size: 10Gi
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits:   { cpu: "2",  memory: 4Gi   }
+
+  # BYO-режим: заполни и поставь enabled=false
+  external:
+    host: ""                     # e.g. clickhouse.internal.acme.com
+    port: 8123
+    credentialsSecret:
+      name: ""                   # Secret в insight-ns с полями username/password
+      userKey: "username"
+      passwordKey: "password"
+
+# ─── MariaDB (bitnami) ───────────────────────────────────────────────────
+# NB: bitnami в 2025 убрал свободные образы из docker.io/bitnami/*
+# (см. https://github.com/bitnami/charts/issues/30850). Мы указываем
+# bitnamilegacy репозиторий — он содержит те же образы, пока бесплатный.
+# Для enterprise — поставьте свой registry (и `global.security.allowInsecureImages`).
+mariadb:
+  enabled: true
+  architecture: standalone
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/mariadb
+  auth:
+    database: insight
+    username: insight
+    password: "changeme"
+    rootPassword: "changeme-root"
+  primary:
+    persistence:
+      size: 5Gi
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits:   { cpu: 500m, memory: 512Mi }
+
+  external:
+    host: ""                     # e.g. mysql.internal.acme.com
+    port: 3306
+    database: "insight"
+    credentialsSecret:
+      name: ""                   # Secret с полями username/password
+      userKey: "username"
+      passwordKey: "password"
+
+# ─── Redis (bitnami) ─────────────────────────────────────────────────────
+# Тот же вопрос с registry, что и у mariadb. См. коммент выше.
+redis:
+  enabled: true
+  architecture: standalone
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/redis
+  auth:
+    enabled: false              # eval. Для prod → true + passwordSecret
+  master:
+    persistence:
+      size: 1Gi
+    resources:
+      requests: { cpu: 50m,  memory: 64Mi }
+      limits:   { cpu: 250m, memory: 128Mi }
+
+  external:
+    host: ""                     # e.g. redis.internal.acme.com
+    port: 6379
+    passwordSecret:
+      name: ""
+      key: "password"
+
+# ─── Redpanda ────────────────────────────────────────────────────────────
+redpanda:
+  enabled: true
+  statefulset:
+    replicas: 1
+  resources:
+    cpu:
+      cores: 1
+    memory:
+      container:
+        max: 1536Mi
+      redpanda:
+        memory: 1Gi
+        reserveMemory: 256Mi
+  storage:
+    persistentVolume:
+      size: 10Gi
+  tls:
+    enabled: false
+  auth:
+    sasl:
+      enabled: false
+  console:
+    enabled: true
+
+  external:
+    brokers: ""                  # "broker1:9092,broker2:9092"
+    tls:
+      enabled: false
+    sasl:
+      enabled: false
+      mechanism: "SCRAM-SHA-256"
+      credentialsSecret:
+        name: ""
+        usernameKey: "username"
+        passwordKey: "password"
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  APPLICATION SERVICES
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# ВНИМАНИЕ: значения `<svc>.database.url`, `<svc>.clickhouse.url`, `<svc>.redis.url`
+# захардкожены на internal DNS. Helm не умеет template-ить values, поэтому при
+# переключении инфры на external (enabled: false + external.host: ...) ты
+# ДОЛЖЕН переопределить соответствующие URL-ы здесь в своих overrides.
+#
+# Лучший путь — перевести эти сервисы на чтение из {release}-platform
+# ConfigMap через envFrom (см. templates/platform-config.yaml). Тогда URL-ы
+# станут вообще не нужны в values. Будет сделано в следующей итерации.
+
+# ─── API Gateway ─────────────────────────────────────────────────────────
+apiGateway:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: ghcr.io/cyberfabric/insight-api-gateway
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits:   { cpu: 500m, memory: 256Mi }
+
+  ingress:
+    enabled: false
+    className: nginx
+    host: ""
+    tls:
+      enabled: false
+      secretName: ""
+
+  # OIDC (обязательно в prod — либо existingSecret, либо inline issuer+clientId+redirectUri).
+  # Валидатор умбрелы падает, если authDisabled=false и oidc не заполнен.
+  oidc:
+    existingSecret: ""
+    issuer: ""
+    audience: "api://insight"
+    clientId: ""
+    redirectUri: ""
+
+  authDisabled: false           # true = отключить auth (ТОЛЬКО local dev)
+
+  clickhouse:
+    url: "http://insight-clickhouse:8123"   # должно совпадать с resolved URL
+    database: "gold"
+
+  gateway:
+    prefixPath: "/api"
+    corsEnabled: true
+    enableDocs: false
+    rateLimit: { rps: 100, burst: 50, inFlight: 32 }
+
+  proxy:
+    routes:
+      - prefix: "/analytics"
+        upstream: "http://insight-analytics-api:8081"
+        public: false
+
+# ─── Analytics API ───────────────────────────────────────────────────────
+analyticsApi:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: ghcr.io/cyberfabric/insight-analytics-api
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+  database:
+    url: "mysql://insight:changeme@insight-mariadb:3306/insight"
+
+  clickhouse:
+    url: "http://insight-clickhouse:8123"
+    database: "insight"
+    credentialsSecret:
+      name: ""
+      userKey: "username"
+      passwordKey: "password"
+    user: "insight"
+    password: "changeme"
+
+  identityResolution:
+    url: ""                     # "" = не использовать identity
+
+  redis:
+    url: "redis://insight-redis-master:6379"
+
+# ─── Identity Resolution ─────────────────────────────────────────────────
+identity:
+  enabled: false                # MVP-заглушка
+  replicaCount: 1
+  image:
+    repository: ghcr.io/cyberfabric/insight-identity-resolution
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  resources:
+    requests: { cpu: 50m,  memory: 64Mi }
+    limits:   { cpu: 250m, memory: 256Mi }
+  clickhouse:
+    url: "http://insight-clickhouse:8123"
+    database: "insight"
+    credentialsSecret:
+      name: ""
+      userKey: "username"
+      passwordKey: "password"
+    user: "insight"
+    password: "changeme"
+
+# ─── Frontend (SPA) ──────────────────────────────────────────────────────
+frontend:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/cyberfabric/insight-front
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  resources:
+    requests: { cpu: 50m,  memory: 64Mi }
+    limits:   { cpu: 200m, memory: 128Mi }
+
+  ingress:
+    enabled: false
+    className: nginx
+    host: ""
+
+  oidc:
+    issuer: ""
+    clientId: ""

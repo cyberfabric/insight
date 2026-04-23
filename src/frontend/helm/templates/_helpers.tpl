@@ -1,5 +1,10 @@
+{{/*
+Fullname = "<release>-frontend", а не просто "<release>". Иначе при установке
+под umbrella chart (release = "insight") имя коллизирует с другими ресурсами,
+которые тоже биндятся на "insight".
+*/}}
 {{- define "insight-frontend.fullname" -}}
-{{- .Release.Name | trunc 63 | trimSuffix "-" }}
+{{- printf "%s-frontend" .Release.Name | trunc 63 | trimSuffix "-" -}}
 {{- end }}
 
 {{- define "insight-frontend.labels" -}}

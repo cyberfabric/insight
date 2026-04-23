@@ -2,7 +2,6 @@ apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
   name: ingestion-pipeline
-  namespace: argo
   labels:
     app.kubernetes.io/part-of: ingestion
 spec:
@@ -17,7 +16,7 @@ spec:
           - name: airbyte_url
             default: "http://airbyte-airbyte-server-svc.airbyte.svc.cluster.local:8001"
           - name: clickhouse_host
-            default: "clickhouse.data.svc.cluster.local"
+            default: "insight-clickhouse.insight.svc.cluster.local"
           - name: clickhouse_port
             default: "8123"
       dag:

@@ -1,0 +1,52 @@
+##
+## Argo Workflows — curated values for Insight.
+##
+## Применяется к чарту argo/argo-workflows.
+## Устанавливается отдельным Helm-релизом в namespace 'argo'
+## (аналогично Airbyte, по тем же соображениям отделения lifecycle).
+##
+## Insight-сервисы сабмитят Workflow/CronWorkflow в namespace 'argo'
+## через API сервера `argo-workflows-server` или через созданный
+## WorkflowTemplate (поставляется umbrella-чартом).
+##
+
+server:
+  # Production: --auth-mode=client (Bearer token).
+  # Eval/demo: --auth-mode=server (без авторизации, для удобства port-forward).
+  extraArgs:
+    - "--auth-mode=client"
+  serviceType: ClusterIP
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits:   { cpu: 500m, memory: 256Mi }
+
+controller:
+  # Namespaces, в которых контроллер будет обрабатывать Workflow-ресурсы.
+  # 'argo' — для системных workflow'ов.
+  # 'insight' — чтобы умбрела могла создавать CronWorkflow в своей ns
+  # и контроллер их видел.
+  workflowNamespaces:
+    - argo
+    - insight
+  resources:
+    requests: { cpu: 200m, memory: 256Mi }
+    limits:   { cpu: "1",  memory: 512Mi }
+
+# ServiceAccount для исполняющихся шагов workflow'а.
+# Создаётся в каждой разрешённой namespace; RBAC накатывается отдельно
+# через install-argo.sh (apply rbac.yaml).
+workflow:
+  serviceAccount:
+    create: true
+    name: argo-workflow
+
+executor:
+  resources:
+    requests: { cpu: 50m,  memory: 64Mi }
+    limits:   { cpu: 250m, memory: 128Mi }
+
+# Artifact repository: для хранения логов/артефактов между шагами.
+# По дефолту НЕ включён — workflow'ы Insight-а в основном короткие
+# и передают данные через ClickHouse/MariaDB, не через шаг-to-шаг артефакты.
+# Включай, если будут длинные цепочки с промежуточными файлами.
+useDefaultArtifactRepo: false

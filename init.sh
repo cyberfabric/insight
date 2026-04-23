@@ -8,7 +8,7 @@
 #   4. Deploys ClickHouse (if skipped during up.sh)
 #   5. Runs ingestion init (databases, connectors, connections, workflows)
 #
-# Prerequisites: ./up.sh must have been run first.
+# Prerequisites: ./dev-up.sh must have been run first.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,7 +21,7 @@ echo "=== Insight Platform — Initialize ==="
 
 # --- Verify cluster ---
 if ! kubectl cluster-info &>/dev/null; then
-  echo "ERROR: Cannot reach cluster. Run ./up.sh first." >&2
+  echo "ERROR: Cannot reach cluster. Run ./dev-up.sh first." >&2
   exit 1
 fi
 

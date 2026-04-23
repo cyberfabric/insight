@@ -1,0 +1,67 @@
+##
+## ArgoCD Application: Argo Workflows
+##
+## Sync wave 0 — устанавливается параллельно с Airbyte, до Insight.
+## Insight (wave 1) дожидается, пока обе инфры не станут Healthy.
+##
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argo-workflows
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+
+spec:
+  project: default
+
+  source:
+    repoURL: https://argoproj.github.io/argo-helm
+    chart: argo-workflows
+    targetRevision: 0.45.16
+
+    helm:
+      releaseName: argo-workflows
+      values: |
+        server:
+          extraArgs:
+            - "--auth-mode=client"
+          serviceType: ClusterIP
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits:   { cpu: 500m, memory: 256Mi }
+        controller:
+          workflowNamespaces:
+            - argo
+            - insight
+          resources:
+            requests: { cpu: 200m, memory: 256Mi }
+            limits:   { cpu: "1",  memory: 512Mi }
+        workflow:
+          serviceAccount:
+            create: true
+            name: argo-workflow
+        executor:
+          resources:
+            requests: { cpu: 50m,  memory: 64Mi }
+            limits:   { cpu: 250m, memory: 128Mi }
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argo
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

@@ -2,7 +2,6 @@ apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
   name: dbt-run
-  namespace: argo
   labels:
     app.kubernetes.io/part-of: ingestion
 spec:
@@ -14,7 +13,7 @@ spec:
           - name: dbt_select
             default: "tag:silver"
           - name: clickhouse_host
-            default: "clickhouse.data.svc.cluster.local"
+            default: "insight-clickhouse.insight.svc.cluster.local"
           - name: clickhouse_port
             default: "8123"
       activeDeadlineSeconds: 1800

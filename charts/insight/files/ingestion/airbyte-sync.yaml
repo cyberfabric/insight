@@ -2,7 +2,6 @@ apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
   name: airbyte-sync
-  namespace: argo
   labels:
     app.kubernetes.io/part-of: ingestion
 spec:

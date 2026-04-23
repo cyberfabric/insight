@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Initialize the ingestion stack: create databases, register connectors, apply connections, sync workflows.
 # Runs from the host machine (requires kubectl, curl, node, python3).
-# Run AFTER: ./up.sh && ./secrets/apply.sh
+# Run AFTER: ./dev-up.sh && ./secrets/apply.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

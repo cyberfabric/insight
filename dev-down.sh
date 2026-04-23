@@ -32,4 +32,4 @@ if [[ "$ENV" == "local" ]]; then
   docker stop "${CLUSTER_NAME}-control-plane" 2>/dev/null || true
 fi
 
-echo "=== Done (data preserved, run ./up.sh to restart) ==="
+echo "=== Done (data preserved, run ./dev-up.sh to restart) ==="

@@ -1,0 +1,93 @@
+##
+## ArgoCD Application: Airbyte
+##
+## Sync wave 0 — устанавливается ПЕРВЫМ, до Insight.
+## Insight Application ждёт, пока эта Application не станет Healthy.
+##
+## Values inlined для простоты. Если хотите держать values в git — используйте
+## `source.helm.valueFiles` с путём к файлу в репо.
+##
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: airbyte
+  namespace: argocd
+  annotations:
+    # Чем меньше wave — тем раньше запускается. Insight = wave 1.
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    # При удалении Application — каскадно удаляет созданные ресурсы.
+    # Убери, если не хочешь такого поведения.
+    - resources-finalizer.argocd.argoproj.io
+
+spec:
+  project: default
+
+  source:
+    repoURL: https://airbytehq.github.io/helm-charts
+    chart: airbyte
+    # Пин версии — ОБЯЗАТЕЛЬНО для воспроизводимых деплоев.
+    targetRevision: 1.5.1
+
+    helm:
+      releaseName: airbyte
+      # Values inlined. Для больших конфигов — выноси в отдельный repo
+      # и ссылайся через multi-source (sources: [helm_chart, values_repo]).
+      values: |
+        global:
+          edition: community
+          auth:
+            enabled: false
+          storage:
+            type: minio
+          database:
+            type: internal
+        postgresql:
+          enabled: true
+        minio:
+          enabled: true
+        keycloak:
+          enabled: false
+        keycloak-setup:
+          enabled: false
+        server:
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits:   { cpu: "1",  memory: 1Gi }
+        webapp:
+          resources:
+            requests: { cpu: 50m,  memory: 128Mi }
+            limits:   { cpu: 500m, memory: 512Mi }
+          ingress:
+            enabled: false
+        worker:
+          resources:
+            requests: { cpu: 200m, memory: 512Mi }
+            limits:   { cpu: "2",  memory: 2Gi }
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: airbyte
+
+  syncPolicy:
+    automated:
+      prune: true           # удалять ресурсы, которых нет в Git
+      selfHeal: true        # авто-сихн если в кластере drift
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+
+  # Airbyte chart ставит много ресурсов, включая тяжёлые CRD от Temporal.
+  # Игнорируем поля, которые patches kubectl/helm.
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas

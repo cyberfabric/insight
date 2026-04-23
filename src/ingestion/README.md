@@ -90,9 +90,9 @@ The ingestion stack is deployed as part of the Insight platform. Use the **root-
 
 ```bash
 # From the repo root:
-./up.sh          # Create cluster + deploy all services (including ingestion)
+./dev-up.sh          # Create cluster + deploy all services (including ingestion)
 ./init.sh        # Apply secrets + initialize ingestion
-./down.sh        # Stop everything
+./dev-down.sh        # Stop everything
 ./cleanup.sh     # Delete cluster and all data
 ```
 
@@ -122,10 +122,10 @@ export KUBECONFIG=~/.kube/insight.kubeconfig
 
 | Command | Description |
 |---------|-------------|
-| `./up.sh` | Create cluster and deploy services (idempotent, safe to re-run) |
-| `./secrets/apply.sh` | Apply K8s Secrets (infra + connectors). Run after `up.sh` |
+| `./dev-up.sh` | Create cluster and deploy services (idempotent, safe to re-run) |
+| `./secrets/apply.sh` | Apply K8s Secrets (infra + connectors). Run after `dev-up.sh` |
 | `./run-init.sh` | Initialize: create databases, register connectors, apply connections. Run after secrets |
-| `./down.sh` | Stop all services. **Data preserved** |
+| `./dev-down.sh` | Stop all services. **Data preserved** |
 | `./cleanup.sh` | Delete cluster and all data. Asks for confirmation |
 
 ### Day-to-day
@@ -171,7 +171,7 @@ open http://localhost:30500
 
 ## Services
 
-After `./up.sh`:
+After `./dev-up.sh`:
 
 | Service | URL | Credentials |
 |---------|-----|-------------|
@@ -453,7 +453,7 @@ export KUBECONFIG=/path/to/your/kubeconfig
 ### Step 1: Deploy Services
 
 ```bash
-./up.sh   # Uses ENV=production, applies production Helm values
+./dev-up.sh   # Uses ENV=production, applies production Helm values
 ```
 
 ### Step 2: Build and Load Toolbox Image

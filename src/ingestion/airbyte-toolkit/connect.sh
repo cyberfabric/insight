@@ -216,7 +216,7 @@ state_set(state, "destinations.clickhouse.definition_id", ch_def_id)
 shared_dest_name = "clickhouse"
 shared_dest_id = state_get(state, "destinations.clickhouse.id")
 ch_config = {
-    "host": dest_config.get("host", "clickhouse.data.svc.cluster.local"),
+    "host": dest_config.get("host", "insight-clickhouse.insight.svc.cluster.local"),
     "port": str(dest_config.get("port", 8123)),
     "database": "default",
     "username": dest_config.get("username", "default"),

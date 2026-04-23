@@ -1,0 +1,108 @@
+##
+## Insight — umbrella chart.
+##
+## Каноническая единица поставки платформы.
+## Сам по себе почти ничего не деплоит — оркестрирует subcharts.
+##
+## Что СЮДА входит:
+##   - Infrastructure: ClickHouse, MariaDB, Redis, Redpanda
+##   - Application:    api-gateway, analytics-api, identity, frontend
+##
+## Что НЕ входит (деплоится отдельно):
+##   - Airbyte        — см. scripts/install-airbyte.sh
+##   - Argo Workflows — см. scripts/install-argo.sh
+##
+## Релизное имя по соглашению: `insight`. Смена имени потребует
+## переписать hardcoded DNS-ссылки в values (см. values.yaml).
+##
+apiVersion: v2
+name: insight
+description: Insight — observability & analytics platform (umbrella chart)
+type: application
+
+# Version  — версия packaging-а чарта. Бампается ВСЕГДА, когда меняется чарт.
+# appVersion — версия продукта. Совпадает с image tag всех insight-* образов.
+# В релизном pipeline: git tag v0.1.0 → version=0.1.0, appVersion="0.1.0".
+version: 0.1.0
+appVersion: "0.1.0"
+
+kubeVersion: ">=1.27.0-0"
+
+home: https://github.com/cyberfabric/insight
+sources:
+  - https://github.com/cyberfabric/insight
+maintainers:
+  - name: Cyberfabric
+    url: https://github.com/cyberfabric
+
+# Dependencies — сердце umbrella.
+#
+# Поля:
+#   name        — имя subchart (должно совпадать с Chart.yaml зависимости)
+#   version     — жёсткий пин для своих чартов, ~X.Y для bitnami/redpanda
+#   repository  — file:// для локальных, oci:// / https:// для удалённых
+#   condition   — тумблер в values (путь к булевому полю)
+#   alias       — короткое имя ключа в values.yaml (иначе нужен полный chart name)
+#
+# Когда добавляешь новую зависимость, не забудь:
+#   1. helm dependency update charts/insight
+#   2. добавить блок в values.yaml под тем же ключом (или alias-ом)
+#
+dependencies:
+
+  # ─── Infrastructure ─────────────────────────────────────────────────────
+
+  # ClickHouse — OLAP-стор. Локальный wrapper-чарт, чтобы держать
+  # конфигурацию keeper/shards/macros под своим контролем.
+  - name: clickhouse
+    version: "0.1.0"
+    repository: "file://../../helmfile/charts/clickhouse"
+    condition: clickhouse.enabled
+
+  # MariaDB — операционная БД (тенанты, plugin installs, конфиги).
+  # Bitnami чарт, OCI репо. Semver ~20.0.0 = патчи безопасности 20.x.
+  - name: mariadb
+    version: "~20.0.0"
+    repository: "oci://registry-1.docker.io/bitnamicharts"
+    condition: mariadb.enabled
+
+  # Redis — кэш query-ответов analytics-api.
+  - name: redis
+    version: "~21.0.0"
+    repository: "oci://registry-1.docker.io/bitnamicharts"
+    condition: redis.enabled
+
+  # Redpanda — event bus (notifications, audit log, future).
+  # Kafka-совместимый, проще в эксплуатации.
+  - name: redpanda
+    version: "~5.0.0"
+    repository: "https://charts.redpanda.com"
+    condition: redpanda.enabled
+
+  # ─── Application services ──────────────────────────────────────────────
+  # Все aliases — camelCase для чистого values.yaml.
+  # Сервисы внутри кластера остаются с чёрточками: `insight-api-gateway`.
+
+  - name: insight-api-gateway
+    alias: apiGateway
+    version: "0.1.0"
+    repository: "file://../../src/backend/services/api-gateway/helm"
+    condition: apiGateway.enabled
+
+  - name: insight-analytics-api
+    alias: analyticsApi
+    version: "0.1.0"
+    repository: "file://../../src/backend/services/analytics-api/helm"
+    condition: analyticsApi.enabled
+
+  - name: insight-identity-resolution
+    alias: identity
+    version: "0.1.0"
+    repository: "file://../../src/backend/services/identity/helm"
+    condition: identity.enabled
+
+  - name: insight-frontend
+    alias: frontend
+    version: "0.1.0"
+    repository: "file://../../src/frontend/helm"
+    condition: frontend.enabled

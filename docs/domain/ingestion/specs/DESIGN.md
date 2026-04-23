@@ -646,7 +646,7 @@ K8s Cluster
 ├── namespace: argo
 │   ├── Argo Server (API + UI)
 │   └── Argo Controller (workflow execution)
-└── namespace: data
+└── namespace: insight
     └── ClickHouse (single-node or cluster)
 ```
 
@@ -703,7 +703,7 @@ All services run inside a Kind K8s cluster (`airbyte-abctl`):
 
 KUBECONFIG: `~/.kube/kind-ingestion`
 
-Startup: `./up.sh` — installs Airbyte, deploys ClickHouse, installs Argo, applies WorkflowTemplates, initializes connections.
+Startup: `./dev-up.sh` — installs Airbyte, deploys ClickHouse, installs Argo, applies WorkflowTemplates, initializes connections.
 
 This enables:
 - Testing connector registration and sync execution

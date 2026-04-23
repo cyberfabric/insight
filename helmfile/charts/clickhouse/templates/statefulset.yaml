@@ -1,22 +1,19 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ .Release.Name }}
+  name: {{ include "clickhouse.fullname" . }}
   labels:
-    app.kubernetes.io/name: clickhouse
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    {{- include "clickhouse.labels" . | nindent 4 }}
 spec:
-  serviceName: {{ .Release.Name }}
+  serviceName: {{ include "clickhouse.fullname" . }}
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: clickhouse
-      app.kubernetes.io/instance: {{ .Release.Name }}
+      {{- include "clickhouse.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: clickhouse
-        app.kubernetes.io/instance: {{ .Release.Name }}
+        {{- include "clickhouse.selectorLabels" . | nindent 8 }}
     spec:
       containers:
         - name: clickhouse

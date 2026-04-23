@@ -46,7 +46,7 @@ oidc:
 
 # ClickHouse connection
 clickhouse:
-  url: "http://clickhouse.data.svc.cluster.local:8123"
+  url: "http://insight-clickhouse.insight.svc.cluster.local:8123"
   database: "gold"
 
 # Set to true to disable authentication (local development only)
