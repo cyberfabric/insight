@@ -502,3 +502,16 @@ kind = "PRD"
 path = "docs/domain/org-chart/specs/PRD.md"
 name = "Org-Chart Domain PRD"
 traceability = "DOCS-ONLY"
+
+[[systems]]
+name = "Plugin System"
+slug = "plugin"
+kit = "sdlc"
+codebase = ["docs/domain/plugins"]
+children = []
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/domain/plugins/specs/PRD.md"
+name = "Plugin System PRD"
+traceability = "DOCS-ONLY"
