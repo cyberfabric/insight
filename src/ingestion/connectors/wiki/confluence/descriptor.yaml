@@ -4,10 +4,10 @@ version: "1.0"
 schedule: "0 4 * * *"
 workflow: sync
 
-# Phase 1 scope: Bronze-only. Silver routing (class_wiki_pages, class_wiki_activity)
-# is deferred to Phase 2 per DESIGN §1.1 and §3.7.
+# Silver routing (class_wiki_pages, class_wiki_activity) enabled via dbt tags
+# on the staging models (silver:class_wiki_pages, silver:class_wiki_activity).
 # silver_targets prohibited per Connector Spec §4.10 — Silver determined by dbt_select tags.
-dbt_select: ""
+dbt_select: "tag:confluence+"
 
 connection:
   namespace: bronze_confluence
