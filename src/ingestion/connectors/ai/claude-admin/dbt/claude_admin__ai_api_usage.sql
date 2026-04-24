@@ -13,6 +13,13 @@
 -- (claude_enterprise_users.chat_*) in claude_enterprise__ai_api_usage.
 --
 -- channel = 'api' for all rows produced here.
+--
+-- Resilience: if bronze_claude_admin.claude_admin_messages_usage is absent
+-- (stream disabled at the connection level, e.g. to work around an ongoing
+-- rate-limit issue at the Anthropic Admin API layer, or a fresh deploy before
+-- the first sync), emit an empty structurally-typed relation instead of
+-- failing the run. downstream class_ai_api_usage keeps its other
+-- contributions (claude_enterprise web/office/cowork branches) intact.
 {{ config(
     materialized='incremental',
     unique_key='unique_key',
@@ -21,12 +28,45 @@
     tags=['claude-admin', 'silver:class_ai_api_usage']
 ) }}
 
+{%- set messages_usage = adapter.get_relation(database=none, schema='bronze_claude_admin', identifier='claude_admin_messages_usage') -%}
+
+{%- if not messages_usage %}
+-- messages_usage Bronze table missing; emit empty result so the pipeline
+-- still compiles and materialises downstream silver views without error.
+SELECT
+    CAST(NULL AS Nullable(String))                  AS insight_tenant_id,
+    CAST(NULL AS Nullable(String))                  AS source_id,
+    CAST('' AS String)                              AS unique_key,
+    CAST(NULL AS Nullable(String))                  AS email,
+    CAST(NULL AS Nullable(String))                  AS api_key_id,
+    CAST(NULL AS Nullable(String))                  AS workspace_id,
+    CAST(NULL AS Nullable(Date))                    AS day,
+    CAST('anthropic' AS String)                     AS provider,
+    CAST('api' AS String)                           AS channel,
+    CAST(NULL AS Nullable(UInt32))                  AS conversation_count,
+    CAST(NULL AS Nullable(UInt32))                  AS message_count,
+    CAST(NULL AS Nullable(UInt64))                  AS input_tokens,
+    CAST(NULL AS Nullable(UInt64))                  AS output_tokens,
+    CAST(NULL AS Nullable(UInt64))                  AS cache_read_tokens,
+    CAST(NULL AS Nullable(UInt64))                  AS cache_creation_tokens,
+    CAST(NULL AS Nullable(Decimal(18, 4)))          AS cost_amount,
+    CAST(NULL AS Nullable(String))                  AS cost_currency,
+    CAST('claude_admin' AS String)                  AS source,
+    CAST('insight_claude_admin' AS String)          AS data_source,
+    CAST(NULL AS Nullable(DateTime64(3)))           AS collected_at
+WHERE 1 = 0
+{%- else %}
+
 SELECT
     tenant_id                                       AS insight_tenant_id,
     insight_source_id                               AS source_id,
-    concat(
-        tenant_id, '-',
-        insight_source_id, '-',
+    -- coalesce Nullable Bronze inputs to '' before concat so unique_key is a
+    -- non-nullable String. ClickHouse MergeTree requires non-nullable keys in
+    -- ORDER BY (allow_nullable_key=0 by default, and we'd rather not rely on
+    -- that session setting).
+    CAST(concat(
+        coalesce(tenant_id, ''), '-',
+        coalesce(insight_source_id, ''), '-',
         'ws:', coalesce(workspace_id, '__null__'), '-',
         toString(toDate(date)), '-',
         'anthropic-api-',
@@ -34,7 +74,7 @@ SELECT
         coalesce(api_key_id, '__null__'), '-',
         coalesce(service_tier, '__null__'), '-',
         coalesce(context_window, '__null__')
-    )                                               AS unique_key,
+    ) AS String)                                    AS unique_key,
     CAST(NULL AS Nullable(String))                  AS email,
     api_key_id,
     workspace_id,
@@ -63,3 +103,4 @@ WHERE toDate(date) > (
     FROM {{ this }}
 )
 {% endif %}
+{%- endif %}

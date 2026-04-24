@@ -28,7 +28,7 @@
 SELECT
     tenant_id                                       AS insight_tenant_id,
     source_id,
-    concat(tenant_id, '-', source_id, '-', userId, '-', toString(toDate(fromUnixTimestamp64Milli(CAST(date AS Int64)))))
+    CAST(concat(coalesce(tenant_id, ''), '-', coalesce(source_id, ''), '-', coalesce(userId, ''), '-', toString(toDate(fromUnixTimestamp64Milli(CAST(date AS Int64))))) AS String)
                                                     AS unique_key,
     lower(trim(email))                              AS email,
     CAST(NULL AS Nullable(String))                  AS api_key_id,

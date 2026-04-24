@@ -62,7 +62,7 @@ web AS (
     SELECT
         tenant_id                                   AS insight_tenant_id,
         source_id,
-        concat(tenant_id, '-', source_id, '-', email, '-', toString(day), '-web')
+        CAST(concat(coalesce(tenant_id, ''), '-', coalesce(source_id, ''), '-', coalesce(email, ''), '-', toString(day), '-web') AS String)
                                                     AS unique_key,
         email,
         CAST(NULL AS Nullable(String))              AS api_key_id,
@@ -91,7 +91,7 @@ office AS (
     SELECT
         tenant_id                                   AS insight_tenant_id,
         source_id,
-        concat(tenant_id, '-', source_id, '-', email, '-', toString(day), '-office')
+        CAST(concat(coalesce(tenant_id, ''), '-', coalesce(source_id, ''), '-', coalesce(email, ''), '-', toString(day), '-office') AS String)
                                                     AS unique_key,
         email,
         CAST(NULL AS Nullable(String))              AS api_key_id,
@@ -124,7 +124,7 @@ cowork AS (
     SELECT
         tenant_id                                   AS insight_tenant_id,
         source_id,
-        concat(tenant_id, '-', source_id, '-', email, '-', toString(day), '-cowork')
+        CAST(concat(coalesce(tenant_id, ''), '-', coalesce(source_id, ''), '-', coalesce(email, ''), '-', toString(day), '-cowork') AS String)
                                                     AS unique_key,
         email,
         CAST(NULL AS Nullable(String))              AS api_key_id,

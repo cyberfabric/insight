@@ -71,13 +71,16 @@ api_keys AS (
 SELECT
     u.tenant_id                                             AS insight_tenant_id,
     u.source_id,
-    concat(
-        u.tenant_id, '-',
-        u.source_id, '-',
+    -- Non-nullable unique_key: coalesce Nullable Bronze inputs to '' before
+    -- concat and cast the result back to String. ClickHouse MergeTree ORDER BY
+    -- rejects Nullable columns by default (allow_nullable_key=0).
+    CAST(concat(
+        coalesce(u.tenant_id, ''), '-',
+        coalesce(u.source_id, ''), '-',
         u.actor_type, '-',
         u.identifier_lc, '-',
         toString(u.day)
-    )                                                       AS unique_key,
+    ) AS String)                                            AS unique_key,
     CASE WHEN u.actor_type = 'user' THEN u.identifier_lc END AS email,
     CASE WHEN u.actor_type = 'api_actor' THEN k.api_key_id END AS api_key_id,
     u.day,
