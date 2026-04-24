@@ -35,7 +35,11 @@
         "type": "string",
         "title": "Start Date",
         "description": "UTC start for initial incremental sync. Accepts YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ. Records with updatedAt older than this are skipped on first run. Omit to fall back to 2 years before now.",
-        "format": "date-time",
+        "anyOf": [
+          { "format": "date-time" },
+          { "format": "date" },
+          { "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" }
+        ],
         "examples": ["2024-01-01", "2024-01-01T00:00:00Z"],
         "order": 3
       },

@@ -78,11 +78,23 @@ class HubspotStream(Stream, ABC):
         self._include_archived = include_archived
         self._cursor: Optional[ConcurrentCursor] = None
         self._envelope_collisions_seen: set = set()
+        # Archived records are fetched once per sync, not once per slice —
+        # archived=true endpoints don't filter by updatedAt, so re-reading
+        # them per slice would blow up API call count as O(slices × archives).
+        self._archived_emitted: bool = False
 
         # Every stream gets its own HttpClient so the error handler can
-        # attribute failures to the right stream name.
+        # attribute failures to the right stream name. Mount a pooled
+        # adapter so parallel association + page-fetch traffic from the
+        # same stream shares one connection pool instead of opening a new
+        # socket per request.
         session = requests.Session()
         session.headers.update({"Authorization": f"Bearer {access_token}"})
+        pool_size = 50
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=pool_size, pool_maxsize=pool_size
+        )
+        session.mount("https://", adapter)
         self._http_client = HttpClient(
             name=f"hubspot_{stream_name}",
             logger=logger,
@@ -113,7 +125,8 @@ class HubspotStream(Stream, ABC):
         return "id"
 
     @property
-    def cursor_field(self) -> str:
+    def cursor_field(self) -> Optional[str]:
+        # None for owners (forces full-refresh) — see STREAM_REGISTRY.
         return self._registry["cursor_field"]
 
     def set_cursor(self, cursor: ConcurrentCursor) -> None:
@@ -210,8 +223,12 @@ class CrmSearchStream(HubspotStream):
        a short page arrives.
 
     Plus an optional archived=true pass when ``hubspot_include_archived``
-    is set — archives aren't returned by search, so we fall through to a
-    filtered list call per slice and tag them ``archived: true``.
+    is set — archives aren't returned by search, so we page the v3 list
+    endpoint with ``archived=true``. That pass runs **once per sync**
+    (guarded by ``self._archived_emitted``) regardless of how many time
+    slices the cursor produces, because the archived endpoint doesn't
+    filter on ``updatedAt`` and re-reading it per slice would amount to
+    O(slices × archive_count) API calls.
     """
 
     @property
@@ -232,8 +249,12 @@ class CrmSearchStream(HubspotStream):
     ) -> Iterable[Mapping[str, Any]]:
         slice_start, slice_end = self._slice_bounds(stream_slice)
         yield from self._read_slice_with_keyset_fallback(slice_start, slice_end)
-        if self._include_archived:
-            yield from self._read_archived_slice(slice_start, slice_end)
+        # Archived records aren't filtered server-side by updatedAt, so we
+        # only page them once per sync (on the first slice). Subsequent
+        # slices skip — prevents O(slices × archives) API calls.
+        if self._include_archived and not self._archived_emitted:
+            self._archived_emitted = True
+            yield from self._read_all_archived()
 
     # ---- Active (non-archived) records via search ---------------------------
 
@@ -358,22 +379,20 @@ class CrmSearchStream(HubspotStream):
             body["after"] = after
         return body
 
-    # ---- Archived records via filtered list --------------------------------
+    # ---- Archived records (full sweep, once per sync) ----------------------
 
-    def _read_archived_slice(
-        self, slice_start: str, slice_end: str
-    ) -> Iterable[Mapping[str, Any]]:
-        """Fetch archived records whose updatedAt falls in the slice.
+    def _read_all_archived(self) -> Iterable[Mapping[str, Any]]:
+        """Page the archived list endpoint once per sync.
 
-        Archives aren't returned by the Search API. We page the list endpoint
-        with ``archived=true`` and filter in-process by updatedAt. This is a
-        relatively cheap pass because most portals have few archives.
+        Archives aren't returned by the Search API and the list endpoint
+        doesn't accept an ``updatedAt`` filter — so splitting this across
+        time slices just re-pages the same archive set N times. We stream
+        the whole archived set once instead, gated by ``_archived_emitted``
+        in :meth:`_generate_records`.
         """
         url = self._list_url()
         properties_param = ",".join(self._hubspot.property_names(self._object_type))
         after: Optional[str] = None
-        slice_start_dt = pendulum.parse(slice_start)
-        slice_end_dt = pendulum.parse(slice_end)
         while True:
             params: MutableMapping[str, Any] = {
                 "limit": LIST_PAGE_LIMIT,
@@ -393,9 +412,7 @@ class CrmSearchStream(HubspotStream):
                 )
             data = resp.json()
             for rec in data.get("results") or []:
-                updated = rec.get("updatedAt")
-                if updated and _in_window(updated, slice_start_dt, slice_end_dt):
-                    yield rec
+                yield rec
             paging = data.get("paging") or {}
             nxt = (paging.get("next") or {}) if isinstance(paging, Mapping) else {}
             after = nxt.get("after") if isinstance(nxt, Mapping) else None
@@ -488,8 +505,6 @@ class OwnersStream(HubspotStream):
             if not after:
                 return
 
-    # Owners schema has no ``properties`` object — skip envelope property
-    # flattening by treating every field as standard (none are custom).
     def read_records(
         self,
         sync_mode: SyncMode,
@@ -497,6 +512,16 @@ class OwnersStream(HubspotStream):
         stream_slice: Optional[Mapping[str, Any]] = None,
         stream_state: Optional[Mapping[str, Any]] = None,
     ) -> Iterable[StreamData]:
+        """Envelope owners without touching the CRM properties endpoint.
+
+        This override is deliberate: owners have no
+        ``/crm/v3/properties/owners`` endpoint and no custom-field surface,
+        so the base :class:`HubspotStream.read_records` path (which calls
+        ``self._hubspot.custom_property_names`` and batches through
+        :func:`_finalize_batch`) doesn't apply. We stream directly from
+        :meth:`_paginate_owners`, envelope with an empty custom-field set,
+        and skip association enrichment (owners have none).
+        """
         for record in self._generate_records(sync_mode, stream_slice, stream_state):
             yield envelope(
                 record,
@@ -534,13 +559,3 @@ def _parse_slice_bound(value: Any) -> Optional[pendulum.DateTime]:
         return pendulum.parse(str(value))
     except Exception:
         return None
-
-
-def _in_window(
-    value: Any, start: pendulum.DateTime, end: pendulum.DateTime
-) -> bool:
-    try:
-        dt = pendulum.parse(str(value))
-    except Exception:
-        return False
-    return start <= dt < end

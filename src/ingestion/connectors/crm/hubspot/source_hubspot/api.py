@@ -73,16 +73,21 @@ class Hubspot:
         """Lightweight call to verify the token works.
 
         Uses ``/crm/v3/owners/`` with ``limit=1`` because it's cheap, tests a
-        CRM scope, and doesn't require any specific object permission.
+        CRM scope, and doesn't require any specific object permission. The
+        CDK error handler converts 401/403/530 into AirbyteTracedException;
+        catch it here so the ``(bool, Optional[str])`` contract stays honest.
         """
         url = f"{BASE_URL}/crm/v3/owners/"
-        _, resp = self._http_client.send_request(
-            "GET", url, headers={}, params={"limit": 1}, request_kwargs={}
-        )
+        try:
+            _, resp = self._http_client.send_request(
+                "GET", url, headers={}, params={"limit": 1}, request_kwargs={}
+            )
+        except AirbyteTracedException as exc:
+            return False, exc.message or str(exc)
+        except Exception as exc:  # noqa: BLE001 — surface any transport error cleanly
+            return False, f"HubSpot connectivity check failed: {exc!r}"
         if resp.ok:
             return True, None
-        # 401/403/530 are already turned into AirbyteTracedException by the
-        # error handler via FAIL resolutions — so non-ok here is surprising.
         return False, f"HubSpot connectivity check failed: HTTP {resp.status_code} {resp.text[:500]}"
 
     # ------- Property discovery ---------------------------------------------
@@ -99,7 +104,8 @@ class Hubspot:
         if cached is not None:
             return tuple(cached)
 
-        url = f"{BASE_URL}/properties/v2/{object_type}/properties"
+        # HubSpot v3 properties endpoint — v2 still works but is deprecated.
+        url = f"{BASE_URL}/crm/v3/properties/{object_type}"
         _, resp = self._http_client.send_request(
             "GET", url, headers={}, request_kwargs={}
         )
@@ -114,14 +120,26 @@ class Hubspot:
                 failure_type=FailureType.config_error,
             )
         try:
-            payload = resp.json()
+            body = resp.json()
         except ValueError as exc:
             raise AirbyteTracedException(
                 message=f"HubSpot properties call for '{object_type}' returned non-JSON response.",
                 internal_message=f"body={resp.text[:500]!r}",
                 failure_type=FailureType.system_error,
             ) from exc
-        self._properties_cache[object_type] = list(payload)
+        # v3 wraps properties in ``{"results": [...]}``; v2 returned a bare
+        # list. Handle both so a future endpoint swap is transparent.
+        if isinstance(body, Mapping):
+            payload = list(body.get("results") or [])
+        elif isinstance(body, list):
+            payload = list(body)
+        else:
+            raise AirbyteTracedException(
+                message=f"Unexpected HubSpot properties payload shape for '{object_type}'.",
+                internal_message=f"type={type(body).__name__}",
+                failure_type=FailureType.system_error,
+            )
+        self._properties_cache[object_type] = payload
         return tuple(payload)
 
     def custom_property_names(self, object_type: str) -> frozenset:

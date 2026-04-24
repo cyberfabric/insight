@@ -17,7 +17,6 @@ from typing import Any, Iterator, List, Mapping, MutableMapping, Optional, Tuple
 import isodate
 import pendulum
 from dateutil.relativedelta import relativedelta
-from pendulum.parsing.exceptions import ParserError
 
 from airbyte_cdk.logger import AirbyteLogFormatter
 from airbyte_cdk.models import (
@@ -48,7 +47,6 @@ from airbyte_cdk.utils.traced_exception import AirbyteTracedException
 from source_hubspot.api import Hubspot
 from source_hubspot.constants import (
     CURATED_STREAMS,
-    DEFAULT_START_DATE,
     STREAM_REGISTRY,
 )
 from source_hubspot.streams import CrmSearchStream, HubspotStream, OwnersStream
@@ -112,12 +110,31 @@ class SourceHubspot(ConcurrentSourceAdapter):
         ok, reason = hubspot.check_connection()
         if not ok:
             return False, reason
-        # Probe a property discovery on one object so a scope miss fails fast.
-        try:
-            hubspot.properties_for("contacts")
-        except AirbyteTracedException as exc:
-            return False, exc.message
+        # Probe property discovery on a stream the operator actually enabled
+        # — hard-coding "contacts" would false-fail tokens scoped to, say,
+        # deals-only portals. Owners skipped because it has no properties
+        # endpoint. Falls through to "contacts" only if the override list
+        # is exclusively owners or unknown names.
+        probe_object = self._pick_properties_probe_object(config)
+        if probe_object is not None:
+            try:
+                hubspot.properties_for(probe_object)
+            except AirbyteTracedException as exc:
+                return False, exc.message
         return True, None
+
+    def _pick_properties_probe_object(
+        self, config: Mapping[str, Any]
+    ) -> Optional[str]:
+        """First requested stream that has a CRM properties endpoint."""
+        for name in self._resolve_stream_list(config):
+            entry = STREAM_REGISTRY.get(name)
+            if entry is None:
+                continue
+            obj = entry.get("object_type")
+            if obj and obj != "owners":
+                return obj
+        return None
 
     # ------- Stream discovery ----------------------------------------------
 
@@ -238,8 +255,10 @@ class SourceHubspot(ConcurrentSourceAdapter):
                 ) from exc
             # pendulum.parse can return Date or Time for partial inputs; the
             # ConcurrentCursor requires a DateTime to compute slice bounds.
+            # Always normalize to UTC so slice math doesn't inherit a
+            # locale-dependent offset from the input string.
             if isinstance(parsed, pendulum.DateTime):
-                return parsed
+                return parsed.in_timezone("UTC")
             if isinstance(parsed, pendulum.Date):
                 return pendulum.datetime(
                     parsed.year, parsed.month, parsed.day, tz="UTC"
@@ -267,7 +286,7 @@ class SourceHubspot(ConcurrentSourceAdapter):
             return
         try:
             duration = isodate.parse_duration(value)
-        except (ParserError, isodate.ISO8601Error) as e:
+        except (isodate.ISO8601Error, ValueError, TypeError, AttributeError) as e:
             raise AirbyteTracedException(
                 failure_type=FailureType.config_error,
                 internal_message=str(e),
@@ -275,7 +294,7 @@ class SourceHubspot(ConcurrentSourceAdapter):
                     f"{key} must be an ISO-8601 duration (e.g. 'PT10M', 'P30D'). "
                     f"Got: {value!r}"
                 ),
-            )
+            ) from e
         td = duration if isinstance(duration, timedelta) else None
         if td is None and hasattr(duration, "totimedelta"):
             try:
@@ -288,6 +307,17 @@ class SourceHubspot(ConcurrentSourceAdapter):
                 internal_message=f"{key} must be a non-negative duration",
                 message=f"{key} must be a non-negative ISO-8601 duration. Got: {value!r}",
             )
+        # Zero is legal for lookback_window (no lookback) but would make the
+        # cursor never advance a slice for slice_step — reject it.
+        if key == "hubspot_stream_slice_step" and td == timedelta(seconds=0):
+            raise AirbyteTracedException(
+                failure_type=FailureType.config_error,
+                internal_message="stream_slice_step must be > 0",
+                message=(
+                    f"{key} must be a positive duration (zero would hang the "
+                    f"cursor). Got: {value!r}"
+                ),
+            )
 
     # ------- Read override (logging) ---------------------------------------
 
@@ -296,7 +326,7 @@ class SourceHubspot(ConcurrentSourceAdapter):
         logger: logging.Logger,
         config: Mapping[str, Any],
         catalog: ConfiguredAirbyteCatalog,
-        state: Union[List[AirbyteStateMessage], MutableMapping[str, Any]] = None,
+        state: Optional[Union[List[AirbyteStateMessage], MutableMapping[str, Any]]] = None,
     ) -> Iterator[AirbyteMessage]:
         self.catalog = catalog
         yield from super().read(logger, config, catalog, state)

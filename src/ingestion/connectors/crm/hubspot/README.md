@@ -7,7 +7,10 @@ Architecture mirrors `crm/salesforce/` — envelope shape, concurrent cursor sli
 ## Prerequisites
 
 1. In HubSpot: **Settings → Integrations → Private Apps → Create private app**.
-2. Grant read scopes: `crm.objects.contacts.read`, `crm.objects.companies.read`, `crm.objects.deals.read`, `crm.objects.leads.read`, `tickets`, `crm.schemas.*.read` (for property discovery), plus `crm.objects.owners.read`. Engagements read is covered by the per-object CRM scopes.
+2. Grant read scopes for each enabled object plus the matching property-schema scope (HubSpot has no wildcard — list scopes individually):
+   - Objects: `crm.objects.contacts.read`, `crm.objects.companies.read`, `crm.objects.deals.read`, `crm.objects.leads.read`, `tickets`, `crm.objects.owners.read`
+   - Property schemas: `crm.schemas.contacts.read`, `crm.schemas.companies.read`, `crm.schemas.deals.read`, `crm.schemas.leads.read`
+   - Engagements (calls/emails/meetings/tasks) read is covered by the per-object CRM scopes.
 3. Copy the access token — it begins with `pat-`.
 
 ## K8s Secret

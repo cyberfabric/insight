@@ -55,11 +55,13 @@ class AssociationFetcher:
 
         by_id: Dict[str, MutableMapping[str, Any]] = {}
         for rec in records:
+            # Always seed empty association arrays so Bronze has a stable set
+            # of columns regardless of whether a row has a fetchable id.
+            for to_type in self._to_list:
+                rec.setdefault(f"associations_{to_type}", [])
             rid = rec.get("id")
             if rid:
                 by_id[str(rid)] = rec
-                for to_type in self._to_list:
-                    rec.setdefault(f"associations_{to_type}", [])
 
         if not by_id:
             return records

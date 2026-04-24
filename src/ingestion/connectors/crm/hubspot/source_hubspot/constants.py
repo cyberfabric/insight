@@ -6,10 +6,6 @@ from typing import Mapping
 
 BASE_URL = "https://api.hubapi.com"
 
-# Default start date — HubSpot founding-era so "no start_date provided" still
-# picks up every historical record on first sync.
-DEFAULT_START_DATE = "2006-06-01T00:00:00Z"
-
 # ------- Search endpoint caps ------------------------------------------------
 
 # HubSpot Search returns HTTP 400 once `after >= SEARCH_AFTER_HARD_CAP`.
@@ -124,9 +120,12 @@ STREAM_REGISTRY: Mapping[str, Mapping] = {
     },
     # owners is NOT a CRM object — different endpoint shape (/crm/v3/owners).
     # Handled by a dedicated stream class; no search endpoint, no properties.
+    # cursor_field=None forces FinalStateCursor (full-refresh). The owners
+    # list endpoint doesn't accept an updatedAt filter, so time-slicing via
+    # ConcurrentCursor would just re-read the full owner set per slice.
     "owners": {
         "object_type": "owners",
-        "cursor_field": "updatedAt",
+        "cursor_field": None,
         "search_cursor_property": None,
         "associations": [],
         "silver_tag": "silver:class_crm_users",

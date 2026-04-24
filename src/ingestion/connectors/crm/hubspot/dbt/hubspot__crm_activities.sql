@@ -19,8 +19,12 @@ WITH calls AS (
         arrayElement(coalesce(associations_contacts, []), 1)  AS contact_id,
         arrayElement(coalesce(associations_deals, []), 1)     AS deal_id,
         arrayElement(coalesce(associations_companies, []), 1) AS account_id,
-        parseDateTime64BestEffortOrNull(
-            coalesce(toString(properties_hs_timestamp), toString(createdAt)), 3
+        -- Deterministic fallback so timestamp never NULLs: try hs_timestamp,
+        -- then createdAt, finally epoch 0 so Silver schema `not_null` holds.
+        coalesce(
+            parseDateTime64BestEffortOrNull(toString(properties_hs_timestamp), 3),
+            parseDateTime64BestEffortOrNull(toString(createdAt), 3),
+            toDateTime64(0, 3)
         )                                               AS timestamp,
         -- hs_call_duration is in milliseconds. Preserve NULLs so Silver can
         -- distinguish "unknown duration" from a real zero-duration call.
@@ -54,8 +58,12 @@ emails AS (
         arrayElement(coalesce(associations_contacts, []), 1)  AS contact_id,
         arrayElement(coalesce(associations_deals, []), 1)     AS deal_id,
         arrayElement(coalesce(associations_companies, []), 1) AS account_id,
-        parseDateTime64BestEffortOrNull(
-            coalesce(toString(properties_hs_timestamp), toString(createdAt)), 3
+        -- Deterministic fallback so timestamp never NULLs: try hs_timestamp,
+        -- then createdAt, finally epoch 0 so Silver schema `not_null` holds.
+        coalesce(
+            parseDateTime64BestEffortOrNull(toString(properties_hs_timestamp), 3),
+            parseDateTime64BestEffortOrNull(toString(createdAt), 3),
+            toDateTime64(0, 3)
         )                                               AS timestamp,
         CAST(NULL AS Nullable(Int64))                   AS duration_seconds,
         properties_hs_email_status                      AS outcome,
@@ -84,14 +92,20 @@ meetings AS (
         arrayElement(coalesce(associations_contacts, []), 1)  AS contact_id,
         arrayElement(coalesce(associations_deals, []), 1)     AS deal_id,
         arrayElement(coalesce(associations_companies, []), 1) AS account_id,
-        parseDateTime64BestEffortOrNull(
-            coalesce(toString(properties_hs_meeting_start_time), toString(properties_hs_timestamp), toString(createdAt)), 3
+        -- Deterministic fallback: meeting_start → hs_timestamp → createdAt → epoch 0.
+        coalesce(
+            parseDateTime64BestEffortOrNull(toString(properties_hs_meeting_start_time), 3),
+            parseDateTime64BestEffortOrNull(toString(properties_hs_timestamp), 3),
+            parseDateTime64BestEffortOrNull(toString(createdAt), 3),
+            toDateTime64(0, 3)
         )                                               AS timestamp,
-        -- Meeting duration: start/end are ms-since-epoch strings.
+        -- Meeting duration: start/end are ms-since-epoch strings. Preserve
+        -- NULLs so "unknown duration" is distinguishable from zero-length.
         CASE
-            WHEN properties_hs_meeting_end_time IS NOT NULL AND properties_hs_meeting_start_time IS NOT NULL
+            WHEN toInt64OrNull(properties_hs_meeting_end_time) IS NOT NULL
+             AND toInt64OrNull(properties_hs_meeting_start_time) IS NOT NULL
             THEN intDiv(
-                toInt64OrZero(properties_hs_meeting_end_time) - toInt64OrZero(properties_hs_meeting_start_time),
+                toInt64OrNull(properties_hs_meeting_end_time) - toInt64OrNull(properties_hs_meeting_start_time),
                 1000
             )
             ELSE NULL
@@ -122,8 +136,12 @@ tasks AS (
         arrayElement(coalesce(associations_contacts, []), 1)  AS contact_id,
         arrayElement(coalesce(associations_deals, []), 1)     AS deal_id,
         arrayElement(coalesce(associations_companies, []), 1) AS account_id,
-        parseDateTime64BestEffortOrNull(
-            coalesce(toString(properties_hs_timestamp), toString(createdAt)), 3
+        -- Deterministic fallback so timestamp never NULLs: try hs_timestamp,
+        -- then createdAt, finally epoch 0 so Silver schema `not_null` holds.
+        coalesce(
+            parseDateTime64BestEffortOrNull(toString(properties_hs_timestamp), 3),
+            parseDateTime64BestEffortOrNull(toString(createdAt), 3),
+            toDateTime64(0, 3)
         )                                               AS timestamp,
         CAST(NULL AS Nullable(Int64))                   AS duration_seconds,
         properties_hs_task_status                       AS outcome,

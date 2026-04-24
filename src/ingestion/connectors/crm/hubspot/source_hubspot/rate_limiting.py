@@ -47,7 +47,8 @@ TRANSIENT_EXCEPTIONS = (
     exceptions.ReadTimeout,
     exceptions.ConnectionError,
     exceptions.HTTPError,
-) + RESPONSE_CONSUMPTION_EXCEPTIONS
+    *RESPONSE_CONSUMPTION_EXCEPTIONS,
+)
 
 # Fallback 429 sleep when HubSpot omits Retry-After. Search endpoint does this
 # frequently. Slightly above the 4 rps search cap (1/4 = 0.25s) to avoid
@@ -268,7 +269,9 @@ def default_backoff_handler(max_tries: int, retry_on=None):
     return backoff.on_exception(
         backoff.expo,
         retry_on,
-        jitter=None,
+        # full_jitter randomizes the wait across [0, delay] so concurrent
+        # workers don't retry in lockstep — avoids a thundering herd on 429s.
+        jitter=backoff.full_jitter,
         on_backoff=log_retry_attempt,
         giveup=should_give_up,
         max_tries=max_tries,

@@ -73,22 +73,23 @@ def envelope(
         out[key] = value
 
     for prop_name, prop_value in properties.items():
-        flat_key = f"properties_{prop_name}"
-        if flat_key in _RESERVED_FIELD_NAMES:
-            _warn_once(collision_seen, flat_key)
-            continue
+        # HubSpot property names always land under a ``properties_`` prefix so
+        # they can't collide with the unprefixed envelope reserved names; no
+        # collision check needed here.
         if prop_name in custom_property_names:
             customs[prop_name] = prop_value
         else:
-            out[flat_key] = prop_value
+            out[f"properties_{prop_name}"] = prop_value
 
     # ClickHouse stores JSON blobs as strings; serialize once.
     out["custom_fields"] = (
         json.dumps(customs, separators=(",", ":"), default=str) if customs else "{}"
     )
 
-    hs_id = record.get("id") or ""
-    if not hs_id:
+    hs_id = record.get("id")
+    # Treat only None / empty string as missing — a numeric 0 is still a
+    # legitimate id from HubSpot's perspective.
+    if hs_id is None or hs_id == "":
         # Every HubSpot CRM object carries a numeric ``id``. An empty value
         # likely means a malformed response; derive a stable content hash so
         # Bronze ReplacingMergeTree doesn't collapse these rows into each
