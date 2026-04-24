@@ -1,0 +1,9 @@
+name: hubspot
+version: "1.0.0"
+type: cdk
+schedule: "0 6 * * *"
+workflow: sync
+dbt_select: "tag:hubspot+"
+
+connection:
+  namespace: "bronze_hubspot"

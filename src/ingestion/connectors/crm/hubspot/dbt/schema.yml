@@ -1,0 +1,121 @@
+version: 2
+
+# Bronze sources for the HubSpot CDK connector.
+# Table names match the HubSpot CRM object path segment (lowercase plural)
+# as emitted by the Airbyte ClickHouse destination. Every table has the
+# Insight envelope columns:
+#   tenant_id, source_id, unique_key, data_source, collected_at, custom_fields
+# (JSON blob of all properties where hubspotDefined=false).
+
+sources:
+  - name: bronze_hubspot
+    schema: bronze_hubspot
+    tables:
+      # Core CRM entities feeding Silver
+      - name: contacts
+      - name: companies
+      - name: deals
+      - name: owners
+      # Engagements (activities)
+      - name: engagements_calls
+      - name: engagements_emails
+      - name: engagements_meetings
+      - name: engagements_tasks
+      # Bronze-only for v1 (no Silver staging model yet)
+      - name: leads
+      - name: tickets
+
+models:
+  - name: hubspot__crm_contacts
+    description: "HubSpot contacts → staging, feeds class_crm_contacts"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: source_id
+        tests: [not_null]
+      - name: unique_key
+        # Uniqueness is enforced by ReplacingMergeTree(_version) at merge
+        # time. A plain dbt `unique` test reads unmerged parts and produces
+        # false-positive duplicates. Relying on engine-level dedup; run
+        # ``OPTIMIZE TABLE ... FINAL`` before auditing.
+        tests: [not_null]
+      - name: contact_id
+        tests: [not_null]
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values: { values: ['hubspot'] }
+
+  - name: hubspot__crm_accounts
+    description: "HubSpot companies → staging, feeds class_crm_accounts"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: source_id
+        tests: [not_null]
+      - name: unique_key
+        tests: [not_null]
+      - name: account_id
+        tests: [not_null]
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values: { values: ['hubspot'] }
+
+  - name: hubspot__crm_deals
+    description: "HubSpot deals → staging, feeds class_crm_deals"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: source_id
+        tests: [not_null]
+      - name: unique_key
+        tests: [not_null]
+      - name: deal_id
+        tests: [not_null]
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values: { values: ['hubspot'] }
+
+  - name: hubspot__crm_activities
+    description: "HubSpot engagements (calls/emails/meetings/tasks) → staging, feeds class_crm_activities"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: source_id
+        tests: [not_null]
+      - name: unique_key
+        tests: [not_null]
+      - name: activity_id
+        tests: [not_null]
+      - name: activity_type
+        tests:
+          - not_null
+          - accepted_values: { values: ['call', 'email', 'meeting', 'task'] }
+      - name: timestamp
+        tests: [not_null]
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values: { values: ['hubspot'] }
+
+  - name: hubspot__crm_users
+    description: "HubSpot owners → staging, feeds class_crm_users. Rows with null email filtered out."
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: source_id
+        tests: [not_null]
+      - name: unique_key
+        tests: [not_null]
+      - name: user_id
+        tests: [not_null]
+      - name: email
+        tests: [not_null]
+      - name: is_active
+        tests: [not_null]
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values: { values: ['hubspot'] }
