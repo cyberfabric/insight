@@ -19,6 +19,8 @@ spec:
             default: "clickhouse.data.svc.cluster.local"
           - name: clickhouse_port
             default: "8123"
+          - name: full_refresh
+            default: ""
       activeDeadlineSeconds: 1800
       script:
         image: "{{inputs.parameters.toolbox_image}}"
@@ -31,6 +33,22 @@ spec:
                 name: clickhouse-credentials
                 key: password
         source: |
+          set -euo pipefail
+
+          # full_refresh is a bare-interpolated token in the dbt line below.
+          # Constrain it to a closed allow-list so an upstream caller cannot
+          # smuggle arbitrary shell tokens via the workflow parameter.
+          FULL_REFRESH_ARG=""
+          case "{{inputs.parameters.full_refresh}}" in
+            ""|"--full-refresh")
+              FULL_REFRESH_ARG="{{inputs.parameters.full_refresh}}"
+              ;;
+            *)
+              echo "ERROR: full_refresh must be empty or '--full-refresh'; got: {{inputs.parameters.full_refresh}}" >&2
+              exit 1
+              ;;
+          esac
+
           cd /ingestion/dbt
           CH_PASS="${CLICKHOUSE_PASSWORD}"
           cat > profiles.yml <<PROFILES
@@ -49,4 +67,4 @@ spec:
                 query_limit: 0
                 connect_timeout: 30
           PROFILES
-          dbt run --profiles-dir . --select "{{inputs.parameters.dbt_select}}"
+          dbt run --profiles-dir . --select "{{inputs.parameters.dbt_select}}" ${FULL_REFRESH_ARG}

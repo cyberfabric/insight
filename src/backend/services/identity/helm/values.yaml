@@ -22,6 +22,12 @@ resources:
 # Use a pre-provisioned Secret instead of creating one from values below.
 existingSecret: ""
 
+# MariaDB -- identity-resolution owns its schema here (the `identity`
+# database). up.sh creates the database + grants; this service applies
+# its own migrations at startup (SeaORM Migrator). See ADR-0006.
+database:
+  url: "mysql://insight:insight-pass@insight-mariadb:3306/identity"
+
 clickhouse:
   url: "http://insight-clickhouse:8123"
   database: "insight"

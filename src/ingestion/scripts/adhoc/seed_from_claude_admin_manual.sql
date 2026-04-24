@@ -13,7 +13,7 @@
 -- Raw SQL equivalents of dbt models:
 --   seed_persons_from_claude_admin.sql
 --   seed_aliases_from_claude_admin.sql
---   seed_bootstrap_inputs_from_claude_admin.sql
+--   seed_identity_input_from_claude_admin.sql
 -- ============================================================
 
 -- TEMPORARY: insight_tenant_id derived via sipHash128 until tenants table exists.
@@ -58,8 +58,8 @@ LEFT ANTI JOIN person.persons ex
 -- ============================================================
 
 INSERT INTO identity.aliases (
-    id, insight_tenant_id, person_id, alias_type, alias_value,
-    alias_field_name, insight_source_type, source_account_id
+    id, insight_tenant_id, person_id, value_type, value,
+    value_field_name, insight_source_type, source_account_id
 )
 WITH latest AS (
     SELECT id AS source_id, email, name, tenant_id
@@ -80,13 +80,13 @@ source AS (
 ),
 new_aliases AS (
     SELECT person_id, insight_tenant_id, source_account_id,
-           'email' AS alias_type,
-           lower(trim(email)) AS alias_value,
-           'bronze_claude_admin.claude_admin_users.email' AS alias_field_name
+           'email' AS value_type,
+           lower(trim(email)) AS value,
+           'bronze_claude_admin.claude_admin_users.email' AS value_field_name
     FROM source WHERE email IS NOT NULL AND email != ''
     UNION ALL
     SELECT person_id, insight_tenant_id, source_account_id,
-           'platform_id',
+           'id',
            trim(source_account_id),
            'bronze_claude_admin.claude_admin_users.id'
     FROM source WHERE source_account_id IS NOT NULL AND source_account_id != ''
@@ -101,27 +101,30 @@ SELECT
     generateUUIDv7(),
     na.insight_tenant_id,
     na.person_id,
-    na.alias_type,
-    na.alias_value,
-    na.alias_field_name,
+    na.value_type,
+    na.value,
+    na.value_field_name,
     'claude_admin',
     na.source_account_id
 FROM new_aliases na
 LEFT ANTI JOIN identity.aliases existing
-    ON  na.alias_type              = existing.alias_type
-    AND na.alias_value             = existing.alias_value
+    ON  na.value_type              = existing.value_type
+    AND na.value                   = existing.value
     AND na.source_account_id       = existing.source_account_id
     AND existing.insight_source_type = 'claude_admin'
     AND existing.is_deleted        = 0;
 
 
 -- ============================================================
--- Step 3: Add bootstrap_inputs from Claude Admin (raw observations)
+-- Step 3: Add identity_inputs from Claude Admin (raw observations)
+-- `value_type='id'` replaces `platform_id`: for Claude Admin,
+-- platform_id was always equal to source_account_id; 'id' is the
+-- ADR-0002 canonical binding observation.
 -- ============================================================
 
-INSERT INTO identity.bootstrap_inputs (
+INSERT INTO identity.identity_inputs (
     id, insight_tenant_id, insight_source_type, source_account_id,
-    alias_type, alias_value, alias_field_name, operation_type
+    value_type, value, value_field_name, operation_type
 )
 WITH latest AS (
     SELECT id AS source_id, email, name, tenant_id
@@ -131,13 +134,13 @@ WITH latest AS (
 ),
 observations AS (
     SELECT source_id AS source_account_id, tenant_id,
-           'email' AS alias_type,
-           email AS alias_value,
-           'bronze_claude_admin.claude_admin_users.email' AS alias_field_name
+           'email' AS value_type,
+           email AS value,
+           'bronze_claude_admin.claude_admin_users.email' AS value_field_name
     FROM latest WHERE email IS NOT NULL AND email != ''
     UNION ALL
     SELECT source_id, tenant_id,
-           'platform_id',
+           'id',
            source_id,
            'bronze_claude_admin.claude_admin_users.id'
     FROM latest WHERE source_id IS NOT NULL AND source_id != ''
@@ -153,14 +156,14 @@ SELECT
     UUIDNumToString(sipHash128(coalesce(o.tenant_id, ''))),
     'claude_admin',
     o.source_account_id,
-    o.alias_type,
-    o.alias_value,
-    o.alias_field_name,
+    o.value_type,
+    o.value,
+    o.value_field_name,
     'UPSERT'
 FROM observations o
-LEFT ANTI JOIN identity.bootstrap_inputs existing
-    ON  o.alias_type              = existing.alias_type
-    AND o.alias_value             = existing.alias_value
+LEFT ANTI JOIN identity.identity_inputs existing
+    ON  o.value_type              = existing.value_type
+    AND o.value                   = existing.value
     AND o.source_account_id       = existing.source_account_id
     AND existing.insight_source_type = 'claude_admin';
 
@@ -173,14 +176,14 @@ LEFT ANTI JOIN identity.bootstrap_inputs existing
 -- SELECT count() FROM person.persons;
 
 -- Check aliases by source
--- SELECT insight_source_type, alias_type, count() FROM identity.aliases GROUP BY insight_source_type, alias_type ORDER BY insight_source_type, alias_type;
+-- SELECT insight_source_type, value_type, count() FROM identity.aliases GROUP BY insight_source_type, value_type ORDER BY insight_source_type, value_type;
 
--- Check bootstrap_inputs by source
--- SELECT insight_source_type, alias_type, count() FROM identity.bootstrap_inputs GROUP BY insight_source_type, alias_type ORDER BY insight_source_type, alias_type;
+-- Check identity_inputs by source
+-- SELECT insight_source_type, value_type, count() FROM identity.identity_inputs GROUP BY insight_source_type, value_type ORDER BY insight_source_type, value_type;
 
 -- Check a specific person's aliases across sources
--- SELECT p.display_name, a.alias_type, a.alias_value, a.insight_source_type, a.alias_field_name
+-- SELECT p.display_name, a.value_type, a.value, a.insight_source_type, a.value_field_name
 -- FROM person.persons p
 -- INNER JOIN identity.aliases a ON p.id = a.person_id
 -- WHERE p.display_name = 'Ivan Lukianov'
--- ORDER BY a.insight_source_type, a.alias_type;
+-- ORDER BY a.insight_source_type, a.value_type;

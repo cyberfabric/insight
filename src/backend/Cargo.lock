@@ -2632,11 +2632,14 @@ name = "identity-resolution"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "clap",
  "figment",
  "http-body-util",
  "insight-clickhouse",
+ "sea-orm",
+ "sea-orm-migration",
  "serde",
  "serde_json",
  "tokio",

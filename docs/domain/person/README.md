@@ -30,5 +30,5 @@ Out of scope:
 
 ## Cross-Domain References
 
-- **Identity Resolution domain**: `aliases.person_id` references `persons.id`. IR resolves aliases to person records owned by this domain. The shared `bootstrap_inputs` table (owned by IR) provides person-attribute observations that feed golden record assembly.
+- **Identity Resolution domain**: `aliases.person_id` references `persons.id`. IR resolves aliases to person records owned by this domain. The shared `identity_inputs` table (owned by IR) provides person-attribute observations that feed golden record assembly.
 - **Org-Chart domain**: `persons.org_unit_id` references `org_units.id`. The Org-Chart domain owns the org hierarchy; this domain stores the current org unit assignment as a golden record field. `person_assignments.person_id` references `persons.id`.

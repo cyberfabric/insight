@@ -1,7 +1,9 @@
 -- Phase 1 (Initial Seed): Claude Admin users → identity.aliases
--- Idempotent: skips aliases that already exist (by alias_type + alias_value + source).
+-- Idempotent: skips aliases that already exist (by value_type + value + source).
 -- Dedup: takes latest row per email by _airbyte_extracted_at.
--- Each user produces up to 3 aliases: email, platform_id, display_name.
+-- Each user produces up to 3 aliases: email, id, display_name.
+-- `id` carries source_account_id as the ADR-0002 canonical binding observation
+-- (replaces the former `platform_id`, which was always equal to source_account_id).
 -- Source: docs/domain/identity-resolution/specs/DECOMPOSITION.md §2.1
 --
 -- Prerequisite:
@@ -45,9 +47,9 @@ new_aliases AS (
         generateUUIDv7()                                            AS id,
         insight_tenant_id,
         person_id,
-        'email'                                                     AS alias_type,
-        lower(trim(email))                                          AS alias_value,
-        'bronze_claude_admin.claude_admin_users.email'              AS alias_field_name,
+        'email'                                                     AS value_type,
+        lower(trim(email))                                          AS value,
+        'bronze_claude_admin.claude_admin_users.email'              AS value_field_name,
         toUUID('00000000-0000-0000-0000-000000000000')              AS insight_source_id,
         'claude_admin'                                              AS insight_source_type,
         source_account_id,
@@ -65,12 +67,12 @@ new_aliases AS (
 
     UNION ALL
 
-    -- platform_id (Claude Admin user ID)
+    -- id (binding observation per ADR-0002; value = source_account_id)
     SELECT
         generateUUIDv7(),
         insight_tenant_id,
         person_id,
-        'platform_id',
+        'id',
         trim(source_account_id),
         'bronze_claude_admin.claude_admin_users.id',
         toUUID('00000000-0000-0000-0000-000000000000'),
@@ -117,8 +119,8 @@ new_aliases AS (
 SELECT na.*, toUnixTimestamp64Milli(now64()) AS _version FROM new_aliases na
 {% if is_incremental() %}
 LEFT ANTI JOIN {{ this }} existing
-    ON  na.alias_type          = existing.alias_type
-    AND na.alias_value         = existing.alias_value
+    ON  na.value_type          = existing.value_type
+    AND na.value               = existing.value
     AND na.source_account_id   = existing.source_account_id
     AND existing.insight_source_type = 'claude_admin'
     AND existing.is_deleted    = 0
