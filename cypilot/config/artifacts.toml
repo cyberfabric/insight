@@ -5,7 +5,7 @@ name = "InsightSpec"
 slug = "insightspec"
 kit = "sdlc"
 codebase = ["docs"]
-children = ["ir", "person", "orgchart"]
+children = ["ir", "person", "orgchart", "metric-cat"]
 
 [[systems.artifacts]]
 kind = "DESIGN"
@@ -501,4 +501,17 @@ name = "Org-Chart Domain Design"
 kind = "PRD"
 path = "docs/domain/org-chart/specs/PRD.md"
 name = "Org-Chart Domain PRD"
+traceability = "DOCS-ONLY"
+
+[[systems]]
+name = "Metric Catalog"
+slug = "metric-cat"
+kit = "sdlc"
+codebase = ["docs/domain/metric-catalog"]
+children = []
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/domain/metric-catalog/specs/PRD.md"
+name = "Metric Catalog PRD"
 traceability = "DOCS-ONLY"
