@@ -11,6 +11,7 @@
 {{ config(
     materialized='incremental',
     unique_key='id',
+    order_by=['id'],
     schema='identity',
     tags=['identity:seed', 'aliases']
 ) }}
@@ -109,7 +110,7 @@ aliases AS (
     WHERE name IS NOT NULL AND name != ''
 )
 
-SELECT a.* FROM aliases a
+SELECT a.*, toUnixTimestamp64Milli(now64()) AS _version FROM aliases a
 {% if is_incremental() %}
 LEFT ANTI JOIN {{ this }} existing
     ON  a.alias_type          = existing.alias_type

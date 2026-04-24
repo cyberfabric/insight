@@ -9,6 +9,9 @@ ingestion:
       user: default
       password: "{{ env_var('CLICKHOUSE_PASSWORD') }}"
       secure: false
+      engine: "ReplacingMergeTree(_version)"
+      settings:
+        allow_nullable_key: 1
     k8s:
       type: clickhouse
       host: clickhouse.data.svc.cluster.local
@@ -17,3 +20,6 @@ ingestion:
       user: default
       password: "{{ env_var('CLICKHOUSE_PASSWORD') }}"
       secure: false
+      engine: "ReplacingMergeTree(_version)"
+      settings:
+        allow_nullable_key: 1

@@ -5,6 +5,7 @@
 {{ config(
     materialized='incremental',
     unique_key='unique_id',
+    order_by=['unique_id'],
     tags=['claude-admin']
 ) }}
 
@@ -82,7 +83,8 @@ SELECT
     NULL                                            AS person_id,
     'anthropic'                                     AS provider,
     u.data_source,
-    u.collected_at
+    u.collected_at,
+    toUnixTimestamp64Milli(now64())                     AS _version
 FROM usage u
 LEFT JOIN keys k ON u.tenant_id = k.tenant_id AND u.api_key_id = k.id
 LEFT JOIN workspaces w ON u.tenant_id = w.tenant_id AND u.workspace_id = w.id

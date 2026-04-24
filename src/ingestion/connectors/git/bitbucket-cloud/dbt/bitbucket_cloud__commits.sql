@@ -1,6 +1,7 @@
 {{ config(
     materialized='incremental',
     unique_key='unique_key',
+    order_by=['unique_key'],
     schema='staging',
     tags=['bitbucket-cloud', 'silver:class_git_commits']
 ) }}
@@ -22,7 +23,7 @@ SELECT
     COALESCE(fc.files_changed, 0) AS files_changed,
     COALESCE(fc.lines_added, 0) AS lines_added,
     COALESCE(fc.lines_removed, 0) AS lines_removed,
-    if(JSONLength(COALESCE(c.parent_hashes, '[]')) > 1, 1, 0) AS is_merge_commit,
+    if(JSONLength(COALESCE(toString(c.parent_hashes), '[]')) > 1, 1, 0) AS is_merge_commit,
     'insight_bitbucket_cloud' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
     c._airbyte_extracted_at

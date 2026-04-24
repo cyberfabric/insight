@@ -30,6 +30,8 @@ fn default_clickhouse_database() -> String {
 }
 
 impl AppConfig {
+    /// # Errors
+    /// Returns an error if the config file cannot be read or parsed.
     pub fn load(config_path: Option<&str>) -> anyhow::Result<Self> {
         let mut figment = Figment::new();
         if let Some(path) = config_path {

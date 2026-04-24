@@ -24,14 +24,14 @@
 use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
+use axum::Router;
 use axum::body::Body;
 use axum::extract::Request;
 use axum::http::{HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::Router;
 use modkit::api::{OpenApiRegistry, OperationBuilder};
-use modkit::contracts::{Module, RestApiCapability};
 use modkit::context::ModuleCtx;
+use modkit::contracts::{Module, RestApiCapability};
 use serde::Deserialize;
 
 /// Route definition: prefix → upstream.
@@ -39,7 +39,7 @@ use serde::Deserialize;
 pub struct RouteConfig {
     /// URL path prefix to match (e.g. "/analytics").
     pub prefix: String,
-    /// Upstream service base URL (e.g. "http://analytics-api:8081").
+    /// Upstream service base URL (e.g. `http://analytics-api:8081`).
     pub upstream: String,
     /// If true, this route does NOT require authentication.
     /// Default: false (all routes require auth).
@@ -48,16 +48,10 @@ pub struct RouteConfig {
 }
 
 /// Module configuration.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct ProxyConfig {
     pub routes: Vec<RouteConfig>,
-}
-
-impl Default for ProxyConfig {
-    fn default() -> Self {
-        Self { routes: vec![] }
-    }
 }
 
 /// Shared state for proxy handlers.
@@ -142,7 +136,13 @@ impl RestApiCapability for ProxyModule {
             let wildcard_path = format!("{prefix}/{{*rest}}");
             let desc = format!("Proxy → {}", route.upstream);
 
-            let methods = [Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::PATCH];
+            let methods = [
+                Method::GET,
+                Method::POST,
+                Method::PUT,
+                Method::DELETE,
+                Method::PATCH,
+            ];
 
             for method in methods {
                 let st = state.clone();
@@ -152,13 +152,9 @@ impl RestApiCapability for ProxyModule {
                 };
 
                 router = if route.public {
-                    register_public(
-                        router, openapi, method, &wildcard_path, &desc, handler,
-                    )
+                    register_public(router, openapi, method, &wildcard_path, &desc, handler)
                 } else {
-                    register_authenticated(
-                        router, openapi, method, &wildcard_path, &desc, handler,
-                    )
+                    register_authenticated(router, openapi, method, &wildcard_path, &desc, handler)
                 };
             }
 
@@ -292,10 +288,9 @@ async fn forward_request(
     let mut response = builder.body(Body::from(resp_body))?;
 
     if !resp_headers.contains_key("content-type") {
-        response.headers_mut().insert(
-            "content-type",
-            HeaderValue::from_static("application/json"),
-        );
+        response
+            .headers_mut()
+            .insert("content-type", HeaderValue::from_static("application/json"));
     }
 
     Ok(response)

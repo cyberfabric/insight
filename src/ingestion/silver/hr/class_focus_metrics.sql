@@ -1,6 +1,7 @@
 {{ config(
     materialized='incremental',
     unique_key='unique_key',
+    order_by=['unique_key'],
     schema='silver',
     tags=['silver']
 ) }}
@@ -50,7 +51,8 @@ SELECT
             )) / 3600.0
         ),
         4
-    )                                                               AS dev_time_h
+    )                                                               AS dev_time_h,
+    toUnixTimestamp64Milli(now64())                                 AS _version
 FROM {{ ref('class_collab_meeting_activity') }} ma
 LEFT JOIN {{ ref('class_hr_working_hours') }} wh
     ON ma.person_key = lower(wh.email)

@@ -2,6 +2,7 @@
 
 mod m20260414_000001_init;
 mod m20260422_000001_seed_metrics;
+mod m20260423_000001_seed_metrics_honest_nulls;
 
 use sea_orm_migration::prelude::*;
 
@@ -13,6 +14,7 @@ impl MigratorTrait for Migrator {
         vec![
             Box::new(m20260414_000001_init::Migration),
             Box::new(m20260422_000001_seed_metrics::Migration),
+            Box::new(m20260423_000001_seed_metrics_honest_nulls::Migration),
         ]
     }
 }

@@ -2,7 +2,7 @@
 -- UNION ALL with activity_type discriminator.
 -- WhatId polymorphic resolution: 006=Opportunity→deal_id, 001=Account→account_id.
 -- Duration: CallDurationInSeconds (tasks), DurationInMinutes*60 (events).
-{{ config(materialized='incremental', unique_key='activity_id', schema='salesforce', tags=['silver:class_crm_activities']) }}
+{{ config(materialized='incremental', unique_key='activity_id', order_by=['activity_id'], schema='salesforce', tags=['silver:class_crm_activities']) }}
 
 WITH tasks AS (
     SELECT

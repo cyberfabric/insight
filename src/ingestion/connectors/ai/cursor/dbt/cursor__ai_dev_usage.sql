@@ -5,6 +5,7 @@
 {{ config(
     materialized='incremental',
     unique_key='unique_key',
+    order_by=['unique_key'],
     schema='staging',
     tags=['cursor', 'silver:class_ai_dev_usage']
 ) }}
@@ -65,6 +66,6 @@ realtime AS (
     {% endif %}
 )
 
-SELECT * FROM resync
+SELECT *, toUnixTimestamp64Milli(now64()) AS _version FROM resync
 UNION ALL
-SELECT * FROM realtime
+SELECT *, toUnixTimestamp64Milli(now64()) AS _version FROM realtime

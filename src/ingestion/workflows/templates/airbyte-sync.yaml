@@ -97,7 +97,7 @@ spec:
         parameters:
           - name: job_id
           - name: airbyte_url
-      activeDeadlineSeconds: 3600
+      activeDeadlineSeconds: 10800
       script:
         image: python:3.12-alpine
         command: [python3]

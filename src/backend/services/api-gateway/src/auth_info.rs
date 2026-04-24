@@ -11,8 +11,8 @@ use async_trait::async_trait;
 use axum::http::{Method, StatusCode};
 use axum::{Json, Router};
 use modkit::api::{OpenApiRegistry, OperationBuilder};
-use modkit::contracts::{Module, RestApiCapability};
 use modkit::context::ModuleCtx;
+use modkit::contracts::{Module, RestApiCapability};
 use serde::{Deserialize, Serialize};
 
 /// OIDC configuration served to the frontend.

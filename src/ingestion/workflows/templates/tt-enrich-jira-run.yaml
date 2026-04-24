@@ -1,0 +1,52 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: tt-enrich-jira-run
+  namespace: argo
+  labels:
+    app.kubernetes.io/part-of: ingestion
+spec:
+  imagePullSecrets:
+    - name: ghcr-pull
+  entrypoint: run
+  templates:
+    - name: run
+      inputs:
+        parameters:
+          - name: insight_source_id
+          - name: clickhouse_host
+            default: "clickhouse.data.svc.cluster.local"
+          - name: clickhouse_port
+            default: "8123"
+          - name: clickhouse_user
+            default: "default"
+          - name: batch_size
+            default: "10000"
+      activeDeadlineSeconds: 7200
+      container:
+        image: ghcr.io/cyberfabric/insight-jira-enrich:latest
+        imagePullPolicy: Always
+        # Emissary executor can't resolve local-image entrypoints via registry,
+        # so set command explicitly (matches Dockerfile ENTRYPOINT).
+        command: ["/usr/local/bin/jira-enrich"]
+        env:
+          - name: CLICKHOUSE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: clickhouse-credentials
+                key: password
+          - name: RUST_LOG
+            value: "info"
+        args:
+          - --insight-source-id={{inputs.parameters.insight_source_id}}
+          - --clickhouse-host={{inputs.parameters.clickhouse_host}}
+          - --clickhouse-port={{inputs.parameters.clickhouse_port}}
+          - --clickhouse-user={{inputs.parameters.clickhouse_user}}
+          - --batch-size={{inputs.parameters.batch_size}}
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2"
+            memory: "2Gi"

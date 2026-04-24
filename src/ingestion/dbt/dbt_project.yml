@@ -15,3 +15,10 @@ macro-paths:
 clean-targets:
   - target
   - dbt_packages
+
+# Ensure the Rust-owned `staging.jira__task_field_history` exists before any model
+# or enrich step runs. DDL here is authoritative — the Rust `jira-enrich` binary has
+# INSERT rights only (ADR-003). Silver `class_task_field_history` is then materialized
+# by dbt via `union_by_tag` over this staging table.
+on-run-start:
+  - "{{ create_task_field_history_staging() }}"

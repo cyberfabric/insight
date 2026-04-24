@@ -1,6 +1,6 @@
 -- Bronze → Silver step 1: Salesforce Opportunities → crm_deals
 -- Incremental via SystemModstamp. IsClosed/IsWon are native Salesforce fields.
-{{ config(materialized='incremental', unique_key='deal_id', schema='salesforce', tags=['silver:class_crm_deals']) }}
+{{ config(materialized='incremental', unique_key='deal_id', order_by=['deal_id'], schema='salesforce', tags=['silver:class_crm_deals']) }}
 
 SELECT
     Id                                              AS deal_id,

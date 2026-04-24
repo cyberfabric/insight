@@ -7,6 +7,7 @@
 {{ config(
     materialized='incremental',
     unique_key='unique_id',
+    order_by=['unique_id'],
     tags=['claude-admin']
 ) }}
 
@@ -30,7 +31,8 @@ SELECT
     'anthropic'                                     AS provider,
     'claude_code'                                   AS client,
     'insight_claude_admin'                          AS data_source,
-    collected_at
+    collected_at,
+    toUnixTimestamp64Milli(now64())                  AS _version
 FROM {{ source('bronze_claude_admin', 'claude_admin_code_usage') }}
 WHERE actor_type = 'user'
 {% if is_incremental() %}

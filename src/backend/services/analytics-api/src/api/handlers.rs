@@ -1,11 +1,13 @@
 //! Route handlers.
 
+use std::fmt::Write as _;
+use std::sync::Arc;
+
+use axum::Json;
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use sea_orm::{ActiveModelTrait, ColumnTrait, Condition, EntityTrait, NotSet, QueryFilter, Set};
-use std::sync::Arc;
 use uuid::Uuid;
 
 use super::AppState;
@@ -15,9 +17,7 @@ use crate::domain::metric::{
 };
 use crate::domain::query::{PageInfo, QueryRequest, QueryResponse};
 use crate::domain::threshold;
-use crate::domain::threshold::{
-    CreateThresholdRequest, Threshold, UpdateThresholdRequest,
-};
+use crate::domain::threshold::{CreateThresholdRequest, Threshold, UpdateThresholdRequest};
 use crate::infra::db::entities;
 
 // ── Error type (RFC 9457 Problem Details) ───────────────────
@@ -89,7 +89,9 @@ pub async fn get_person(
     Path(email): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     if !state.identity.is_configured() {
-        return Err(ApiError::internal("identity resolution service not configured"));
+        return Err(ApiError::internal(
+            "identity resolution service not configured",
+        ));
     }
 
     let person = state.identity.get_person(&email).await.map_err(|e| {
@@ -98,9 +100,11 @@ pub async fn get_person(
     })?;
 
     match person {
-        Some(p) => Ok(Json(serde_json::to_value(p).map_err(|_| {
-            ApiError::internal("failed to serialize person")
-        })?)),
+        Some(p) => {
+            Ok(Json(serde_json::to_value(p).map_err(|_| {
+                ApiError::internal("failed to serialize person")
+            })?))
+        }
         None => Err(ApiError::not_found(
             "urn:insight:error:person_not_found",
             format!("person with email '{email}' not found"),
@@ -143,9 +147,8 @@ pub async fn create_metric(
     Json(req): Json<CreateMetricRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     // Validate query_ref on write — reject malformed definitions early
-    parse_query_ref(&req.query_ref).map_err(|e| {
-        ApiError::bad_request("urn:insight:error:invalid_query_ref", e)
-    })?;
+    parse_query_ref(&req.query_ref)
+        .map_err(|e| ApiError::bad_request("urn:insight:error:invalid_query_ref", e))?;
 
     let id = Uuid::now_v7();
 
@@ -195,15 +198,14 @@ pub async fn update_metric(
     }
     if let Some(query_ref) = req.query_ref {
         // Validate query_ref on write
-        parse_query_ref(&query_ref).map_err(|e| {
-            ApiError::bad_request("urn:insight:error:invalid_query_ref", e)
-        })?;
+        parse_query_ref(&query_ref)
+            .map_err(|e| ApiError::bad_request("urn:insight:error:invalid_query_ref", e))?;
         model.query_ref = Set(query_ref);
     }
     if let Some(enabled) = req.is_enabled {
         model.is_enabled = Set(enabled);
     }
-    model.updated_at = Set(chrono::Utc::now().into());
+    model.updated_at = Set(chrono::Utc::now());
 
     let updated = model.update(&state.db).await.map_err(|e| {
         tracing::error!(error = %e, "failed to update metric");
@@ -222,7 +224,7 @@ pub async fn delete_metric(
 
     let mut model: entities::metrics::ActiveModel = existing.into();
     model.is_enabled = Set(false);
-    model.updated_at = Set(chrono::Utc::now().into());
+    model.updated_at = Set(chrono::Utc::now());
     model.update(&state.db).await.map_err(|e| {
         tracing::error!(error = %e, "failed to soft-delete metric");
         ApiError::internal("failed to soft-delete metric")
@@ -233,6 +235,7 @@ pub async fn delete_metric(
 
 // ── Query ───────────────────────────────────────────────────
 
+#[allow(clippy::too_many_lines)]
 pub async fn query_metric(
     State(state): State<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -243,7 +246,7 @@ pub async fn query_metric(
     let metric = find_enabled_metric(&state, ctx.insight_tenant_id, id).await?;
 
     // 2. Validate $top
-    let top = req.top.min(200).max(1);
+    let top = req.top.clamp(1, 200);
 
     // 4. Build ClickHouse query from structured metric fields.
     //
@@ -288,7 +291,7 @@ pub async fn query_metric(
     // If the FROM clause is a subquery, we inject the metric_date range INSIDE the
     // subquery (before its GROUP BY). Keeps per-person aggregation bounded to the
     // selected period. Outer person_id/org_unit_id filters still apply post-aggregate.
-    let (mut effective_from, date_pushed) = if let Some(ref filter) = req.filter {
+    let (effective_from, date_pushed) = if let Some(ref filter) = req.filter {
         let date_from = extract_odata_value(filter, "metric_date", "ge");
         let date_to = extract_odata_value(filter, "metric_date", "lt");
         if (date_from.is_some() || date_to.is_some()) && from_clause.trim_start().starts_with('(') {
@@ -300,8 +303,11 @@ pub async fn query_metric(
                 clauses.push(format!("metric_date < '{}'", v.replace('\'', "''")));
             }
             let where_inner = format!(" WHERE {}", clauses.join(" AND "));
-            (inject_where_into_first_subquery(&from_clause, &where_inner)
-                .unwrap_or_else(|| from_clause.clone()), true)
+            (
+                inject_where_into_first_subquery(&from_clause, &where_inner)
+                    .unwrap_or_else(|| from_clause.clone()),
+                true,
+            )
         } else {
             (from_clause.clone(), false)
         }
@@ -345,7 +351,7 @@ pub async fn query_metric(
 
     // Apply GROUP BY from parsed query_ref
     if let Some(ref gb) = group_by {
-        sql.push_str(&format!(" GROUP BY {gb}"));
+        let _ = write!(sql, " GROUP BY {gb}");
     }
 
     // Apply $orderby — validate against identifier pattern to prevent injection
@@ -356,11 +362,11 @@ pub async fn query_metric(
                 format!("invalid $orderby: {orderby}"),
             ));
         }
-        sql.push_str(&format!(" ORDER BY {orderby}"));
+        let _ = write!(sql, " ORDER BY {orderby}");
     }
 
     // Apply pagination (fetch top+1 to detect has_next)
-    sql.push_str(&format!(" LIMIT {}", top + 1));
+    let _ = write!(sql, " LIMIT {}", top + 1);
 
     tracing::debug!(sql = %sql, metric_id = %id, "executing metric query");
 
@@ -388,7 +394,7 @@ pub async fn query_metric(
         raw_bytes
             .split(|&b| b == b'\n')
             .filter(|line| !line.is_empty())
-            .map(|line| serde_json::from_slice(line))
+            .map(serde_json::from_slice)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| {
                 tracing::error!(error = %e, "failed to parse ClickHouse JSON response");
@@ -399,7 +405,11 @@ pub async fn query_metric(
     // 6. Apply pagination — we fetched top+1 to detect has_next
     let has_next = all_rows.len() > top as usize;
     let items: Vec<serde_json::Value> = if has_next {
-        all_rows.into_iter().take(top as usize).map(round_floats).collect()
+        all_rows
+            .into_iter()
+            .take(top as usize)
+            .map(round_floats)
+            .collect()
     } else {
         all_rows.into_iter().map(round_floats).collect()
     };
@@ -436,7 +446,7 @@ fn round_floats(value: serde_json::Value) -> serde_json::Value {
     }
 }
 
-/// Simplified OData value extractor.
+/// Simplified `OData` value extractor.
 /// Extracts value from patterns like `field_name ge 'value'`.
 fn extract_odata_value(filter: &str, field: &str, op: &str) -> Option<String> {
     let pattern = format!("{field} {op} '");
@@ -449,7 +459,7 @@ fn extract_odata_value(filter: &str, field: &str, op: &str) -> Option<String> {
     None
 }
 
-/// Parse `query_ref` into (select_expr, from_clause, group_by).
+/// Parse `query_ref` into (`select_expr`, `from_clause`, `group_by`).
 ///
 /// Expects SQL in the form:
 ///   `SELECT <columns> FROM <from_clause>`
@@ -464,8 +474,8 @@ fn extract_odata_value(filter: &str, field: &str, op: &str) -> Option<String> {
 /// injected, so admins cannot bypass tenant isolation.
 /// Inject `where_clause` (` WHERE ...`) into every *leafmost* `(SELECT ...)` subquery
 /// inside `from_clause`. A leaf subquery is one whose own FROM is a table (not another
-/// subquery). This guarantees the metric_date filter lands at the level where the raw
-/// table with a metric_date column is actually read. JOIN branches and nested
+/// subquery). This guarantees the `metric_date` filter lands at the level where the raw
+/// table with a `metric_date` column is actually read. JOIN branches and nested
 /// subqueries are recursed into; the filter is applied only at the innermost SELECT.
 fn inject_where_into_first_subquery(from_clause: &str, where_clause: &str) -> Option<String> {
     let (new_from, injected) = walk_inject(from_clause, where_clause);
@@ -483,8 +493,14 @@ fn walk_inject(from_clause: &str, where_clause: &str) -> (String, bool) {
             let mut depth: i32 = 1;
             let mut j = i + 1;
             while j < bytes.len() && depth > 0 {
-                match bytes[j] { b'(' => depth += 1, b')' => depth -= 1, _ => {} }
-                if depth == 0 { break; }
+                match bytes[j] {
+                    b'(' => depth += 1,
+                    b')' => depth -= 1,
+                    _ => {}
+                }
+                if depth == 0 {
+                    break;
+                }
                 j += 1;
             }
             if j >= bytes.len() {
@@ -495,10 +511,15 @@ fn walk_inject(from_clause: &str, where_clause: &str) -> (String, bool) {
             let after_paren_start = j + 1;
 
             // Skip non-SELECT groups (e.g., lower(x)).
-            let is_select = inner.trim_start().to_ascii_uppercase().starts_with("SELECT ");
+            let is_select = inner
+                .trim_start()
+                .to_ascii_uppercase()
+                .starts_with("SELECT ");
             if is_select {
                 let (processed, did_inject) = process_select(inner, where_clause);
-                if did_inject { any = true; }
+                if did_inject {
+                    any = true;
+                }
                 result.push('(');
                 result.push_str(&processed);
                 result.push(')');
@@ -519,9 +540,8 @@ fn walk_inject(from_clause: &str, where_clause: &str) -> (String, bool) {
 fn process_select(inner: &str, where_clause: &str) -> (String, bool) {
     let inner_upper = inner.to_ascii_uppercase();
     let from_pos = find_at_depth_zero(&inner_upper, " FROM ");
-    let from_pos = match from_pos {
-        Some(p) => p,
-        None => return (inner.to_string(), false),
+    let Some(from_pos) = from_pos else {
+        return (inner.to_string(), false);
     };
     let after_from = &inner[from_pos + 6..];
 
@@ -551,7 +571,7 @@ fn process_select(inner: &str, where_clause: &str) -> (String, bool) {
                 format!("{}{} AND {}", &inner[..ip], extra, &inner[ip..])
             }
             (None, Some(pos)) => format!("{}{}{}", &inner[..pos], where_clause, &inner[pos..]),
-            (None, None) => format!("{}{}", inner, where_clause),
+            (None, None) => format!("{inner}{where_clause}"),
         };
         (injected, true)
     }
@@ -582,8 +602,8 @@ fn parse_query_ref(query_ref: &str) -> Result<(String, String, Option<String>), 
     let upper = query_ref.to_ascii_uppercase();
 
     // Find SELECT ... FROM boundary at depth 0 (skip FROM inside subqueries).
-    let from_pos = find_at_depth_zero(&upper, " FROM ")
-        .ok_or("query_ref must contain SELECT ... FROM ...")?;
+    let from_pos =
+        find_at_depth_zero(&upper, " FROM ").ok_or("query_ref must contain SELECT ... FROM ...")?;
 
     let select_expr = query_ref[..from_pos]
         .trim()
@@ -643,7 +663,13 @@ fn validate_from_clause(from_clause: &str) -> Result<(), String> {
         // Split on JOIN keywords to get each table reference
         // e.g. "t1 c JOIN t2 e ON c.x = e.y LEFT JOIN t3 f ON ..."
         // We validate table names and aliases, and allow ON conditions.
-        let join_re = ["JOIN", "LEFT JOIN", "RIGHT JOIN", "INNER JOIN", "CROSS JOIN"];
+        let join_re = [
+            "JOIN",
+            "LEFT JOIN",
+            "RIGHT JOIN",
+            "INNER JOIN",
+            "CROSS JOIN",
+        ];
 
         // Extract table references by splitting on JOIN boundaries
         let segments = split_on_joins(&upper, from_clause);
@@ -670,7 +696,13 @@ fn split_on_joins<'a>(upper: &str, original: &'a str) -> Vec<&'a str> {
     let mut positions = vec![0usize];
 
     // Find all JOIN keyword positions (must match word boundary)
-    for keyword in [" LEFT JOIN ", " RIGHT JOIN ", " INNER JOIN ", " CROSS JOIN ", " JOIN "] {
+    for keyword in [
+        " LEFT JOIN ",
+        " RIGHT JOIN ",
+        " INNER JOIN ",
+        " CROSS JOIN ",
+        " JOIN ",
+    ] {
         let mut start = 0;
         while let Some(pos) = upper[start..].find(keyword) {
             positions.push(start + pos);
@@ -720,7 +752,9 @@ fn validate_table_segment(segment: &str) -> Result<(), String> {
     }
 
     if tokens.len() > 2 {
-        return Err(format!("unexpected tokens in table reference: {table_part}"));
+        return Err(format!(
+            "unexpected tokens in table reference: {table_part}"
+        ));
     }
 
     Ok(())
@@ -728,7 +762,13 @@ fn validate_table_segment(segment: &str) -> Result<(), String> {
 
 /// Strip a leading JOIN keyword from a segment, returning the original-case remainder.
 fn strip_join_prefix<'a>(upper: &str, original: &'a str) -> &'a str {
-    for prefix in ["LEFT JOIN ", "RIGHT JOIN ", "INNER JOIN ", "CROSS JOIN ", "JOIN "] {
+    for prefix in [
+        "LEFT JOIN ",
+        "RIGHT JOIN ",
+        "INNER JOIN ",
+        "CROSS JOIN ",
+        "JOIN ",
+    ] {
         if upper.starts_with(prefix) {
             return original[prefix.len()..].trim();
         }
@@ -743,9 +783,7 @@ trait StripPrefixInsensitive {
 
 impl StripPrefixInsensitive for str {
     fn strip_prefix_insensitive(&self, prefix: &str) -> Option<&str> {
-        if self.len() >= prefix.len()
-            && self[..prefix.len()].eq_ignore_ascii_case(prefix)
-        {
+        if self.len() >= prefix.len() && self[..prefix.len()].eq_ignore_ascii_case(prefix) {
             Some(&self[prefix.len()..])
         } else {
             None
@@ -753,14 +791,14 @@ impl StripPrefixInsensitive for str {
     }
 }
 
-/// Validate an OData `$orderby` expression.
+/// Validate an `OData` `$orderby` expression.
 /// Accepts: `column_name [asc|desc] [, column_name [asc|desc]]*`
 fn is_valid_orderby(orderby: &str) -> bool {
     if orderby.is_empty() {
         return false;
     }
     orderby.split(',').all(|part| {
-        let tokens: Vec<&str> = part.trim().split_whitespace().collect();
+        let tokens: Vec<&str> = part.split_whitespace().collect();
         match tokens.len() {
             1 => is_valid_ident(tokens[0]),
             2 => {
@@ -838,9 +876,8 @@ pub async fn create_threshold(
 ) -> Result<impl IntoResponse, ApiError> {
     find_enabled_metric(&state, ctx.insight_tenant_id, metric_id).await?;
 
-    threshold::validate_threshold(&req.operator, &req.level).map_err(|e| {
-        ApiError::bad_request("urn:insight:error:invalid_threshold", e)
-    })?;
+    threshold::validate_threshold(&req.operator, &req.level)
+        .map_err(|e| ApiError::bad_request("urn:insight:error:invalid_threshold", e))?;
 
     let id = Uuid::now_v7();
 
@@ -918,7 +955,7 @@ pub async fn update_threshold(
         }
         model.level = Set(level);
     }
-    model.updated_at = Set(chrono::Utc::now().into());
+    model.updated_at = Set(chrono::Utc::now());
 
     let updated = model.update(&state.db).await.map_err(|e| {
         tracing::error!(error = %e, "failed to update threshold");
@@ -1057,65 +1094,69 @@ mod tests {
     // ── parse_query_ref ─────────────────────────────────────
 
     #[test]
-    fn parse_simple_select() {
+    fn parse_simple_select() -> Result<(), Box<dyn std::error::Error>> {
         let (sel, from, gb) =
-            parse_query_ref("SELECT person_id, avg_hours FROM gold.pr_cycle_time").unwrap();
+            parse_query_ref("SELECT person_id, avg_hours FROM gold.pr_cycle_time")?;
         assert_eq!(sel, "person_id, avg_hours");
         assert_eq!(from, "gold.pr_cycle_time");
         assert!(gb.is_none());
+        Ok(())
     }
 
     #[test]
-    fn parse_with_group_by() {
+    fn parse_with_group_by() -> Result<(), Box<dyn std::error::Error>> {
         let (sel, from, gb) = parse_query_ref(
             "SELECT person_id, avg(cycle_time_h) AS avg_hours FROM gold.pr_cycle_time GROUP BY person_id",
-        )
-        .unwrap();
+        )?;
         assert_eq!(sel, "person_id, avg(cycle_time_h) AS avg_hours");
         assert_eq!(from, "gold.pr_cycle_time");
         assert_eq!(gb.as_deref(), Some("person_id"));
+        Ok(())
     }
 
     #[test]
-    fn parse_case_insensitive() {
-        let (sel, from, _) =
-            parse_query_ref("select col1, col2 from silver.commits").unwrap();
+    fn parse_case_insensitive() -> Result<(), Box<dyn std::error::Error>> {
+        let (sel, from, _) = parse_query_ref("select col1, col2 from silver.commits")?;
         assert_eq!(sel, "col1, col2");
         assert_eq!(from, "silver.commits");
+        Ok(())
     }
 
     #[test]
-    fn parse_with_aggregates_and_group_by() {
+    fn parse_with_aggregates_and_group_by() -> Result<(), Box<dyn std::error::Error>> {
         let (sel, from, gb) = parse_query_ref(
             "SELECT org_unit_id, COUNT(DISTINCT person_id) AS headcount, AVG(focus_time_pct) AS focus FROM gold.team_summary GROUP BY org_unit_id",
-        )
-        .unwrap();
+        )?;
         assert_eq!(
             sel,
             "org_unit_id, COUNT(DISTINCT person_id) AS headcount, AVG(focus_time_pct) AS focus"
         );
         assert_eq!(from, "gold.team_summary");
         assert_eq!(gb.as_deref(), Some("org_unit_id"));
+        Ok(())
     }
 
     #[test]
-    fn parse_with_join() {
+    fn parse_with_join() -> Result<(), Box<dyn std::error::Error>> {
         let (sel, from, gb) = parse_query_ref(
             "SELECT e.displayName, SUM(c.emails_sent) AS total FROM silver.class_comms_events c JOIN bronze_bamboohr.employees e ON lower(c.user_email) = lower(e.workEmail) GROUP BY e.displayName",
-        )
-        .unwrap();
+        )?;
         assert_eq!(sel, "e.displayName, SUM(c.emails_sent) AS total");
-        assert_eq!(from, "silver.class_comms_events c JOIN bronze_bamboohr.employees e ON lower(c.user_email) = lower(e.workEmail)");
+        assert_eq!(
+            from,
+            "silver.class_comms_events c JOIN bronze_bamboohr.employees e ON lower(c.user_email) = lower(e.workEmail)"
+        );
         assert_eq!(gb.as_deref(), Some("e.displayName"));
+        Ok(())
     }
 
     #[test]
-    fn parse_with_left_join() {
+    fn parse_with_left_join() -> Result<(), Box<dyn std::error::Error>> {
         let (_, from, _) = parse_query_ref(
             "SELECT c.user_email FROM silver.events c LEFT JOIN bronze_bamboohr.employees e ON c.email = e.workEmail",
-        )
-        .unwrap();
+        )?;
         assert!(from.contains("LEFT JOIN"));
+        Ok(())
     }
 
     #[test]
@@ -1134,10 +1175,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_rejects_subquery_in_table() {
-        assert!(
-            parse_query_ref("SELECT col FROM (SELECT * FROM secret.data) AS t").is_err()
-        );
+    fn parse_allows_subquery_in_from() {
+        // Subqueries in FROM are allowed — needed for two-level bullet aggregation
+        let result = parse_query_ref("SELECT col FROM (SELECT * FROM secret.data) AS t");
+        assert!(result.is_ok());
     }
 
     #[test]

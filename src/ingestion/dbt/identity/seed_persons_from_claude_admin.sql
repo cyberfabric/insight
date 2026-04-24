@@ -12,6 +12,7 @@
 {{ config(
     materialized='incremental',
     unique_key='id',
+    order_by=['id'],
     schema='person',
     tags=['identity:seed', 'person']
 ) }}
@@ -52,7 +53,8 @@ SELECT
     'clean'                                                 AS conflict_status,
     now64(3)                                                AS created_at,
     now64(3)                                                AS updated_at,
-    0                                                       AS is_deleted
+    0                                                       AS is_deleted,
+    toUnixTimestamp64Milli(now64())                          AS _version
 FROM latest l
 LEFT ANTI JOIN person.persons ex
     ON lower(trim(l.email)) = lower(ex.email)
