@@ -18,13 +18,14 @@
   - [4.2 Out of Scope](#42-out-of-scope)
 - [5. Functional Requirements](#5-functional-requirements)
   - [5.1 Packaging and Distribution](#51-packaging-and-distribution)
-  - [5.2 Installation and Dependency Resolution](#52-installation-and-dependency-resolution)
+  - [5.2 Snapshot-Based Versioning and Installation](#52-snapshot-based-versioning-and-installation)
   - [5.3 Connector Capability](#53-connector-capability)
   - [5.4 Silver Capability](#54-silver-capability)
   - [5.5 Widget Capability](#55-widget-capability)
   - [5.6 Tenant Isolation and Versioning](#56-tenant-isolation-and-versioning)
   - [5.7 Configuration and Secrets](#57-configuration-and-secrets)
   - [5.8 Observability and Lifecycle](#58-observability-and-lifecycle)
+  - [5.9 Security and Trust Model](#59-security-and-trust-model)
 - [6. Non-Functional Requirements](#6-non-functional-requirements)
   - [6.1 NFR Inclusions](#61-nfr-inclusions)
   - [6.2 NFR Exclusions](#62-nfr-exclusions)
@@ -34,8 +35,9 @@
 - [8. Use Cases](#8-use-cases)
   - [UC-001 Tenant Admin Installs a Plugin from the Catalog](#uc-001-tenant-admin-installs-a-plugin-from-the-catalog)
   - [UC-002 Plugin Author Publishes a New Version](#uc-002-plugin-author-publishes-a-new-version)
-  - [UC-003 Admin Upgrades a Plugin and Resolves Dependencies](#uc-003-admin-upgrades-a-plugin-and-resolves-dependencies)
+  - [UC-003 Tenant Admin Promotes a New Snapshot](#uc-003-tenant-admin-promotes-a-new-snapshot)
   - [UC-004 Silver Plugin Consumes Bronze from a Connector Plugin](#uc-004-silver-plugin-consumes-bronze-from-a-connector-plugin)
+  - [UC-005 Tenant Admin Authors a Custom Snapshot](#uc-005-tenant-admin-authors-a-custom-snapshot)
 - [9. Acceptance Criteria](#9-acceptance-criteria)
 - [10. Dependencies](#10-dependencies)
 - [11. Assumptions](#11-assumptions)
@@ -46,8 +48,15 @@
 
 ## Changelog
 
-- **v1.2** (current): Four changes addressing PR #230 review comments.
-  1. **Rollback is replaced by shadow-deploy.** The plugin system never mutates a live install in place. An upgrade installs the new version alongside the old one, both run for a tenant-configurable trial period against the same inputs, the admin inspects a comparison view, and either PROMOTES the shadow stack (old one is uninstalled; bronze retained) or REJECTS it (shadow stack is uninstalled; tenant returns to the unchanged live stack). Expired trials default to REJECT. There is no distinct rollback operation. New FR `cpt-plugin-fr-shadow-deploy-upgrade`; UC-003 rewritten to this model (addresses `cyberantonz` review comment).
+- **v1.3** (current): Major restructure addressing the second wave of PR #230 review comments (cyberantonz, ~24 comments). Six themes:
+  1. **Snapshot model replaces per-plugin runtime resolution.** A *snapshot* is an immutable, named, tenant-curated set of `{plugin_id: version, ...}`. Conflicts are resolved at snapshot authoring time, never at install. Two snapshots can coexist arbitrarily long as fully independent data planes (own DB scopes, own per-install credentials, own pods). Upgrade = create a new snapshot alongside the old, run both in parallel, the tenant admin promotes when satisfied. Closes the version-hell concern raised on the resolver text (no runtime conflict states reach the tenant) and the multi-version routing concern (each snapshot is its own data plane). Vendor-published snapshots are an *optional convenience*, not a governance gate — tenant authoring is the default.
+  2. **Per-install ClickHouse user with scoped GRANTs.** Every plugin install gets a generated CH user; GRANTs are scoped to its own bronze / silver scope (and, for silver, to the discovered upstream bronze scopes). Default user is forbidden for plugins. Closes data-plane access concerns (plugin doing `SELECT * FROM another_tenant_db`, plugin writing with a forged `tenant_id`, plugin enumerating `system.tables` to find anything not its own).
+  3. **Plugin-shipped migrations via cross-snapshot SELECT GRANTs and SQL views.** Plugin authors ship migration scripts; the runtime grants the new snapshot's CH user `SELECT` on the prior snapshot's bronze for the duration of the trial period. Migrations may be expressed as `CREATE VIEW`, `MATERIALIZED VIEW`, or full `INSERT FROM SELECT`. Storage cost during a trial is `~1× + delta`, not `2×`. Closes the storage explosion concern.
+  4. **Trial period is a soft reminder, not a hard timer.** Adaptation is open-ended. The trial timer surfaces a reminder ("you switched N days ago, retire the old snapshot?") but does not auto-revert. Removes the contradiction CodeRabbit flagged between UC-003 and the FR.
+  5. **New Section 5.9 — Security.** Three FRs: image-signing-required (cosign + digest pinning), trust-tiers (vendor-signed / instance-signed / unsigned, with capability matrix), baseline-isolation (per-install CH user, NetworkPolicy egress allowlist, ResourceQuota, default ServiceAccount with no K8s API access — applies to ALL plugins regardless of trust tier). Closes supply-chain concerns (image swap, naming collision, mutable tags, abandoned-plugin tampering) and runtime-sandbox concerns (scanners/miners/VPN inside cluster, widget JWT theft).
+  6. **Priority rebalance.** Previously every release-relevant FR was `p1`; cyberantonz noted "when everything is p1, nothing is." Re-ranked across all sections — `p1` is now reserved for items without which v1 cannot ship safely (~12 FRs); functional features and UX polish are `p2`; future improvements are `p3`.
+- **v1.2**: Four changes addressing PR #230 review comments.
+  1. **Rollback is replaced by shadow-deploy.** The plugin system never mutates a live install in place. An upgrade installs the new version alongside the old one, both run for a tenant-configurable trial period against the same inputs, the admin inspects a comparison view, and either PROMOTES the shadow stack (old one is uninstalled; bronze retained) or REJECTS it (shadow stack is uninstalled; tenant returns to the unchanged live stack). Expired trials default to REJECT. There is no distinct rollback operation. New FR `cpt-plugin-fr-snapshot-shadow-deploy`; UC-003 rewritten to this model (addresses `cyberantonz` review comment).
   2. **Each plugin ships its own isolated transform project.** Plugins MUST NOT use dbt `ref()` across plugin boundaries; downstream plugins discover upstream outputs only through the schema-based input contract, and the runtime injects `sources.yml` at run time. No global dbt DAG spans plugins. New FR `cpt-plugin-fr-isolated-transform-project`. Aligns transformation mechanics with the independent-authorship goal already stated for packaging and versioning.
   3. **Dependency-graph UI elevated to p1/MUST.** Given non-auto-healing behavior (no legacy mode, no silent rollback) and the shadow-deploy workflow, tenant and instance admins cannot operate the plugin system without a graph view of live + shadow stacks and per-node health. `cpt-plugin-fr-dep-graph-ui` now MUST and p1, matching the acceptance criterion that already assumed it.
   4. **UC-004 preconditions fixed.** v1.1 refactored silver to schema-based input contracts but missed the UC-004 preconditions paragraph; it still said "silver declares a dependency on the connector plugin." Rewritten to match `cpt-plugin-fr-silver-input-contract`.
@@ -101,13 +110,14 @@ A plugin system decouples the vendor's release cadence from the customer's need 
 
 **Capabilities**:
 
-- Publish a plugin to any OCI-compatible registry (Docker Hub, ghcr.io, a customer-owned registry)
-- Discover available plugins through a central Insight catalog and through ad-hoc URL install
-- Install, upgrade, and uninstall plugins per-tenant with explicit admin-driven dependency resolution
-- Carry multiple versions of the same plugin within a single tenant when needed for migration
+- Publish a plugin to any OCI-compatible registry (Docker Hub, ghcr.io, a customer-owned registry), pinned by digest and signed (cosign / Sigstore)
 - Compose a plugin from one or more capabilities — `connector`, `silver`, `widget` — in a single artifact
+- Author and operate **tenant-owned snapshots** — declarations of which plugins at which versions run for the tenant — and upgrade by promoting a shadow snapshot validated alongside the live one on real data
+- Carry the full plugin set, plugin-shipped migrations, and per-install ClickHouse credentials independently per snapshot, so two snapshots run as fully isolated data planes
+- Discover available plugins through any OCI registry; central catalog is optional convenience
 - Coexist with the existing Airbyte-based ingestion substrate during the transition period
-- Report per-plugin health, sync status, and dependency-graph state to instance admins
+- Modulate plugin capabilities by trust tier (vendor-signed / instance-signed / unsigned) above a fixed isolation baseline that applies to every plugin
+- Report per-plugin health, per-snapshot status, and dependency-graph state to instance and tenant admins
 
 ### 1.4 Glossary
 
@@ -125,7 +135,10 @@ A plugin system decouples the vendor's release cadence from the customer's need 
 | Silver capability | A plugin capability that discovers bronze tables matching a declared input contract (schema + discovery rules — tags, name patterns, or install-time parameters) and produces silver tables with a unified cross-source schema. Silver plugins are decoupled from specific connectors by design: they match on the input contract, not on a connector's plugin identity. The recommended default is a `UNION ALL` across discovered sources followed by incremental consolidation, but plugins MAY skip that step and emit derived tables directly. Execution engine is author's choice — dbt is the reference. |
 | Widget capability | A plugin capability that provides a runtime-loaded frontend component (microfrontend) for the dashboard surface. A widget declares the data shape it expects; the host application fetches data by reference and passes it to the widget through a stable interface **without validating its shape or content**. Widgets that want input validation ship their own data tests (dbt or equivalent) and the plugin runtime executes them before rendering. |
 | Bronze data | The data a connector plugin writes to its per-install scope in the connector's declared output schema (not the vendor's raw payload — the connector is responsible for normalizing into its declared shape). Treated as sacred — never deleted or transformed in place by the plugin system; retained so silver and gold layers can always be rebuilt by re-running downstream plugins. |
-| Dependency resolution | The admin-API-driven process of determining, for a requested install or upgrade, what other plugin versions must coexist. Resolution is explicit and admin-approved; there is no auto-upgrade, auto-resolve, or "legacy compatibility" mode. |
+| Snapshot | A tenant-owned, immutable, named declaration of a plugin set: `{plugin_id: version, ...}`. The unit of versioning at tenant scope. A tenant runs one *live* snapshot; *shadow* snapshots may coexist for adaptation. Each snapshot has its own DB scopes (`bronze_<snapshot>_<install>`, `silver_<snapshot>_<install>`), per-install credentials, and pods — two snapshots are fully independent data planes. Snapshots may inherit from a vendor- or instance-published reference snapshot; the unit of authorship is the tenant. |
+| Trial period | The window during which a freshly-installed shadow snapshot runs alongside the live snapshot. Open-ended; the trial timer surfaces a reminder for the tenant admin to either promote or retire the shadow, but does not auto-promote or auto-revert. |
+| Trust tier | The provenance level of a plugin: *vendor-signed* (Insight's signature), *instance-signed* (a signature from a key the instance admin registered as trusted), or *unsigned*. Trust tier modulates capabilities ON TOP of baseline isolation, which applies regardless of tier. |
+| Dependency resolution | The process of determining, for a requested install or upgrade, what other plugin versions must coexist. In v1.3 this happens at *snapshot authoring time* (the snapshot's curator picks a self-consistent set), not at runtime install. The runtime simply applies the snapshot as-given. |
 | Plugin capability contract | The set of declared inputs (tables, config, secrets) and outputs (tables, widget interface) a capability exposes. Consumers (other plugins, the host app) rely on this contract; authors may add non-breaking fields within a major version. |
 
 ## 2. Actors
@@ -152,9 +165,9 @@ A plugin system decouples the vendor's release cadence from the customer's need 
 
 **ID**: `cpt-plugin-actor-tenant-admin`
 
-**Role**: Installs, configures, and removes plugins for their tenant. Picks from the instance-approved catalog or supplies a URL for an ad-hoc plugin. Configures each plugin install (credentials, workspace IDs, sync schedules) through the product UI.
+**Role**: Curates and operates the tenant's plugin surface. Authors *snapshots* — tenant-owned declarations of which plugins at which versions run for the tenant — and decides when to upgrade by initiating a shadow-deploy of a new snapshot. Configures each plugin install (credentials, workspace IDs, sync schedules) through the product UI. Optionally inherits from a vendor-published or instance-published reference snapshot to bootstrap.
 
-**Needs**: A marketplace UI listing installable plugins with description and compatibility; a configuration form generated from the plugin's declared config schema; per-plugin status (last sync, error count); an uninstall path that does not orphan bronze data without warning.
+**Needs**: A marketplace UI listing installable plugins with description, trust tier, and compatibility; a snapshot editor (or "save as snapshot" from a current state); a side-by-side comparison view between the live and shadow snapshot during adaptation; a configuration form generated from each plugin's declared config schema; per-plugin status (last sync, error count); an uninstall path that does not orphan bronze data without warning.
 
 ### 2.2 System Actors
 
@@ -195,12 +208,13 @@ A plugin system decouples the vendor's release cadence from the customer's need 
 
 ### 4.1 In Scope
 
-- Plugin artifact model — identity, versioning, manifest, OCI packaging, reverse-DNS naming, SemVer semantics
+- Plugin artifact model — identity, versioning, manifest, OCI packaging by digest, reverse-DNS naming, SemVer semantics, image signing (cosign / Sigstore)
 - The three capabilities — `connector`, `silver`, `widget` — and the contract each exposes to consumers
 - Single-artifact multi-capability plugins (one plugin may mix `connector` + `silver` + `widget` contributions)
-- Distribution — central Insight catalog + ad-hoc URL install; any OCI-compatible registry
-- Installation lifecycle — install, upgrade, uninstall, disable, enable at tenant scope
-- Dependency resolution — explicit, admin-driven, per-tenant, supporting multiple versions of the same plugin simultaneously
+- Distribution — any OCI-compatible registry; central Insight catalog as optional convenience
+- Snapshot model — tenant-curated, immutable, named declarations of `{plugin_id: version, ...}`; live + shadow snapshots running in parallel as independent data planes; promote / reject lifecycle; plugin-shipped migrations between snapshots via cross-snapshot SELECT GRANT
+- Trust tier model — vendor-signed / instance-signed / unsigned, with capability matrix
+- Baseline isolation — per-install ClickHouse user with scoped GRANTs, NetworkPolicy egress allowlist, ResourceQuota, no K8s API access — applies to every plugin regardless of trust tier
 - Per-install configuration via a plugin-declared config schema; UI renders form from it
 - Per-install secret storage via an external secret manager plus a manual-entry fallback
 - Observability — per-plugin health, sync status, dependency-graph state surfaced to instance admin
@@ -225,7 +239,7 @@ A plugin system decouples the vendor's release cadence from the customer's need 
 
 #### Plugins Ship as OCI Artifacts
 
-- [ ] `p1` - **ID**: `cpt-plugin-fr-oci-artifact`
+- [ ] `p2` - **ID**: `cpt-plugin-fr-oci-artifact`
 
 Every plugin **MUST** be published as an OCI artifact (container image plus manifest metadata) to an OCI-compatible registry. The plugin system **MUST** accept plugins from Docker Hub, ghcr.io, and any registry that speaks the OCI distribution spec, including customer-owned private registries.
 
@@ -235,7 +249,7 @@ Every plugin **MUST** be published as an OCI artifact (container image plus mani
 
 #### Reverse-DNS Naming and SemVer Versioning
 
-- [ ] `p1` - **ID**: `cpt-plugin-fr-naming-versioning`
+- [ ] `p2` - **ID**: `cpt-plugin-fr-naming-versioning`
 
 Every plugin **MUST** be identified by a reverse-DNS identifier (`com.acme.git-gitlab`) that is globally unique across authors. Every published build **MUST** carry a SemVer 2.0 version. The plugin system **MUST** reject installs whose ID collides with an already-installed plugin from a different author.
 
@@ -245,7 +259,7 @@ Every plugin **MUST** be identified by a reverse-DNS identifier (`com.acme.git-g
 
 #### Central Catalog and URL Install Coexist
 
-- [ ] `p1` - **ID**: `cpt-plugin-fr-catalog-and-url`
+- [ ] `p2` - **ID**: `cpt-plugin-fr-catalog-and-url`
 
 The plugin system **MUST** support two install sources: a curated central catalog (metadata served by the Insight-operated catalog service) and ad-hoc URL install (tenant admin supplies an OCI reference for a plugin that is not in the catalog). Instance admins **SHOULD** be able to restrict their tenants to catalog-only plugins via an instance-level policy.
 
@@ -255,7 +269,7 @@ The plugin system **MUST** support two install sources: a curated central catalo
 
 #### Declarative Manifest Per Plugin
 
-- [ ] `p1` - **ID**: `cpt-plugin-fr-manifest`
+- [ ] `p2` - **ID**: `cpt-plugin-fr-manifest`
 
 Every plugin **MUST** ship a machine-readable manifest that declares at minimum: reverse-DNS identity, version, human-readable name, description, author/license, supported platform version range, the capabilities it contributes (`connector`, `silver`, `widget`, or any composition), for each capability its data contract (inputs, outputs), config schema, required secrets, and the plugin's dependencies on other plugins. The manifest schema itself is defined in DESIGN.
 
@@ -263,95 +277,106 @@ Every plugin **MUST** ship a machine-readable manifest that declares at minimum:
 
 **Actors**: `cpt-plugin-actor-plugin-author`, `cpt-plugin-actor-admin-api`
 
-### 5.2 Installation and Dependency Resolution
+### 5.2 Snapshot-Based Versioning and Installation
 
 #### Tenant-Scoped Installs
 
 - [ ] `p1` - **ID**: `cpt-plugin-fr-tenant-scoped-installs`
 
-Every plugin install **MUST** be scoped to a single tenant. Two tenants in the same instance installing the same plugin **MUST** get independent installs — independent config, independent bronze scope, independent schedule. Instance admins **MAY** restrict the set of plugins available to tenants through allowlists or through catalog filtering.
+Every plugin install **MUST** be scoped to a single tenant. Two tenants in the same instance running the same plugin **MUST** get independent installs — independent config, independent bronze scope, independent credentials, independent schedule. Instance admins **MAY** restrict the set of plugins available to tenants through allowlists or trust-tier policies (see Section 5.9), but **MUST NOT** install or activate plugins on a tenant's behalf.
 
-**Rationale**: Tenants are the atomic billing / isolation boundary; shared installs would break tenant isolation and complicate uninstall.
+**Rationale**: Tenants are the atomic billing and isolation boundary; shared installs break tenant isolation and complicate uninstall.
 
 **Actors**: `cpt-plugin-actor-tenant-admin`, `cpt-plugin-actor-instance-admin`
 
-#### Multiple Versions of the Same Plugin Coexist
+#### Snapshot Is the Unit of Tenant Plugin State
 
-- [ ] `p1` - **ID**: `cpt-plugin-fr-multi-version`
+- [ ] `p1` - **ID**: `cpt-plugin-fr-snapshot-as-state`
 
-The plugin system **MUST** support installing two or more versions of the same plugin within a single tenant concurrently. This is the mechanism for migration across breaking changes — the old version keeps producing bronze while the new version is validated, then the old version is uninstalled.
+A tenant's plugin state **MUST** be expressed as a SNAPSHOT — an immutable, named, tenant-owned declaration of `{plugin_id: version, ...}` plus the tenant config and secrets that pin each install. A tenant **MUST** have at most one *live* snapshot at any time (the one that feeds user-facing surfaces) and **MAY** have any number of *shadow* snapshots running alongside (for adaptation, comparison, or experimentation).
 
-**Rationale**: Without multi-version support, every breaking upgrade is a cutover that risks data loss or downtime. With it, migrations become incremental.
+Each snapshot **MUST** carry its own DB scope namespace. Per-install scopes are keyed `bronze_<snapshot>_<install>` / `silver_<snapshot>_<install>` so two snapshots are fully independent data planes — no shared tables, no merging, no cross-snapshot interference at runtime. Per-install ClickHouse credentials follow the same scoping (see `cpt-plugin-fr-per-install-db-user`).
+
+A snapshot **MUST** be immutable once published: editing a snapshot means publishing a new snapshot. Tenants iterate by authoring successive snapshots, never by mutating an existing one.
+
+**Rationale**: Lifting the unit of versioning from plugin to snapshot eliminates the runtime resolver's worst case — dependency-hell at install time. The snapshot author resolves all conflicts once, at authoring time; the runtime simply applies the snapshot. The same primitive supports "two versions running in parallel" (the previous *multi-version* requirement), upgrade, rollback, and per-tenant customization, with one mental model instead of four.
 
 **Actors**: `cpt-plugin-actor-tenant-admin`, `cpt-plugin-actor-plugin-runtime`
 
-#### Explicit, Admin-Driven Dependency Resolution
+#### Snapshot Authorship Is Tenant-First, Vendor-Optional
 
-- [ ] `p1` - **ID**: `cpt-plugin-fr-explicit-resolution`
+- [ ] `p2` - **ID**: `cpt-plugin-fr-snapshot-authoring`
 
-When a tenant admin requests an install or upgrade, the admin API **MUST** compute the full set of plugins (and versions) that would need to be added or upgraded to satisfy the request and **MUST** present that set to the tenant admin for approval before any change is applied. The tenant admin **MUST** be able to reject the resolution. The plugin system **MUST NOT** automatically upgrade, downgrade, or uninstall plugins on anyone's behalf.
+The default and primary author of a tenant's snapshots is the *tenant admin*. The plugin system **MUST** support tenant authoring as a first-class flow — authoring a snapshot is the same kind of operation as authoring any other tenant configuration, not a privileged system-admin operation.
 
-**Rationale**: Plugins may touch tenant-critical data. Surprise upgrades are unacceptable. Explicit resolution gives the tenant admin a decision point and an audit trail; the default behavior of doing nothing unless approved is the safe default.
+The plugin system **MAY** ALSO support reference snapshots published by other parties (Insight as the vendor; instance admins for an organization-wide internal stack; third parties for community templates). Reference snapshots **MUST NOT** be privileged — they are starting points the tenant admin can clone, modify, or ignore. They are *convenience*, not *governance*. A tenant **MAY** run for the entire lifetime of the instance without ever using a vendor or instance reference snapshot.
 
-**Actors**: `cpt-plugin-actor-tenant-admin`, `cpt-plugin-actor-admin-api`
+**Rationale**: Forcing snapshots through a curator gate would replicate the problem the plugin system was built to solve — vendor coupling. Tenant-first authoring keeps the tenant in control of its own composition. Vendor reference snapshots remain valuable as starting points and as documented "this combination is known to work" recommendations, but never as the only path.
+
+**Actors**: `cpt-plugin-actor-tenant-admin`
 
 #### Tenant Upgrade Sovereignty
 
 - [ ] `p1` - **ID**: `cpt-plugin-fr-tenant-sovereignty`
 
-The plugin system **MUST NOT** allow an instance admin to install, upgrade, reconfigure, or enable a plugin on behalf of a tenant. Instance admins retain oversight powers — catalog allowlists, force-uninstall, and blocking specific plugins — but every change that adds to or advances a tenant's plugin set **MUST** be initiated and approved by a tenant admin. Emergency force-uninstall by an instance admin **MUST** be recorded in the audit log with the reason and **MUST** notify the tenant admin.
+The plugin system **MUST NOT** allow an instance admin to install, upgrade, reconfigure, enable, or otherwise advance a tenant's snapshot on the tenant's behalf. Instance admins retain oversight powers — trust-tier policy (Section 5.9), catalog allowlists / blocklists, force-retirement of a known-malicious or vulnerable plugin from across all tenants — but every additive change to a tenant's snapshot **MUST** be initiated and approved by a tenant admin. Emergency force-retire by an instance admin **MUST** be recorded in the audit log with the reason and **MUST** notify the tenant admin.
 
-**Rationale**: If a plugin upgrade corrupts tenant data, the party who approved the upgrade must be the one responsible for the data — otherwise accountability breaks down. The instance admin's job is to protect the instance (block dangerous plugins, contain outages); it is not to push changes into tenants who have not asked for them.
+**Rationale**: If a plugin upgrade corrupts tenant data, the party who approved the upgrade must be the one responsible for the data. The instance admin's job is to protect the instance (block dangerous plugins, contain outages), not to push changes into tenants who have not asked for them.
 
 **Actors**: `cpt-plugin-actor-tenant-admin`, `cpt-plugin-actor-instance-admin`
 
-#### Shadow-Deploy Upgrade with Trial Period
+#### Shadow-Deploy Snapshot Upgrade with Soft Trial Reminder
 
-- [ ] `p1` - **ID**: `cpt-plugin-fr-shadow-deploy-upgrade`
+- [ ] `p1` - **ID**: `cpt-plugin-fr-snapshot-shadow-deploy`
 
-When a tenant admin approves an upgrade plan, the plugin runtime **MUST** install the new plugin version (and any newly-required dependency versions) as a SHADOW STACK alongside the existing install rather than replacing it in place. Both stacks **MUST** run concurrently for a tenant-configurable TRIAL PERIOD (default: 7 days; minimum: one natural sync period or 24 hours, whichever is shorter). During the trial the plugin system **MUST**:
+When a tenant admin upgrades the live snapshot to a new snapshot, the plugin runtime **MUST** install the new snapshot as a *shadow* alongside the live snapshot rather than replacing it in place. Both snapshots **MUST** run concurrently:
 
-- Keep the existing live stack as the authoritative data producer for user-facing surfaces (widgets, analytics-api) — no user observes the upgrade until it is promoted.
-- Run the shadow stack against the same inputs, writing to its own per-install scopes (`bronze_<shadow_install_id>`, `silver_<shadow_install_id>`, and so on for any capability the plugin introduces).
-- Expose a comparison view in the admin UI with row counts, schema diffs, and — where shapes match between old and new — per-column distributional statistics, so the tenant admin can inspect the change before committing to it.
+- The *live* snapshot continues to feed user-facing surfaces (widgets, analytics-api). No user observes the upgrade until the tenant admin explicitly *promotes* the shadow.
+- The *shadow* snapshot processes the same connector inputs into its own per-snapshot scopes, on its own schedules, with its own per-install credentials. Each install in the shadow is an independent install — different `install_id` from any same-plugin install in the live snapshot.
 
-At the end of the trial the tenant admin either PROMOTES the shadow stack (the runtime uninstalls the old version plus any transitive dependencies that become unused, the shadow stack becomes live, and the old bronze is retained per `cpt-plugin-fr-bronze-preserved`) or REJECTS it (the runtime uninstalls the shadow stack; shadow bronze is discarded because no downstream consumer relied on it; the tenant returns to the unchanged live stack). If the trial period expires without explicit action, the runtime **MUST** default to REJECT — plugins **MUST NOT** silently promote themselves.
+The plugin runtime **MUST** expose a side-by-side comparison view in the admin UI: row counts, schema diffs, and — where the live and shadow tables match in shape — per-column distributional statistics, so the tenant admin can inspect the change on real data before promoting.
 
-The plugin system **MUST NOT** expose a distinct "rollback" operation. Reverting a live plugin to a prior version is accomplished by initiating a new shadow-deploy whose target is the older version (still published in the catalog under `cpt-plugin-fr-semver-contracts`): the same trial, comparison, and promote/reject loop applies.
+The adaptation period is **open-ended**. The system **MUST NOT** auto-promote OR auto-reject when a configurable *trial reminder timer* (default 7 days; tenant-configurable) expires; instead the UI **MUST** raise a non-blocking reminder ("you switched N days ago, ready to retire the old snapshot?"). Subsequent reminders escalate by frequency rather than by action — no plugin or snapshot ever silently promotes itself or silently disappears. The tenant admin always retains the choice and the timing.
 
-**Rationale**: In-place upgrades that roll back on failure require the system to snapshot live state and restore it transactionally across connector + silver + widget — expensive to implement, hard to test, and the rollback path is almost never exercised until an incident. Shadow-deploy inverts the risk: the new version proves itself on real data before anything flips for users. It naturally composes with multi-version coexistence (`cpt-plugin-fr-multi-version`) and the bronze-is-sacred guarantee (`cpt-plugin-fr-bronze-preserved`) — during the trial both stacks write to their own scopes without interfering. It also replaces the vague "rollback" concept with a symmetric, well-understood primitive.
+When the tenant admin PROMOTES the shadow snapshot, the runtime **MUST** atomically switch the *live* pointer to the new snapshot. The previous (now non-live) snapshot **MAY** continue running for as long as the tenant admin wants, or **MAY** be retired explicitly. Bronze data is retained until explicit retirement (per `cpt-plugin-fr-bronze-preserved`).
+
+When the tenant admin REJECTS the shadow snapshot, the runtime uninstalls it; shadow bronze is discarded since no downstream consumer relied on it.
+
+The plugin system **MUST NOT** expose a distinct "rollback" operation. Reverting a previously-promoted snapshot to its predecessor is accomplished by initiating a new shadow-deploy whose target is the older snapshot (still in the tenant's snapshot history): the same shadow / compare / promote loop applies. There is no asymmetry between forward and backward transitions.
+
+**Rationale**: Open-ended adaptation matches how real teams validate changes — over weeks of business cycles, not on a 7-day timer. The reminder UX prevents tenants from forgetting an old snapshot indefinitely (which would consume storage and operational attention) without removing tenant control. The "no auto-action" rule is the price of `tenant-sovereignty`. Lifting the operation to *snapshot* level (rather than per-plugin shadow) eliminates the question "if two plugin versions coexist, which feeds analytics-api?" — only the *live* snapshot does, by definition.
 
 **Actors**: `cpt-plugin-actor-tenant-admin`, `cpt-plugin-actor-plugin-runtime`
 
-#### No Legacy Compatibility Mode
+#### Cross-Snapshot SELECT GRANT for Migration
 
-- [ ] `p1` - **ID**: `cpt-plugin-fr-no-legacy-mode`
+- [ ] `p2` - **ID**: `cpt-plugin-fr-cross-snapshot-grant`
 
-When a dependency cannot be satisfied (for example, plugin A at v2 requires plugin B at ≥3.0.0 but plugin B is pinned at 2.x for another plugin), the plugin system **MUST** refuse the install and surface the conflict to the admin. The plugin system **MUST NOT** attempt to run plugin A in a fallback mode against an older plugin B.
+When a shadow snapshot is created, the plugin runtime **MUST** grant each install in the shadow snapshot `SELECT` privilege on the corresponding install's bronze scope in the live snapshot, **for the duration of the shadow snapshot's existence and only that duration**. The grant **MUST** be revoked when the shadow snapshot is promoted (after the live pointer moves), rejected, or retired. The grant **MUST NOT** include `INSERT`, `UPDATE`, `DELETE`, or `ALTER` on the live snapshot's scope — read-only.
 
-**Rationale**: Implicit "best-effort" compatibility layers compound indefinitely and create dependency-hell states that are impossible to reason about. Forcing an explicit choice keeps the dependency graph honest.
+**Rationale**: Plugin-author-shipped migrations need to read historical bronze from the previous snapshot to populate the new snapshot's scope. Granting time-bounded read access is the minimum viable mechanism: the plugin can author migrations as views or as full-copy SQL (per `cpt-plugin-fr-migration-via-views`), but it is the *runtime* that scopes the grant in time, so an abandoned shadow does not leave a permanent cross-scope hole. Revocation on promotion / rejection / retirement keeps the security surface minimal.
 
-**Actors**: `cpt-plugin-actor-admin-api`, `cpt-plugin-actor-tenant-admin`
+**Actors**: `cpt-plugin-actor-plugin-runtime`
 
-#### Inventory in Instance Database
+#### Snapshot Inventory in Instance Database
 
 - [ ] `p1` - **ID**: `cpt-plugin-fr-inventory-storage`
 
-The plugin system **MUST** persist the per-tenant installed-plugin inventory (which plugin IDs, at which versions, enabled or disabled, when installed, by whom) in the instance database. The inventory **MUST** survive restarts, `helm upgrade` of the Insight umbrella, and reconciliation by the plugin runtime.
+The plugin system **MUST** persist the per-tenant snapshot inventory (snapshot ids, plugin set, status — `live`, `shadow`, `retired` — created-at, who-by, the audit log of authoring and promotion events) in the instance database. The inventory **MUST** survive restarts, `helm upgrade` of the Insight umbrella, and reconciliation by the plugin runtime.
 
 **Rationale**: The inventory is the source of truth about a tenant's extension surface. Storing it in the instance DB (not in Kubernetes CRDs) keeps it co-located with tenant data, enables transactional admin-API operations, and simplifies backup.
 
 **Actors**: `cpt-plugin-actor-admin-api`, `cpt-plugin-actor-plugin-runtime`
 
-#### Unused-Dependency Reporting
+#### Retired Snapshot Reporting
 
-- [ ] `p2` - **ID**: `cpt-plugin-fr-unused-reporting`
+- [ ] `p2` - **ID**: `cpt-plugin-fr-retired-snapshot-reporting`
 
-The plugin system **SHOULD** identify plugin installs that were pulled in as transitive dependencies and are no longer referenced by any user-installed plugin, and **SHOULD** present them to the admin for optional uninstall. The system **MUST NOT** uninstall them automatically.
+The plugin system **SHOULD** identify snapshots that have been non-live for longer than a configurable threshold (default 30 days) and **SHOULD** surface them to the tenant admin as candidates for retirement. The system **MUST NOT** retire them automatically.
 
-**Rationale**: Prevents dependency cruft from accumulating silently as plugins come and go. Keeps the surface area the admin has to reason about aligned with current reality.
+**Rationale**: Open-ended adaptation is intentional, but old snapshots that nobody is comparing against waste storage and cognitive load. Surfacing them keeps the tenant in control of cleanup.
 
-**Actors**: `cpt-plugin-actor-instance-admin`
+**Actors**: `cpt-plugin-actor-tenant-admin`
 
 ### 5.3 Connector Capability
 
@@ -387,7 +412,7 @@ The plugin system **MUST** preserve a connector install's bronze data across plu
 
 #### Connector Execution Protocol Is Author's Choice
 
-- [ ] `p1` - **ID**: `cpt-plugin-fr-connector-protocol-flexibility`
+- [ ] `p2` - **ID**: `cpt-plugin-fr-connector-protocol-flexibility`
 
 A connector-capability plugin **MAY** be executed using any protocol its author chooses, as long as the running container produces bronze tables in its declared per-install scope. The plugin system **MUST** support the Airbyte source protocol (so that existing Airbyte connectors can be wrapped as Insight plugins with minimal rework) and **MUST** be extensible to other protocols — for example, Singer tap, or a future native Insight connector protocol — as they are adopted.
 
@@ -397,7 +422,7 @@ A connector-capability plugin **MAY** be executed using any protocol its author 
 
 #### Airbyte Connectors Reuse the Airbyte Destination for Bronze
 
-- [ ] `p1` - **ID**: `cpt-plugin-fr-airbyte-destination-reuse`
+- [ ] `p2` - **ID**: `cpt-plugin-fr-airbyte-destination-reuse`
 
 For connector plugins that use the Airbyte source protocol, the plugin system **MUST** support using the existing Airbyte ClickHouse destination to write bronze, rather than reimplementing the destination inside the plugin runtime.
 
@@ -429,7 +454,7 @@ A silver-capability plugin **MUST** declare its output silver tables (schema + c
 
 #### Transformation Engine Is Author's Choice
 
-- [ ] `p1` - **ID**: `cpt-plugin-fr-silver-engine-flexibility`
+- [ ] `p2` - **ID**: `cpt-plugin-fr-silver-engine-flexibility`
 
 Silver capability **MUST NOT** constrain the plugin to a specific transformation engine. dbt is the reference engine for the first-party silver plugins; authors **MAY** use Rust, Python, or any other language, provided the container reads the declared bronze inputs and writes the declared silver outputs.
 
@@ -439,11 +464,28 @@ Silver capability **MUST NOT** constrain the plugin to a specific transformation
 
 #### Silver Consumer Validates Its Inputs
 
-- [ ] `p1` - **ID**: `cpt-plugin-fr-silver-consumer-validates`
+- [ ] `p2` - **ID**: `cpt-plugin-fr-silver-consumer-validates`
 
 A silver plugin **MAY** ship data-quality tests against its declared bronze inputs (dbt tests for dbt-based plugins; equivalent mechanism in the manifest for other engines). When such tests are present, the plugin runtime **MUST** execute them before running the transform and **MUST** report failures to the admin.
 
 **Rationale**: Connectors evolve independently of silver plugins. The only robust defense against "connector sent us garbage today" is for the silver consumer to declare its expectations and check them before transforming. Shifts responsibility for compatibility to the party best positioned to enforce it.
+
+**Actors**: `cpt-plugin-actor-plugin-author`, `cpt-plugin-actor-plugin-runtime`
+
+#### Plugin Ships Its Own Migrations (Optionally as Cross-Snapshot SQL Views)
+
+- [ ] `p2` - **ID**: `cpt-plugin-fr-migration-via-views`
+
+A plugin **MAY** ship migration scripts that the runtime runs when a new snapshot containing this plugin is created and a previous snapshot containing the same plugin (under the same `plugin_id`, possibly at a different version) exists. Migrations **MAY** be expressed in any of the following forms; the choice is the plugin author's:
+
+- **`CREATE VIEW`** in the new install's scope, reading from the previous install's bronze through the cross-snapshot SELECT grant (`cpt-plugin-fr-cross-snapshot-grant`). Zero storage cost; reads pay view-evaluation overhead. Suitable when historical data shape changes are minor renames / casts / computed columns.
+- **`CREATE MATERIALIZED VIEW`**, populated as a background job. Storage proportional to historical data; reads cheap after materialization. Suitable when downstream silver / widgets need indexed or projection-optimized access.
+- **`INSERT FROM SELECT`** (full physical migration). Run once during shadow installation; the cross-snapshot grant is no longer needed after completion. Storage proportional to historical data; full control of target shape.
+- **No migration**: the plugin starts with an empty bronze scope; historical data does not carry over. Acceptable for connectors that re-fetch from the upstream source on schedule.
+
+The plugin runtime **MUST** make the prior snapshot's bronze scope name available to the migration script as a parameter and **MUST** revoke the cross-snapshot grant when the shadow snapshot is promoted, rejected, or retired.
+
+**Rationale**: Plugin authors are the only party who knows whether a schema change is a rename, a derivation, a destructive transformation, or a from-scratch reconnect. Letting the author pick the migration form (and pay the storage cost they choose) keeps the system honest about the cost-vs-richness tradeoff. View-based migrations in particular keep the storage cost of a long-running shadow snapshot at `~1× + delta` instead of `2×` — the concern raised in PR review (storage explosion with multi-snapshot coexistence) becomes a function of plugin-author choice, not a system-imposed worst case.
 
 **Actors**: `cpt-plugin-actor-plugin-author`, `cpt-plugin-actor-plugin-runtime`
 
@@ -463,7 +505,7 @@ The plugin runtime **MUST** render source definitions (e.g., `sources.yml` for d
 
 #### Widget Ships as a Microfrontend Module
 
-- [ ] `p1` - **ID**: `cpt-plugin-fr-widget-microfrontend`
+- [ ] `p2` - **ID**: `cpt-plugin-fr-widget-microfrontend`
 
 A plugin that declares the `widget` capability **MUST** ship a microfrontend module that the Insight host frontend loads at runtime. The host frontend **MUST** fetch the module on demand — widgets are not bundled into the product build — and **MUST** render the module within the container-provided frame.
 
@@ -473,7 +515,7 @@ A plugin that declares the `widget` capability **MUST** ship a microfrontend mod
 
 #### Widget Receives Data from the Host App
 
-- [ ] `p1` - **ID**: `cpt-plugin-fr-widget-data-contract`
+- [ ] `p2` - **ID**: `cpt-plugin-fr-widget-data-contract`
 
 A widget capability **MUST** declare its expected input data as a table schema (column names, types, nullability) and optional config (JSON schema). The host application **MUST** resolve the data based on the dashboard's widget-instance configuration, fetch it, and pass it to the widget through a stable interface. The widget **MUST NOT** query the data store directly. The host **MUST** act as a pass-through — it **MUST NOT** validate that the delivered data matches the widget's declared schema.
 
@@ -483,7 +525,7 @@ A widget capability **MUST** declare its expected input data as a table schema (
 
 #### Widget Input Validation Is Opt-In via Plugin-Shipped Tests
 
-- [ ] `p1` - **ID**: `cpt-plugin-fr-widget-input-tests`
+- [ ] `p2` - **ID**: `cpt-plugin-fr-widget-input-tests`
 
 A widget-capability plugin **MAY** ship data-quality tests (dbt or an equivalent mechanism declared in the manifest) against its declared input. When such tests are present, the plugin runtime **MUST** execute them before rendering the widget and **MUST** surface failures to the admin. When such tests are not present, the host renders whatever it fetched without checking it.
 
@@ -515,7 +557,7 @@ All plugin-produced data **MUST** carry the `tenant_id` of the tenant it was pro
 
 #### Plugin Versions Follow SemVer
 
-- [ ] `p1` - **ID**: `cpt-plugin-fr-semver-contracts`
+- [ ] `p2` - **ID**: `cpt-plugin-fr-semver-contracts`
 
 Plugin authors **MUST** follow SemVer 2.0 — breaking changes to any declared capability contract (config schema, output tables, widget data contract) require a major-version bump. Additive changes **MAY** be minor versions; bug fixes **MAY** be patch versions. The plugin system's dependency resolver **MAY** use SemVer ranges in declared dependencies.
 
@@ -539,17 +581,39 @@ Every plugin capability **MUST** declare its configuration requirements as a sch
 
 - [ ] `p1` - **ID**: `cpt-plugin-fr-secret-provisioning`
 
-Plugin capabilities that require secrets (API tokens, credentials) **MUST** declare them in the manifest. The plugin system **MUST** support providing them through (a) an external secret manager (configured at the instance level) and (b) a manual entry path in the admin UI for cases where no external store is wired up. Secrets **MUST NOT** be logged, leaked into manifests, or stored in the catalog.
+Plugin capabilities that require secrets (API tokens, credentials) **MUST** declare them in the manifest. The plugin system **MUST** support providing them through:
 
-**Rationale**: Enterprise customers expect secrets to flow through Vault, AWS Secrets Manager, or an equivalent. Small deployments need a fallback that does not require that infrastructure. Both paths are common, and the split keeps each simple.
+- **(a) An external secret manager**, configured at the instance level. Supported integrations include — at minimum — HashiCorp Vault, External Secrets Operator (which itself bridges to AWS Secrets Manager, GCP Secret Manager, Azure Key Vault, etc.), and SealedSecrets for GitOps-managed deployments. The exact set of supported integrations is a DESIGN decision; the contract is that the plugin manifest names a secret by reference, not by value.
+- **(b) A manual entry path in the admin UI** for instances without an external store wired up. The submitted value is encrypted at rest in the instance's K8s `Secret` (or equivalent), scoped to the install.
+
+Secrets **MUST NOT** be logged, leaked into manifests, included in audit-log payloads beyond a redacted reference, or stored in the catalog. Secrets **MUST** be rotated atomically — a rotation produces a new version of the secret which the runtime injects into newly-spawned plugin pods on next sync.
+
+**Rationale**: Enterprise customers expect Vault / cloud-vendor managers; small deployments need a fallback that does not require that infrastructure. Both paths are common, and the split keeps each simple. Naming concrete integration points (rather than the vague "external secret manager") closes a clarification raised in review.
 
 **Actors**: `cpt-plugin-actor-tenant-admin`, `cpt-plugin-actor-instance-admin`
+
+#### Per-Install ClickHouse User with Scoped GRANTs
+
+- [ ] `p1` - **ID**: `cpt-plugin-fr-per-install-db-user`
+
+Every plugin install **MUST** be assigned a dedicated ClickHouse user, generated by the plugin runtime at install time with a cryptographically random password stored as a K8s `Secret` (or equivalent) and injected into the plugin pod via env. The plugin **MUST NOT** use the ClickHouse `default` user, an admin user, or the credentials of any other install. The plugin runtime **MUST** provision GRANTs scoped to the install's capability:
+
+- **Connector install**: `INSERT, SELECT, ALTER ON bronze_<snapshot>_<install>.*` (its own bronze scope only).
+- **Silver install**: `SELECT ON bronze_<snapshot>_<discovered_input>.*` for each upstream bronze scope resolved through the schema-based input contract (`cpt-plugin-fr-silver-input-contract`); plus `INSERT, SELECT, ALTER ON silver_<snapshot>_<install>.*` for its own silver scope.
+- **Widget install**: no direct ClickHouse access. Widgets read data through the host application (`cpt-plugin-fr-widget-data-contract`).
+- **Cross-snapshot SELECT** for the duration of a shadow snapshot's life, per `cpt-plugin-fr-cross-snapshot-grant`.
+
+The runtime **MUST** revoke all GRANTs and drop the user when the install is uninstalled (snapshot retired). The runtime **MUST** support per-user query and resource quotas (max queries per minute, max memory per query) configured at install time and capped by instance-admin-level defaults.
+
+**Rationale**: A plugin holding broad ClickHouse credentials can read any tenant's data, write into any tenant's scope, enumerate `system.tables`, and pivot via stored procedures regardless of any application-level policy. Per-install scoped GRANTs make those misuses *cryptographically impossible* at the database layer rather than enforced by application code. Closes the data-plane access concerns raised in review.
+
+**Actors**: `cpt-plugin-actor-plugin-runtime`, `cpt-plugin-actor-tenant-admin`
 
 ### 5.8 Observability and Lifecycle
 
 #### Plugins Report Operational Status
 
-- [ ] `p1` - **ID**: `cpt-plugin-fr-status-reporting`
+- [ ] `p2` - **ID**: `cpt-plugin-fr-status-reporting`
 
 Every installed plugin **MUST** report its operational status to the plugin runtime: connector sync progress and errors, silver transform run outcomes and data-test failures, widget render failures. The plugin system **MUST** make this status available to the instance admin through the admin UI.
 
@@ -559,11 +623,11 @@ Every installed plugin **MUST** report its operational status to the plugin runt
 
 #### Dependency Graph Surfaced to Admins
 
-- [ ] `p1` - **ID**: `cpt-plugin-fr-dep-graph-ui`
+- [ ] `p2` - **ID**: `cpt-plugin-fr-dep-graph-ui`
 
 Instance admins **MUST** be able to view the dependency graph across all installed plugins with per-node health state (healthy, degraded, broken, upgrade available, in-shadow-trial). Tenant admins **MUST** see the subset of the graph relevant to their tenant, including any shadow-deploy trials currently in flight.
 
-**Rationale**: Plugin ecosystems grow dense fast, and the system is explicitly non-auto-healing (no legacy mode, no silent rollback) — failures and conflicts must be investigated by a human. A visual graph is the only scalable way to find "what is broken and what does it block". For tenant admins during a shadow-deploy trial, seeing the live stack and the shadow stack side-by-side is part of the core upgrade workflow (`cpt-plugin-fr-shadow-deploy-upgrade`), not a nice-to-have.
+**Rationale**: Plugin ecosystems grow dense fast, and the system is explicitly non-auto-healing (no legacy mode, no silent rollback) — failures and conflicts must be investigated by a human. A visual graph is the only scalable way to find "what is broken and what does it block". For tenant admins during a shadow-deploy trial, seeing the live stack and the shadow stack side-by-side is part of the core upgrade workflow (`cpt-plugin-fr-snapshot-shadow-deploy`), not a nice-to-have.
 
 **Actors**: `cpt-plugin-actor-instance-admin`, `cpt-plugin-actor-tenant-admin`
 
@@ -577,13 +641,82 @@ Non-admin users **MUST NOT** be exposed to plugin-internal error detail. When pl
 
 **Actors**: `cpt-plugin-actor-plugin-runtime`
 
+### 5.9 Security and Trust Model
+
+#### Image Signing and Digest Pinning Are Required
+
+- [ ] `p1` - **ID**: `cpt-plugin-fr-image-signing-required`
+
+Every plugin install **MUST** reference its container image by **digest** (`@sha256:<...>`) — never by mutable tag. The plugin runtime **MUST** reject any install whose manifest pins the image by tag alone. Every install **MUST** also be accompanied by a cryptographic signature over that digest (Sigstore / cosign or equivalent). The plugin runtime **MUST** verify the signature against the configured trust roots (see `cpt-plugin-fr-trust-tiers`) at install time and at every pod admission, and **MUST** reject pods whose image digest does not match a verified signature.
+
+The plugin runtime **MUST** support a revocation list (Sigstore transparency log + locally-cached revocation entries from configured signing authorities). A revoked digest **MUST** prevent further pod admissions for that image, even if the install was created before revocation.
+
+**Rationale**: Mutable tags are how supply-chain attacks slip in: republish under the same tag, the next pull picks up the malicious image. Pinning by digest forecloses this. Signature verification ensures the digest we install is the digest the author intended to ship. Revocation closes the window between "we discovered the key was compromised" and "every running deployment stops trusting it." All three together are the minimum viable supply-chain defense for a system that runs third-party code with cluster-internal data access.
+
+**Actors**: `cpt-plugin-actor-plugin-runtime`, `cpt-plugin-actor-plugin-author`
+
+#### Trust Tiers Modulate Capabilities Above a Common Baseline
+
+- [ ] `p1` - **ID**: `cpt-plugin-fr-trust-tiers`
+
+The plugin system **MUST** classify every plugin install into one of three trust tiers, based on whose key signed the image:
+
+- **Vendor-signed**: signed by Insight's official signing key, distributed in the instance's bundled trust roots.
+- **Instance-signed**: signed by a key the instance admin has explicitly registered as an additional trust root for this instance (used for in-house plugins authored by the customer's own engineering org).
+- **Unsigned**: any install whose signature does not chain to a configured trust root. Unsigned installs are still allowed (this is not a gate on installation), but they run in a more restricted capability profile.
+
+The capability profile **MUST** modulate the following dimensions per tier; baseline isolation (`cpt-plugin-fr-baseline-isolation`) applies regardless of tier:
+
+| Dimension | Vendor-signed | Instance-signed | Unsigned |
+|---|---|---|---|
+| Image registry | any registry on the instance allowlist | any registry on the instance allowlist | Insight-curated allowlist only |
+| Image-scan policy | required (Trivy / Grype or equivalent) | required | required + size limit |
+| Widget render mode | native React component (full DOM) | native | cross-origin iframe with `sandbox` attribute; communicates via `postMessage` only |
+| Widget access to user JWT | through host SDK proxy | through host SDK proxy | **never** — JWT is never exposed cross-origin |
+| Silver execution engine | any (dbt / Rust / Python / WASM) | any | dbt only |
+| Container runtime class | runc | runc | gVisor or Kata (kernel isolation) |
+| Egress proxy strictness | manifest allowlist accepted | manifest allowlist accepted | manifest allowlist + tenant-admin approve at install |
+| Cross-snapshot SELECT GRANT (for migrations) | granted automatically | granted automatically | requires explicit tenant-admin approval per install |
+
+**Rationale**: Trust modulates the *delta above baseline*, not whether the plugin can run at all. Two-tier "trusted vs untrusted" is too coarse for enterprise — internal plugins authored by the customer's own engineering org need higher capabilities than community plugins, but the customer cannot get the vendor's signing key. Three tiers map to three real authoring contexts (vendor / customer / community). The capability matrix is fixed in the PRD so it is auditable and not negotiable per-deployment; the alternative — "instance admin chooses which capabilities each tier gets" — yields too many configuration surfaces and incident vectors.
+
+**Actors**: `cpt-plugin-actor-plugin-runtime`, `cpt-plugin-actor-instance-admin`
+
+#### Baseline Isolation Applies to Every Plugin Regardless of Trust Tier
+
+- [ ] `p1` - **ID**: `cpt-plugin-fr-baseline-isolation`
+
+Independent of trust tier, every plugin install **MUST** run under the following baseline isolation. None of these may be relaxed by signing.
+
+- **ClickHouse access**: per-install user with capability-scoped GRANTs only (`cpt-plugin-fr-per-install-db-user`). The `default` user is forbidden.
+- **Network egress**: a `NetworkPolicy` derived from the manifest's declared egress allowlist is applied to the plugin's pods. Outbound to anything not on the allowlist is dropped at the network layer. There is no "trusted plugin can talk to anywhere" mode — every egress destination is declared and visible to the admin.
+- **Compute quotas**: CPU and memory `requests` / `limits` from the manifest, capped by per-tenant and per-instance defaults configured by the instance admin. A single plugin cannot DoS the cluster regardless of its provenance.
+- **Kubernetes API access**: the default `ServiceAccount` for plugin pods has no role bindings — the plugin cannot list pods, read secrets it does not own, or interact with the K8s API in any way. Plugins that need to spawn jobs (e.g., to invoke Argo) do so through the plugin runtime's API, not directly against the K8s API.
+- **Filesystem**: pod root filesystem is read-only; only declared volume mounts (typically a per-install `emptyDir` for transient data) are writable.
+- **Per-install bronze / silver scopes**: each install writes only into its own scope (`bronze_<snapshot>_<install>`, `silver_<snapshot>_<install>`). Cross-scope writes are not possible because the per-install GRANTs do not cover them.
+- **No host networking, no privileged containers, no `hostPath` mounts.**
+
+**Rationale**: Trust-tier modulation is meaningful only on top of a credible baseline. A "trusted" plugin that can't run a backdoor egress is still trustworthy because of the baseline; an "untrusted" plugin that *can* run a backdoor egress is dangerous regardless of tier. The baseline is the foundation; tiers are the delta.
+
+**Actors**: `cpt-plugin-actor-plugin-runtime`, `cpt-plugin-actor-instance-admin`
+
+#### Connector Schema Conformance Enforced at Write
+
+- [ ] `p2` - **ID**: `cpt-plugin-fr-connector-schema-conformance`
+
+The plugin runtime **MUST** enforce the connector's declared output schema (`cpt-plugin-fr-connector-output-contract`) at write time: rows that do not conform to the declared columns and types **MUST** be rejected and surfaced as a connector failure. The runtime **SHOULD** support this via a schema-validating proxy or a ClickHouse table schema that mirrors the manifest exactly.
+
+**Rationale**: The silver-side `cpt-plugin-fr-silver-consumer-validates` defends the consumer; this FR defends the producer. A connector that emits malformed rows by accident or malice should fail loudly at write rather than corrupt bronze and require the silver tests to catch the symptom downstream.
+
+**Actors**: `cpt-plugin-actor-plugin-runtime`, `cpt-plugin-actor-plugin-author`
+
 ## 6. Non-Functional Requirements
 
 ### 6.1 NFR Inclusions
 
 #### Install-to-Functional Time
 
-- [ ] `p1` - **ID**: `cpt-plugin-nfr-install-latency`
+- [ ] `p2` - **ID**: `cpt-plugin-nfr-install-latency`
 
 From the moment a tenant admin approves an install through the admin UI to the moment the plugin is functional (first successful bronze write for connector; first successful transform for silver; widget available on the dashboard surface), the plugin system **MUST** complete the flow in under 10 minutes p95 for plugins up to 200 MB in image size on a standard instance.
 
@@ -608,7 +741,7 @@ An instance **MUST** support at least 50 plugin installs per tenant and at least
 
 #### Plugin Catalog API
 
-- [ ] `p1` - **ID**: `cpt-plugin-interface-catalog-api`
+- [ ] `p2` - **ID**: `cpt-plugin-interface-catalog-api`
 
 **Type**: REST API (read-only for tenant admins; read/write for instance admins)
 
@@ -620,7 +753,7 @@ An instance **MUST** support at least 50 plugin installs per tenant and at least
 
 #### Plugin Install API
 
-- [ ] `p1` - **ID**: `cpt-plugin-interface-install-api`
+- [ ] `p2` - **ID**: `cpt-plugin-interface-install-api`
 
 **Type**: REST API (tenant admin + instance admin)
 
@@ -632,7 +765,7 @@ An instance **MUST** support at least 50 plugin installs per tenant and at least
 
 #### Plugin Runtime Interface
 
-- [ ] `p1` - **ID**: `cpt-plugin-interface-runtime`
+- [ ] `p2` - **ID**: `cpt-plugin-interface-runtime`
 
 **Type**: Internal interface between the admin API and the plugin runtime
 
@@ -644,7 +777,7 @@ An instance **MUST** support at least 50 plugin installs per tenant and at least
 
 #### OCI Registry Contract
 
-- [ ] `p1` - **ID**: `cpt-plugin-contract-oci`
+- [ ] `p2` - **ID**: `cpt-plugin-contract-oci`
 
 **Direction**: required from external registry
 
@@ -654,7 +787,7 @@ An instance **MUST** support at least 50 plugin installs per tenant and at least
 
 #### Plugin Capability Contracts
 
-- [ ] `p1` - **ID**: `cpt-plugin-contract-capabilities`
+- [ ] `p2` - **ID**: `cpt-plugin-contract-capabilities`
 
 **Direction**: provided by platform, required of plugins
 
@@ -711,33 +844,34 @@ An instance **MUST** support at least 50 plugin installs per tenant and at least
 
 - **Breaking change**: Author bumps the major version. Tenant admins see the upgrade as "breaking — major bump" in the UI and must explicitly opt in; the resolver flags dependent plugins that would also need upgrading.
 
-### UC-003 Admin Upgrades a Plugin and Resolves Dependencies
+### UC-003 Tenant Admin Promotes a New Snapshot
 
-**ID**: `cpt-plugin-usecase-upgrade-with-deps`
+**ID**: `cpt-plugin-usecase-snapshot-shadow-deploy`
 
 **Actor**: `cpt-plugin-actor-tenant-admin`
 
-**Preconditions**: A plugin install exists; a newer version is available that requires a new version of another plugin.
+**Preconditions**: A live snapshot exists for the tenant. The tenant admin has authored a new snapshot (either by editing the live one and saving as a new snapshot, by cloning a vendor or instance reference, or by composing from scratch).
 
 **Main Flow**:
 
-1. Admin selects Upgrade on the plugin's tile
-2. Resolver computes the transitive **shadow-deploy** plan (this plugin + dependencies) — the new versions are installed ALONGSIDE the existing ones, not in place of them (per `cpt-plugin-fr-shadow-deploy-upgrade`)
-3. UI shows the plan — which plugins will install as shadow versions, the tenant-configurable trial window (default 7 days), and the side-by-side comparison surfaces that will become available once data starts flowing
-4. Admin approves; plugin runtime installs the shadow stack in parallel with the existing live stack; both stacks write to their own per-install scopes and run on their own schedules
-5. During the trial window, the live stack continues to feed user-facing surfaces; the shadow stack processes the same inputs into its own scopes; the admin UI exposes a comparison view (row counts, schema diffs, per-column statistics where shapes match)
-6. The admin PROMOTES the shadow stack (explicitly, or automatically after the trial window IF the tenant opted in to auto-promote) — the runtime uninstalls the old version and any transitive dependencies that become unused, the shadow stack becomes live, and old bronze is retained per `cpt-plugin-fr-bronze-preserved`
-7. Inventory is updated; the graph view reports green on the promoted stack
+1. Admin selects "deploy as shadow" on the new snapshot
+2. Plugin runtime instantiates the new snapshot as a *shadow*: provisions per-install ClickHouse users with scoped GRANTs (per `cpt-plugin-fr-per-install-db-user`), grants each shadow install `SELECT` on the corresponding live install's bronze (per `cpt-plugin-fr-cross-snapshot-grant`), creates the new bronze / silver scopes, schedules the shadow plugins' work
+3. For each plugin in the shadow whose `plugin_id` was also present in the live snapshot, the runtime executes the plugin-author-shipped migration (per `cpt-plugin-fr-migration-via-views`) to populate or expose historical bronze — view, materialized view, full copy, or no migration at the author's choice
+4. Both snapshots run concurrently. The live snapshot continues to feed widgets and analytics-api; the shadow snapshot processes the same connector inputs into its own scopes
+5. The admin UI exposes a side-by-side comparison view: row counts per silver table, schema diffs, per-column distributional statistics where shapes match (`cpt-plugin-fr-snapshot-shadow-deploy`)
+6. Adaptation is open-ended. The trial reminder timer (default 7 days, tenant-configurable) surfaces a non-blocking reminder if the shadow has not been promoted or rejected. Reminders escalate by frequency, never by action (`cpt-plugin-fr-snapshot-shadow-deploy`)
+7. The admin PROMOTES — the runtime atomically switches the *live* pointer to the new snapshot, revokes the cross-snapshot GRANT, and the previous (now non-live) snapshot is retained until explicitly retired
+8. Inventory is updated; the graph view reports green on the new live snapshot
 
-**Postconditions**: On promote — the new version is live; old bronze is retained. On reject — no change to the tenant's plugin set; shadow scopes are discarded (they have no downstream consumers).
+**Postconditions**: On promote — the new snapshot is live; the previous snapshot remains running but no longer feeds users; bronze of the previous snapshot is retained until explicit retirement (`cpt-plugin-fr-bronze-preserved`). On reject — the shadow snapshot is uninstalled; its bronze is discarded since no downstream consumer relied on it; the tenant remains on the unchanged live snapshot.
 
 **Alternative Flows**:
 
-- **Admin rejects at step 3**: No changes applied. Plugin remains at the prior version; the "upgrade available" indicator persists.
-- **One plugin in the shadow stack fails to install**: The runtime reports the failure; **the live stack is untouched**. Admin can retry, fix config, or abandon the shadow-deploy without affecting running data.
-- **Admin REJECTS at step 6**: Runtime uninstalls the shadow stack and its unused transitive dependencies. The tenant returns to the unchanged live stack.
-- **Trial window expires without explicit action**: Default policy is REJECT (runtime uninstalls the shadow stack). No plugin ever silently promotes itself.
-- **Reverting a previously-promoted upgrade**: This is not a distinct "rollback" operation — the admin simply starts a new shadow-deploy targeting the prior version (which remains available in the catalog), and follows the same flow.
+- **Admin rejects at step 1**: No state change. The new snapshot is saved but not deployed; admin can deploy or discard later.
+- **A plugin in the shadow fails to install or migrate**: The runtime surfaces the failure; **the live snapshot is untouched**. Admin can retry, edit the snapshot, or discard the shadow.
+- **Admin REJECTS during adaptation (step 6)**: Runtime uninstalls the shadow snapshot, drops its DB scopes, revokes the cross-snapshot GRANT. Tenant remains on the unchanged live snapshot.
+- **Trial reminder expires without action**: UI raises a reminder; **no automatic promote, no automatic revert**. The shadow remains running until the admin acts. If the tenant prefers fewer notifications, the reminder cadence is configurable.
+- **Reverting a previously-promoted snapshot**: This is not a distinct "rollback" operation. The admin starts a new shadow-deploy targeting the prior snapshot (still in the tenant's snapshot history), and follows the same flow. There is no asymmetry between forward and backward transitions.
 
 ### UC-004 Silver Plugin Consumes Bronze from a Connector Plugin
 
@@ -761,38 +895,70 @@ An instance **MUST** support at least 50 plugin installs per tenant and at least
 
 - **Data-quality test fails**: Transform is not run; the failure is surfaced to the admin (instance and tenant) with a pointer to the failing test and the offending input. No silver state is overwritten with bad data.
 - **Bronze schema changed unexpectedly**: Silver plugin's declared input contract no longer matches; runtime refuses the run and surfaces the contract mismatch to the admin, who must either upgrade the silver plugin or downgrade the connector.
+- **A new connector with matching `output.tag` is added to the same snapshot**: Silver discovery picks it up automatically on the next run — silver is not aware of which specific connector plugin produced the bronze, only of the schema and tag. No silver-plugin change is required when a new compatible connector is added.
+
+### UC-005 Tenant Admin Authors a Custom Snapshot
+
+**ID**: `cpt-plugin-usecase-tenant-snapshot-authoring`
+
+**Actor**: `cpt-plugin-actor-tenant-admin`
+
+**Preconditions**: The tenant admin wants a plugin combination not available as a vendor or instance reference snapshot.
+
+**Main Flow**:
+
+1. Admin opens the snapshot editor in the admin UI
+2. Admin starts from a fresh canvas, from a clone of the live snapshot, or from a clone of a vendor / instance reference snapshot
+3. Admin adds, removes, or version-pins individual plugins (the catalog UI surfaces available versions and trust tiers per plugin)
+4. Admin saves the composition as a new snapshot (immutable; subsequent edits produce a new snapshot, not a mutation)
+5. Admin deploys the new snapshot as a shadow per UC-003
+
+**Postconditions**: A new tenant-owned snapshot is recorded in inventory. The tenant can deploy it now or later. Other snapshots in the tenant's history remain unchanged.
+
+**Alternative Flows**:
+
+- **Composition contains a plugin combination flagged by static checks (e.g., two plugins sharing the same `output.tag` in incompatible ways)**: The editor surfaces the issue at save time; the admin can either resolve and resave, or save with a warning. There is no system veto — warnings are non-blocking, but visible.
+- **Composition includes an unsigned plugin while instance policy disallows unsigned plugins (per `cpt-plugin-fr-trust-tiers`)**: Save succeeds, deploy is blocked at the instance level until policy is changed or the plugin is replaced.
 
 ## 9. Acceptance Criteria
 
-- [ ] A plugin with `connector` capability can be published to ghcr.io and installed in an Insight instance through the marketplace UI, end to end, with no code changes to the Insight product
-- [ ] A silver plugin whose input discovery yields zero matching bronze tables in the tenant is installable but surfaces a "no sources discovered" warning to the admin; installing a second connector that produces the expected shape makes the silver plugin's transform run without modifying the silver plugin
-- [ ] An instance admin cannot install or upgrade a plugin on a tenant's behalf through the admin API; force-uninstall is allowed and is audit-logged with the reason
+- [ ] A plugin with `connector` capability can be published to an OCI registry and added to a tenant snapshot through the admin UI, end to end, with no code changes to the Insight product
+- [ ] A silver plugin whose input discovery yields zero matching bronze tables in the snapshot is installable but surfaces a "no sources discovered" warning to the admin; adding a second connector that produces the expected shape to the same snapshot makes the silver plugin's transform run without modifying the silver plugin
+- [ ] An instance admin cannot install or upgrade a plugin on a tenant's behalf, nor mutate a tenant's snapshot, through the admin API; force-retire of a known-bad plugin is allowed and is audit-logged with the reason and tenant notification
 - [ ] A plugin that combines `connector` + `silver` + `widget` in a single manifest installs as one artifact and each capability becomes operational independently
-- [ ] Two versions of the same plugin can coexist in one tenant; uninstalling the older version does not affect the newer version's bronze data
-- [ ] Uninstalling a plugin preserves its bronze data unless the admin explicitly opts in to deletion
-- [ ] Upgrading a plugin to a new major version requires explicit admin approval of the full transitive upgrade plan
-- [ ] Upgrading a plugin installs the new version as a shadow stack alongside the live version; both run concurrently against the same inputs; the live stack continues to feed widgets / analytics-api until the tenant admin promotes the shadow stack; rejecting the shadow stack returns the tenant to the unchanged live stack with no user-visible interruption
-- [ ] A shadow-deploy trial window expires without admin action defaults to REJECT; the shadow stack is uninstalled and no auto-promotion occurs
-- [ ] Reverting a previously-promoted upgrade is performed by initiating a new shadow-deploy back to the prior version — there is no distinct "rollback" API
+- [ ] Two snapshots can coexist in one tenant indefinitely as fully independent data planes (independent bronze / silver scopes, independent per-install ClickHouse users, independent pods); promoting one does not delete the other
+- [ ] Promoting a new snapshot retains the previous snapshot's bronze until the admin explicitly retires it
+- [ ] A new snapshot installed as a shadow alongside a live snapshot processes the same connector inputs, exposes a side-by-side comparison view, and never feeds user-facing surfaces until promoted
+- [ ] A trial reminder timer expires without admin action surfaces a reminder in the UI; no automatic promote, no automatic revert
+- [ ] Reverting a previously-promoted snapshot is performed by initiating a new shadow-deploy targeting the prior snapshot — there is no distinct "rollback" API
 - [ ] Each plugin's transform code (dbt project or equivalent) is self-contained in the plugin directory; attempting to use dbt `ref()` to reach across plugins fails at compile time; a downstream plugin discovers upstream outputs only through the schema-based input contract with runtime-injected `sources.yml`
+- [ ] A plugin install runs under a per-install ClickHouse user with GRANTs scoped to its own bronze / silver scope (and to discovered upstream bronze for silver); attempting to read or write outside the scope is rejected at the database layer
+- [ ] A shadow snapshot's installs receive `SELECT` GRANT on the live snapshot's matching bronze for the duration of the shadow only; the GRANT is revoked atomically on promote, reject, or retire
+- [ ] A plugin install attempted with an image referenced by tag (no digest) is rejected at install time
+- [ ] A plugin install whose image signature does not chain to a configured trust root is allowed in the unsigned tier with reduced capabilities (iframe widget render, dbt-only silver, gVisor / Kata runtime, curated-registry-only)
+- [ ] A revoked image digest cannot start new pods even if the install was created before revocation
 - [ ] A connector plugin using the Airbyte source protocol can be installed without the plugin author reimplementing destination logic
 - [ ] A widget plugin loads in the host frontend at runtime without a product rebuild
 - [ ] When a silver plugin's data-quality tests fail, the transform does not run and an admin-visible failure is recorded
-- [ ] An instance admin can view the dependency graph of all installed plugins across all tenants, with per-node health state
+- [ ] An instance admin can view the dependency graph of all installed plugins across all tenants, with per-node health state and per-snapshot grouping
 - [ ] Attempting to install a plugin whose manifest is invalid (missing required fields, malformed schema) fails at the admin-API layer with a clear error, before any runtime action
-- [ ] All plugin-produced tables carry `tenant_id` and cross-tenant reads are rejected by the data-store enforcement layer
+- [ ] All plugin-produced tables are reachable only through the install's per-install user with scoped GRANTs; cross-tenant and cross-install reads are rejected at the database layer, not merely filtered by application code
 
 ## 10. Dependencies
 
 | Dependency | Description | Criticality |
 |------------|-------------|-------------|
-| OCI-compatible registry | Hosts plugin artifacts. Must be reachable from the instance or mirrored for air-gapped installs | p1 |
-| Instance database | Stores the installed-plugin inventory, config, and audit log | p1 |
-| Plugin runtime subsystem | Reconciles inventory into runtime state (Kubernetes workloads, frontend widget registration) | p1 |
-| Host frontend microfrontend loader | Required for widget capability; `widget` FRs ship when this is available | p2 |
+| OCI-compatible registry | Hosts plugin images. Must be reachable from the instance or mirrored for air-gapped installs. Mutable tags are not used — images are pinned by digest | p1 |
+| Sigstore / cosign infrastructure | Image signing and verification, transparency log, revocation list distribution | p1 |
+| Instance database (MariaDB) | Stores the per-tenant snapshot inventory, snapshot composition, install config, audit log | p1 |
+| ClickHouse | Hosts per-snapshot bronze / silver scopes; per-install user RBAC (GRANT/REVOKE), quotas | p1 |
+| Plugin runtime subsystem | Reconciles snapshot inventory into runtime state (Kubernetes workloads, K8s `NetworkPolicy`, ServiceAccount, ResourceQuota), frontend widget registration | p1 |
+| Kubernetes `NetworkPolicy` controller | Enforces egress allowlist for plugin pods (baseline isolation) | p1 |
+| Container runtime classes | Standard `runc` plus `gVisor` or `Kata` available for unsigned-tier plugins; required for kernel isolation | p2 (only needed once unsigned-tier ships) |
 | Ingestion orchestration (Argo Workflows today) | Schedules connector syncs and silver transforms; called by the plugin runtime | p1 |
-| External secret manager (optional) | Provides plugin credentials when configured; manual-entry fallback otherwise | p2 |
-| Central catalog service | Curates and serves public plugin metadata | p2 (URL install works without it) |
+| Host frontend microfrontend loader | Required for native widget render in vendor- / instance-signed tiers; iframe render in unsigned tier works without it | p2 (widget capability ships when this is available) |
+| External secret manager | Provides plugin credentials in production; supported integrations include Vault, External Secrets Operator (bridging to AWS / GCP / Azure secret managers), SealedSecrets. Manual-entry fallback for evaluation deployments | p1 (manual-entry suffices for v1, external store is required for prod-grade installs) |
+| Central catalog service | Hosts plugin and (optionally) reference-snapshot metadata; URL install works without it | p2 |
 
 ## 11. Assumptions
 
@@ -807,28 +973,41 @@ An instance **MUST** support at least 50 plugin installs per tenant and at least
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| Plugin authors misuse SemVer, shipping breaking changes as minor versions | Silent downstream breakage across tenants | Central-catalog entries run compatibility checks before listing; URL-install carries an explicit "untrusted source" warning in the admin UI; consumer plugins ship data-quality tests as the last line of defense |
-| Dependency graph explodes into conflict states admins cannot untangle | Plugins become effectively impossible to upgrade | No-legacy-mode plus explicit resolution forces the conflict to the surface; dependency-graph UI gives admins visibility; unused-dependency reporting keeps the graph from accumulating cruft |
-| Connector plugins write garbage bronze — typo, API change, malicious plugin — and silver consumers can't tell | Silver / gold layers quietly corrupt | Silver consumers ship their own data-quality tests against declared input contracts; plugin system runs them pre-transform and halts on failure |
+| Plugin authors misuse SemVer, shipping breaking changes as minor versions | Silent downstream breakage across tenants | Snapshot-as-state model: tenant validates the new snapshot in shadow before promoting, on real data, against the old snapshot side-by-side. SemVer hygiene is helpful but no longer load-bearing; consumer plugins ship data-quality tests as the last line of defense |
+| Connector plugins write garbage bronze — typo, API change, malicious plugin — and silver consumers can't tell | Silver / gold layers quietly corrupt | Connector schema conformance enforced at write (`cpt-plugin-fr-connector-schema-conformance`); silver consumers additionally ship data-quality tests against declared input contracts (`cpt-plugin-fr-silver-consumer-validates`); plugin system runs them pre-transform and halts on failure |
 | OCI registry is the single point of failure for install and upgrade | Plugin system unavailable when registry is down | Air-gapped path supports mirroring; instance admins can cache plugin images locally; install is idempotent so retry is safe |
+| Plugin image is swapped under the same tag (supply-chain attack) | Malicious code lands on next pull | Images are pinned by digest, never by tag (`cpt-plugin-fr-image-signing-required`); signature verification on every pod admission |
+| Plugin signing key (vendor or instance) is compromised | All plugins signed by that key become suspect | Sigstore transparency log + revocation list checked on pod admission; per-version signatures so revoking one version does not revoke all; key rotation procedure documented and exercised quarterly |
+| Plugin reverse-DNS naming collides across registries (`com.cyberfabric.gitea` on dockerhub vs ghcr.io) | Tenant could install the wrong artifact | Trust tier requires signature; instance admin's curated registry allowlist prevents arbitrary registries for vendor-signed and instance-signed tiers; for unsigned, Insight-curated allowlist only |
 | Plugin runtime crash leaves an install in a half-applied state | Manual recovery required | Every install/upgrade plan is persisted before application; runtime is reconciliation-based, so restart resumes from persisted state |
-| Widget plugin escapes its sandbox and accesses tenant data it should not | Tenant data leakage | Widget does not query the data store directly; host app resolves the query and passes only the narrowed result; Kubernetes network policies restrict plugin pods to their declared egress |
-| Third-party plugin becomes unmaintained and no one upgrades it past a breaking platform version | Tenants stuck, cannot upgrade platform | Central catalog marks maintenance status; instance admins can block unmaintained plugins; customers relying on third-party plugins are recommended to fork-on-need |
-| Cost / resource explosion from tenants installing many heavy connectors | Cluster resource exhaustion | Plugin installs inherit per-tenant resource quotas enforced at the Kubernetes level; instance admins can cap plugins per tenant |
-| Bronze data retention and delete flows conflict with GDPR / compliance requirements | Regulatory exposure | Bronze-is-sacred is a plugin-system guarantee; GDPR erasure is handled by a platform-level data-lifecycle tool that can drop a tenant's bronze scope on lawful request — not part of this PRD |
+| Plugin attempts cross-tenant data access through DB | Tenant data leakage | Per-install ClickHouse user with GRANTs scoped to install's own bronze / silver and (for silver) discovered upstream bronze; cross-snapshot / cross-tenant reads are physically impossible at the DB layer, not just filtered by application code (`cpt-plugin-fr-per-install-db-user`) |
+| Widget plugin escapes its sandbox and accesses user JWT or tenant data | Authentication / data leakage | Widget never queries the data store directly; for unsigned plugins the widget renders in a cross-origin iframe with `sandbox` and the user JWT is never exposed across the iframe boundary (`cpt-plugin-fr-trust-tiers`); for signed plugins, host SDK proxy is the only data path |
+| Plugin pod runs scanners, miners, reverse VPN, or other unintended workloads inside the cluster | Compute theft / lateral movement | NetworkPolicy limits egress to manifest-declared targets; ResourceQuota caps CPU/memory; default ServiceAccount has no K8s API access; for unsigned plugins, gVisor/Kata runtime adds kernel isolation (`cpt-plugin-fr-baseline-isolation`) |
+| Third-party plugin becomes unmaintained and no one upgrades it past a breaking platform version | Tenants stuck, cannot upgrade platform | Tenant snapshots pin specific digest+signature, so an abandoned plugin keeps working at its pinned version; new platform versions document compatibility windows; abandoned plugins flagged in catalog, not auto-removed |
+| Storage cost balloons if many shadow snapshots accumulate over months/years | Disk exhaustion, query slowdown | View-based migrations keep storage at `~1× + delta` instead of `2×` (`cpt-plugin-fr-migration-via-views`); retired-snapshot reporting (`cpt-plugin-fr-retired-snapshot-reporting`) surfaces stale snapshots to admin for cleanup; bronze retention is admin-controlled, not auto |
+| Tenant admin loses track of which old snapshots are still alive | Unbounded resource consumption, audit confusion | Snapshot inventory exposes `live` / `shadow` / `retired` status per snapshot; retired-snapshot reporting nudges cleanup; dependency graph view groups installs by snapshot |
+| Plugin runtime egress through manifest allowlist is bypassed by DNS exfiltration or covert channels | Data leakage | Egress proxy enforces allowlist at L7 where possible; baseline only — does not claim defense against sophisticated covert channels. Documented limitation: instance admins should use cluster-level egress monitoring for residual coverage |
+| GDPR / compliance erasure conflicts with bronze-is-sacred | Regulatory exposure | Bronze-is-sacred is a plugin-system guarantee, not a compliance guarantee; GDPR erasure is handled by a platform-level data-lifecycle tool that can drop a tenant's snapshot scopes on lawful request — not part of this PRD |
 
 ## 13. Open Questions
 
 | Question | Owner | Target Resolution |
 |----------|-------|-------------------|
 | Plugin manifest schema — exact YAML shape, required vs optional fields, how capabilities are expressed, extension points for future capability kinds | Backend tech lead + Plugin Author lead | DESIGN / first ADR |
-| Native Insight Connector Protocol — if and when we define a protocol beyond Airbyte wrapping; stdin/stdout JSONL vs gRPC vs OpenAPI endpoints; is the protocol necessary in v1 or is "container writes to its declared scope" enough | Ingestion tech lead | DESIGN / second ADR, post-v1 if possible |
-| Per-tenant isolation mechanism — single table with `tenant_id` column and RLS policies, vs schema-per-install — which better suits on-prem distribution; current platform uses the former at the table level | Data tech lead | DESIGN |
-| Installed-inventory data model — exact tables, status state machine, audit log shape, relationship between plugin install and its per-install bronze scope | Backend tech lead | DESIGN |
-| Integration testing strategy — how does a plugin author test their plugin against a real customer data shape when the customer's source system is behind a firewall that Insight cannot reach; options include recorded/anonymized request traces shipped to the author, an opt-in customer-side trace-collection service operated by the Insight team, mock servers per connector type, or a combination | Plugin Author lead + Customer Success | DESIGN + customer-engagement policy; track separately from the data-model DESIGN |
-| Plugin-authoring SDK / CLI — `insight-plugin init\|validate\|test\|package\|publish` — is it v1 ("can't ship without this") or v2 ("docs + reference plugins first, CLI when patterns stabilize"); the intent is the latter, but the threshold at which the CLI becomes a necessity should be articulated | Plugin Author lead | v2 planning; revisit after first three external plugins |
+| Snapshot manifest format — what does a snapshot literally look like on disk (`{plugin_id: digest, version}` list? full plugin manifest copies? something dbt-package-like?) and how is it stored / diffed in the instance database | Backend tech lead | DESIGN |
+| Snapshot inheritance and overlays — does a tenant snapshot reference a parent snapshot with overrides ("vendor reference + 3 plugin overrides"), or is every snapshot a flat list? Influences storage and UI complexity | Backend tech lead + Product design | DESIGN, before tenant-snapshot-editor UI ships |
+| Vendor reference snapshots — do we ship them at all? If yes, what is the publishing process, the testing matrix, and the maintenance commitment? If no, document explicitly and rely on community / instance-admin reference snapshots only | Insight Product Team | Before v1 ship |
+| Snapshot retirement policy — when does the system stop offering to keep an old snapshot alive (storage cap? per-tenant cap on number of concurrent snapshots? hard expiry?); the goal is to avoid unbounded accumulation while keeping tenant control | Insight Product Team + Backend tech lead | DESIGN |
+| Native Insight Connector Protocol — if and when we define a protocol beyond Airbyte wrapping; stdin/stdout JSONL vs gRPC vs OpenAPI endpoints; is the protocol necessary in v1 or is "container writes to its declared scope" enough | Ingestion tech lead | DESIGN / ADR, post-v1 if possible |
+| Per-tenant isolation mechanism within a single snapshot — schema-per-install (snapshot+install in the schema name) appears to be the right model given the snapshot architecture, but the choice between `tenant_id` column + RLS vs schema-per-install for any tables that span installs (e.g., system audit) needs DESIGN | Data tech lead | DESIGN |
+| Installed-inventory data model — exact tables for `tenant_snapshot`, `snapshot_plugin_install`, `snapshot_status`, audit log shape, the live-pointer transactional semantics during promote | Backend tech lead | DESIGN |
+| Integration testing strategy — how does a plugin author test their plugin against a real customer data shape when the customer's source system is behind a firewall Insight cannot reach; options include recorded/anonymized request traces shipped to the author, an opt-in customer-side trace-collection service operated by the Insight team, mock servers per connector type, or a combination | Plugin Author lead + Customer Success | DESIGN + customer-engagement policy; track separately from the data-model DESIGN |
+| Plugin-authoring SDK / CLI — `insight-plugin init` / `validate` / `test` / `package` / `publish` (pipe-escaped to avoid table-render issues) — is it v1 ("can't ship without this") or v2 ("docs + reference plugins first, CLI when patterns stabilize"); the intent is the latter, but the threshold at which the CLI becomes a necessity should be articulated | Plugin Author lead | v2 planning; revisit after first three external plugins |
 | Widget data-contract expressiveness — is "table schema with columns + config JSON schema" sufficient for the interesting widget cases, or does it need streaming, multi-query, or cross-entity access; depends on dashboard-configurator direction | Frontend tech lead | DESIGN, after first 3 widget plugins |
-| Catalog governance — who approves a third-party plugin's inclusion in the central catalog, what compatibility tests run, how unmaintained plugins are retired; policy, not technical | Insight Product Team | Policy doc, before third-party publish path opens |
-| Cross-tenant plugin sharing — an instance admin shipping a plugin-install across all tenants in one step (for a customer with many tenants in one instance); whether this is a v1 convenience or belongs in v2 | Insight Product Team | v2 planning |
+| Signing-key management — exact HSM / Vault choice for vendor signing key, key rotation cadence and procedure, instance-admin trust-root registration UX, revocation list distribution to air-gapped customers | Security lead | DESIGN, before vendor-signed plugins are first published |
+| Image scanning policy — which scanner (Trivy, Grype, Syft + custom rules), CVE severity threshold for hard-block vs warn, how to handle scanner-FN cases | Security lead | DESIGN |
+| Egress proxy implementation — declarative `NetworkPolicy` is enough for L4 allowlist, but L7 (e.g., HTTP host-based) needs an explicit proxy (Squid, Envoy with allowlist, or sidecar); pick one for v1 | Platform / SRE | DESIGN |
+| Catalog governance — given that snapshots are tenant-authored and vendor reference snapshots are optional, what does the catalog actually publish? Just plugin metadata, or also reference snapshots? Who approves a third-party plugin's inclusion, what compatibility tests run, how unmaintained plugins are retired | Insight Product Team | Policy doc, before third-party publish path opens |
+| Cross-tenant plugin sharing — an instance admin shipping a snapshot template across all tenants in one step (for a customer with many tenants in one instance); whether this is a v1 convenience or belongs in v2 | Insight Product Team | v2 planning |
 | Plugin health → end-user surface — what exactly does "data temporarily unavailable" look like; is it per-widget or per-dashboard; does it communicate "connector X failed" vs "silver transform failed" to the user or only to the admin | Product design + Frontend | Coordinated design pass before first external plugin ships |
 | Transition off Airbyte — at what point does the connector capability stop needing Airbyte source protocol support (when all connector plugins are native) and is removing that support a major-version bump of the plugin system | Ingestion tech lead | Roadmap item after native protocol stabilizes |
