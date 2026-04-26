@@ -292,7 +292,7 @@ Each stream **MUST** use a primary key to ensure that re-running the connector f
 
 - `copilot_seats`: key = `user_login` (one active seat per GitHub user, scoped per Airbyte connection)
 - `copilot_user_metrics`: key = `unique` (composite: `day|login`, scoped per Airbyte connection)
-- `copilot_org_metrics`: key = `unique` (composite: `source_id|day` — `source_id` discriminates between multiple org connections within the same tenant)
+- `copilot_org_metrics`: key = `unique` (composite: `insight_source_id|day` — `insight_source_id` discriminates between multiple org connections within the same tenant)
 
 **Rationale**: Incremental sync may revisit dates already fetched. Primary keys ensure idempotent extraction and prevent duplicate rows in the Bronze layer.
 
@@ -362,7 +362,7 @@ All rows written by this connector **MUST** carry `data_source = 'insight_github
 
 - [ ] `p1` - **ID**: `cpt-insightspec-nfr-ghcopilot-idempotent`
 
-Repeated collection of the same date range **MUST NOT** create duplicate rows. The connector **MUST** use upsert semantics keyed on `user_login` (seats), composite `day|login` (user metrics), or composite `source_id|day` (org metrics).
+Repeated collection of the same date range **MUST NOT** create duplicate rows. The connector **MUST** use upsert semantics keyed on `user_login` (seats), composite `day|login` (user metrics), or composite `insight_source_id|day` (org metrics).
 
 #### Schema Stability
 
@@ -491,7 +491,7 @@ Bronze table schemas **MUST** remain stable across connector versions. Additive 
 - All 3 Bronze streams are populated on first run against a live GitHub organization with `tenant_id`, `insight_source_id`, `data_source = 'insight_github_copilot'`, and `collected_at` on every row.
 - `copilot_seats.user_email` is non-null for all seats with a linked GitHub account email.
 - `copilot_user_metrics.unique` (`day|login`) deduplicates correctly across overlapping incremental syncs — no duplicate composite keys after re-running the same date range.
-- `copilot_org_metrics` deduplicates correctly by composite key `source_id|day` — no duplicate rows for the same organization connection and day after re-running overlapping date ranges.
+- `copilot_org_metrics` deduplicates correctly by composite key `insight_source_id|day` — no duplicate rows for the same organization connection and day after re-running overlapping date ranges.
 - Seat roster (`copilot_seats`) is fully paginated — all seats are returned when the organization exceeds 100 seats.
 - Per-user metrics for a given day are parsed correctly from NDJSON — each line produces a valid record with all expected fields.
 - A second sync run for an overlapping date range completes without creating duplicate rows in any stream.

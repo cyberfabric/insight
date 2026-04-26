@@ -86,7 +86,7 @@ graph LR
 | `cpt-insightspec-fr-ghcopilot-org-metrics-collect` | Stream `copilot_org_metrics` → `GET /orgs/{org}/copilot/metrics/reports/organization-1-day?day=YYYY-MM-DD` → signed URL → NDJSON |
 | `cpt-insightspec-fr-ghcopilot-org-metrics-incremental` | Same `DatetimeBasedCursor` pattern as user metrics |
 | `cpt-insightspec-fr-ghcopilot-collection-runs` | **Deferred to Phase 2** — monitoring table produced by Argo orchestrator |
-| `cpt-insightspec-fr-ghcopilot-deduplication` | Primary keys: `user_login` (seats), composite `unique` (`day\|login` for user metrics, `source_id\|day` for org metrics) |
+| `cpt-insightspec-fr-ghcopilot-deduplication` | Primary keys: `user_login` (seats), composite `unique` (`day\|login` for user metrics, `insight_source_id\|day` for org metrics) |
 | `cpt-insightspec-fr-ghcopilot-tenant-tagging` | `inject_tenant_fields()` applied in each stream's `parse_response()` — injects `tenant_id`, `insight_source_id`, `collected_at`, `data_source = 'insight_github_copilot'` |
 | `cpt-insightspec-fr-ghcopilot-identity-key` | `copilot_seats.user_email` primary identity key; `copilot_user_metrics.login` resolved to email via Silver join |
 | `cpt-insightspec-fr-ghcopilot-identity-email-only` | Silver model uses only `user_email` for cross-system resolution; GitHub numeric IDs retained in Bronze only |
@@ -192,7 +192,7 @@ All three GitHub API endpoint calls use HTTP GET with query parameters. There ar
 |--------|-------------|---------|
 | `SeatAssignment` | One assigned Copilot seat for a GitHub user. Key: `user_login`. | `copilot_seats` |
 | `UserDailyMetrics` | Per-user daily code acceptance and feature engagement. Key: composite `day\|login`. | `copilot_user_metrics` |
-| `OrgDailyMetrics` | Org-level daily aggregates across all users. Key: composite `source_id\|day`. | `copilot_org_metrics` |
+| `OrgDailyMetrics` | Org-level daily aggregates across all users. Key: composite `insight_source_id\|day`. | `copilot_org_metrics` |
 
 **Relationships**:
 
@@ -248,7 +248,7 @@ src/ingestion/connectors/ai/github-copilot/
 └── dbt/
     ├── schema.yml
     ├── copilot__ai_dev_usage.sql
-    └── copilot__ai_org_usage.sql   # tagged, not activated (deferred)
+    └── copilot__ai_org_usage.sql   # tagged + config(enabled=false) — deferred
 ```
 
 #### Connector Package Descriptor
@@ -354,7 +354,7 @@ Extracts org-level daily Copilot aggregate metrics for trend and adoption analyt
 - Step 1 endpoint: `GET https://api.github.com/orgs/{org}/copilot/metrics/reports/organization-1-day?day={YYYY-MM-DD}` with Bearer auth.
 - Same two-step signed URL + NDJSON pattern as `CopilotUserMetricsStream` via `_fetch_ndjson_records()`.
 - Sync mode: Incremental; cursor field `day`; same P1D step as user metrics.
-- Composite `unique` key: `{source_id}|{day}` — `source_id` discriminates between multiple org connections within the same tenant.
+- Composite `unique` key: `{insight_source_id}|{day}` — `insight_source_id` discriminates between multiple org connections within the same tenant.
 
 ##### Responsibility boundaries
 
@@ -379,7 +379,7 @@ Reads from `copilot_user_metrics`; LEFT JOINs `copilot_seats` on `copilot_user_m
 
 ##### `copilot__ai_org_usage.sql`
 
-**Status: DEFERRED** — `class_ai_org_usage` Silver view does not yet exist. The model file is present and tagged `tag:github-copilot`, `tag:silver:class_ai_org_usage` for future activation, but is not enabled in the dbt selector. Will be activated in a separate PR alongside the `class_ai_org_usage` Silver view creation.
+**Status: DEFERRED** — `class_ai_org_usage` Silver view does not yet exist. The model file is present and tagged `tag:github-copilot`, `tag:silver:class_ai_org_usage`, but includes `{{ config(enabled=false) }}` in its config block to prevent execution despite being matched by `dbt_select: tag:github-copilot+`. Will be activated (by removing `enabled=false`) in a separate PR alongside the `class_ai_org_usage` Silver view creation.
 
 #### Extension Points & Stability Zones
 
@@ -610,7 +610,7 @@ Bronze tables are created by the destination (ClickHouse). In addition to connec
 |-------|------|-------------|
 | `tenant_id` | String | Tenant isolation key — framework-injected |
 | `insight_source_id` | String | Connector instance identifier — framework-injected, DEFAULT '' |
-| `unique` | String | Composite key: `{source_id}\|{day}` — `source_id` discriminates between multiple org connections per tenant |
+| `unique` | String | Composite key: `{insight_source_id}\|{day}` — `insight_source_id` discriminates between multiple org connections per tenant |
 | `day` | String | Metric date (YYYY-MM-DD) — incremental cursor |
 | `total_code_acceptance_activity_count` | Number (nullable) | Total accepted code suggestions across all users |
 | `total_loc_added_sum` | Number (nullable) | Total lines of AI-generated code added across all users |
@@ -622,9 +622,9 @@ Bronze tables are created by the destination (ClickHouse). In addition to connec
 | `collected_at` | String | Collection timestamp (UTC ISO 8601) — framework-injected |
 | `data_source` | String | Always `insight_github_copilot` — framework-injected |
 
-**PK**: `unique`. Granularity: one row per `(source_id, day)`. Incremental.
+**PK**: `unique`. Granularity: one row per `(insight_source_id, day)`. Incremental.
 
-**Query patterns**: incremental loads filter by `day`; `source_id` component of `unique` discriminates multi-org tenants. _ClickHouse sorting key recommendation: `(tenant_id, insight_source_id, day)`._
+**Query patterns**: incremental loads filter by `day`; `insight_source_id` component of `unique` discriminates multi-org tenants. _ClickHouse sorting key recommendation: `(tenant_id, insight_source_id, day)`._
 
 ---
 
