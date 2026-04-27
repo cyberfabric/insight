@@ -13,28 +13,36 @@
 -- ReplacingMergeTree(_version) (after #237) so each business entity
 -- contributes once.
 --
+-- Where pre-aggregated metric tables already exist (silver.mtr_git_person_*
+-- from PR #198), the views pass through those instead of re-aggregating
+-- class_git_*. Affects: commits_daily, ic_chart_delivery (commits/prs_merged),
+-- ic_kpis (loc/prs_merged/pr_cycle_time_h), ic_chart_loc (spec_lines).
+--
 -- The only intentional bronze reference left is `insight.people`, which
 -- already deduplicates via argMax(_airbyte_extracted_at) + GROUP BY
 -- person_id and is therefore correct on raw bronze.
 -- =====================================================================
 
 -- ---------------------------------------------------------------------
--- commits_daily ← silver.class_git_commits
+-- commits_daily ← silver.mtr_git_person_weekly  (pre-aggregated, PR #198)
 -- ---------------------------------------------------------------------
--- Tenant scoping is done by joining `insight.people` (only Active
--- members of the current tenant), not by hardcoded email-domain filter.
+-- Reads pre-aggregated weekly commit counts directly — no in-view count()
+-- aggregation needed. metric_date carries the week-start date (Monday).
+-- The only downstream consumer (insight.ic_chart_delivery, also rewritten
+-- in this PR) bucketizes by week and is grain-compatible.
+-- Tenant scoping via INNER JOIN insight.people (status='Active'), not by
+-- hardcoded email-domain filter.
 DROP VIEW IF EXISTS insight.commits_daily;
 CREATE VIEW insight.commits_daily AS
 SELECT
-    lower(c.author_email)                     AS person_id,
-    toDate(c.date)                            AS metric_date,
-    count()                                   AS commits
-FROM silver.class_git_commits AS c
+    m.person_key                              AS person_id,
+    m.week                                    AS metric_date,
+    toUInt64(m.commits)                       AS commits
+FROM silver.mtr_git_person_weekly AS m
 INNER JOIN insight.people AS p
-    ON lower(c.author_email) = p.person_id
+    ON m.person_key = p.person_id
 WHERE p.status = 'Active'
-  AND c.date IS NOT NULL
-GROUP BY person_id, metric_date;
+  AND m.week IS NOT NULL;
 
 -- ---------------------------------------------------------------------
 -- zoom_person_daily ← silver.class_collab_meeting_activity
@@ -570,18 +578,28 @@ LEFT JOIN (
 WHERE p.status = 'Active';
 
 -- ---------------------------------------------------------------------
--- ic_kpis ← silver.class_ai_dev_usage (the cursor LEFT JOIN)
+-- ic_kpis ← silver.class_ai_dev_usage (cursor) + silver.mtr_git_person_totals
 -- ---------------------------------------------------------------------
+-- loc / prs_merged / pr_cycle_time_h are person-level lifetime aggregates
+-- carried from silver.mtr_git_person_totals (PR #198). Same value repeats
+-- across each metric_date row for a given person — semantically the same
+-- as the previous behavior (where these were Cursor-derived per-person
+-- aggregates), now sourced from real git data instead.
 DROP VIEW IF EXISTS insight.ic_kpis;
 CREATE VIEW insight.ic_kpis AS
 SELECT
     f.email                                       AS person_id,
     p.org_unit_id                                 AS org_unit_id,
     toString(f.day)                               AS metric_date,
-    CAST(NULL, 'Nullable(Float64)')               AS loc,
+    CAST(toFloat64(coalesce(t.loc, 0)) AS Nullable(Float64))
+                                                  AS loc,
     round(ifNull(cur.ai_loc_share_pct, 0), 1)     AS ai_loc_share_pct,
-    CAST(NULL, 'Nullable(Float64)')               AS prs_merged,
-    CAST(NULL, 'Nullable(Float64)')               AS pr_cycle_time_h,
+    CAST(toFloat64(coalesce(t.prs_merged, 0)) AS Nullable(Float64))
+                                                  AS prs_merged,
+    if(t.avg_pr_cycle_time_h IS NULL,
+       CAST(NULL AS Nullable(Float64)),
+       CAST(round(t.avg_pr_cycle_time_h, 1) AS Nullable(Float64)))
+                                                  AS pr_cycle_time_h,
     greatest(0, least(100, round(ifNull(f.focus_time_pct, 100), 1)))
                                                   AS focus_time_pct,
     toFloat64(ifNull(j.tasks_closed, 0))          AS tasks_closed,
@@ -590,6 +608,8 @@ SELECT
     toFloat64(ifNull(cur.ai_sessions, 0))         AS ai_sessions
 FROM silver.class_focus_metrics AS f
 LEFT JOIN insight.people AS p ON f.email = p.person_id
+LEFT JOIN silver.mtr_git_person_totals AS t
+    ON t.person_key = f.email
 LEFT JOIN (
     SELECT
         person_id,
@@ -614,8 +634,11 @@ LEFT JOIN (
 ) AS cur ON (f.email = cur.person_id) AND (toString(f.day) = cur.metric_date);
 
 -- ---------------------------------------------------------------------
--- ic_chart_loc ← silver.class_ai_dev_usage
+-- ic_chart_loc ← silver.class_ai_dev_usage + silver.mtr_git_person_weekly
 -- ---------------------------------------------------------------------
+-- spec_lines now sourced from silver.mtr_git_person_weekly (PR #198) —
+-- previously a hardcoded NULL placeholder. file_category='spec' is
+-- classified at the fct_git_file_change layer.
 DROP VIEW IF EXISTS insight.ic_chart_loc;
 CREATE VIEW insight.ic_chart_loc
 (
@@ -635,10 +658,54 @@ AS SELECT
     toFloat64(sum(coalesce(c.lines_added, 0)))    AS ai_loc,
     toFloat64(sum(coalesce(c.total_lines_added, 0))
               - sum(coalesce(c.lines_added, 0)))  AS code_loc,
-    CAST(NULL AS Nullable(Float64))               AS spec_lines
+    CAST(toFloat64(any(coalesce(g.spec_lines, 0))) AS Nullable(Float64))
+                                                  AS spec_lines
 FROM silver.class_ai_dev_usage AS c
 LEFT JOIN insight.people AS p ON lower(c.email) = p.person_id
+LEFT JOIN silver.mtr_git_person_weekly AS g
+    ON  g.person_key = lower(c.email)
+    AND g.week       = toStartOfWeek(toDate(c.day))
 GROUP BY
     lower(c.email),
     p.org_unit_id,
     toStartOfWeek(toDate(c.day));
+
+-- ---------------------------------------------------------------------
+-- ic_chart_delivery ← silver.mtr_git_person_weekly + insight.jira_closed_tasks
+-- ---------------------------------------------------------------------
+-- commits and prs_merged sourced directly from silver.mtr_git_person_weekly
+-- (PR #198) — previously commits came via insight.commits_daily and
+-- prs_merged was a NULL placeholder.
+DROP VIEW IF EXISTS insight.ic_chart_delivery;
+CREATE VIEW insight.ic_chart_delivery AS
+WITH
+    weekly_jira AS (
+        SELECT
+            person_id,
+            toStartOfWeek(metric_date)            AS week,
+            sum(tasks_closed)                     AS tasks_done
+        FROM insight.jira_closed_tasks
+        GROUP BY person_id, week
+    ),
+    weeks_all AS (
+        SELECT person_key AS person_id, week
+        FROM silver.mtr_git_person_weekly
+        WHERE person_key != '' AND week IS NOT NULL
+        UNION DISTINCT
+        SELECT person_id, week FROM weekly_jira
+    )
+SELECT
+    d.person_id                                   AS person_id,
+    p.org_unit_id                                 AS org_unit_id,
+    toString(d.week)                              AS date_bucket,
+    toString(d.week)                              AS metric_date,
+    toUInt64(ifNull(g.commits, 0))                AS commits,
+    CAST(toUInt64(ifNull(g.prs_merged, 0)) AS Nullable(UInt64))
+                                                  AS prs_merged,
+    toUInt64(ifNull(j.tasks_done, 0))             AS tasks_done
+FROM weeks_all                          AS d
+LEFT JOIN insight.people                AS p ON d.person_id = p.person_id
+LEFT JOIN silver.mtr_git_person_weekly  AS g
+    ON g.person_key = d.person_id AND g.week = d.week
+LEFT JOIN weekly_jira                   AS j
+    ON j.person_id = d.person_id AND j.week = d.week;
