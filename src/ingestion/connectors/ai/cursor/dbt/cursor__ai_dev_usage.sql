@@ -38,6 +38,11 @@ SELECT
     toUInt32(1)                                     AS session_count,
     toUInt32(coalesce(acceptedLinesAdded, 0))       AS lines_added,
     toUInt32(coalesce(acceptedLinesDeleted, 0))     AS lines_removed,
+    -- total_lines_added/removed = ALL lines the user wrote/deleted that day
+    -- (not just AI-accepted ones). Needed by gold metrics like
+    -- ai_loc_share = accepted/total to express AI contribution percentage.
+    toUInt32(coalesce(totalLinesAdded, 0))          AS total_lines_added,
+    toUInt32(coalesce(totalLinesDeleted, 0))        AS total_lines_removed,
     toUInt32OrNull(toString(totalTabsShown))        AS tool_use_offered,
     toUInt32OrNull(toString(totalTabsAccepted))     AS tool_use_accepted,
     toUInt32OrNull(toString(totalTabsAccepted))     AS completions_count,
