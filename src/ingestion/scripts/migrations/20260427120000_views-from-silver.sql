@@ -21,16 +21,19 @@
 -- ---------------------------------------------------------------------
 -- commits_daily ← silver.class_git_commits
 -- ---------------------------------------------------------------------
+-- Tenant scoping is done by joining `insight.people` (only Active
+-- members of the current tenant), not by hardcoded email-domain filter.
 DROP VIEW IF EXISTS insight.commits_daily;
 CREATE VIEW insight.commits_daily AS
 SELECT
-    lower(author_email)                       AS person_id,
-    toDate(date)                              AS metric_date,
+    lower(c.author_email)                     AS person_id,
+    toDate(c.date)                            AS metric_date,
     count()                                   AS commits
-FROM silver.class_git_commits
-WHERE author_email != ''
-  AND author_email LIKE '%@virtuozzo.com'
-  AND date IS NOT NULL
+FROM silver.class_git_commits AS c
+INNER JOIN insight.people AS p
+    ON lower(c.author_email) = p.person_id
+WHERE p.status = 'Active'
+  AND c.date IS NOT NULL
 GROUP BY person_id, metric_date;
 
 -- ---------------------------------------------------------------------
@@ -53,6 +56,8 @@ WHERE data_source = 'insight_zoom'
 -- ---------------------------------------------------------------------
 -- teams_person_daily ← silver chat + meeting (m365 partitions)
 -- ---------------------------------------------------------------------
+-- Both inputs are filtered to data_source='insight_m365' in subqueries
+-- before the FULL OUTER JOIN — keeps the join condition limited to keys.
 DROP VIEW IF EXISTS insight.teams_person_daily;
 CREATE VIEW insight.teams_person_daily AS
 SELECT
@@ -63,13 +68,18 @@ SELECT
     toFloat64(coalesce(m.meetings_attended, 0))
                                               AS teams_meetings,
     toFloat64(coalesce(m.calls_count, 0))     AS teams_calls
-FROM silver.class_collab_chat_activity AS c
-FULL OUTER JOIN silver.class_collab_meeting_activity AS m
+FROM (
+    SELECT email, date, total_chat_messages
+    FROM silver.class_collab_chat_activity
+    WHERE data_source = 'insight_m365'
+) AS c
+FULL OUTER JOIN (
+    SELECT email, date, meetings_attended, calls_count
+    FROM silver.class_collab_meeting_activity
+    WHERE data_source = 'insight_m365'
+) AS m
     ON  lower(c.email) = lower(m.email)
-    AND c.date         = m.date
-    AND m.data_source  = 'insight_m365'
-WHERE c.data_source = 'insight_m365'
-   OR m.data_source = 'insight_m365';
+    AND c.date         = m.date;
 
 -- ---------------------------------------------------------------------
 -- files_person_daily ← silver.class_collab_document_activity
