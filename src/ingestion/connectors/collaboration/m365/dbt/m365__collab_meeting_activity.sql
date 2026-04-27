@@ -18,18 +18,22 @@ SELECT
        lower(userPrincipalName),
        '') AS person_key,
     toDate(reportRefreshDate) AS date,
-    callCount AS calls_count,
-    meetingsOrganizedCount AS meetings_organized,
-    meetingsAttendedCount AS meetings_attended,
-    adHocMeetingsOrganizedCount AS adhoc_meetings_organized,
-    adHocMeetingsAttendedCount AS adhoc_meetings_attended,
-    COALESCE(scheduledOneTimeMeetingsOrganizedCount, 0)
-        + COALESCE(scheduledRecurringMeetingsOrganizedCount, 0) AS scheduled_meetings_organized,
-    COALESCE(scheduledOneTimeMeetingsAttendedCount, 0)
-        + COALESCE(scheduledRecurringMeetingsAttendedCount, 0) AS scheduled_meetings_attended,
-    {{ iso8601_duration_seconds("ifNull(audioDuration, 'PT0S')") }} AS audio_duration_seconds,
-    {{ iso8601_duration_seconds("ifNull(videoDuration, 'PT0S')") }} AS video_duration_seconds,
-    {{ iso8601_duration_seconds("ifNull(screenShareDuration, 'PT0S')") }} AS screen_share_duration_seconds,
+    -- Cast counts and durations to Int64 to match zoom__collab_meeting_activity
+    -- when both feeders UNION ALL into silver.class_collab_meeting_activity.
+    -- Bronze stores them as Decimal(38, 9) / Float64; CH 25.3 refuses
+    -- Int64 ∪ Decimal/Float with NO_COMMON_TYPE.
+    toInt64(coalesce(callCount, 0)) AS calls_count,
+    toInt64(coalesce(meetingsOrganizedCount, 0)) AS meetings_organized,
+    toInt64(coalesce(meetingsAttendedCount, 0)) AS meetings_attended,
+    toInt64(coalesce(adHocMeetingsOrganizedCount, 0)) AS adhoc_meetings_organized,
+    toInt64(coalesce(adHocMeetingsAttendedCount, 0)) AS adhoc_meetings_attended,
+    toInt64(COALESCE(scheduledOneTimeMeetingsOrganizedCount, 0)
+        + COALESCE(scheduledRecurringMeetingsOrganizedCount, 0)) AS scheduled_meetings_organized,
+    toInt64(COALESCE(scheduledOneTimeMeetingsAttendedCount, 0)
+        + COALESCE(scheduledRecurringMeetingsAttendedCount, 0)) AS scheduled_meetings_attended,
+    toInt64({{ iso8601_duration_seconds("ifNull(audioDuration, 'PT0S')") }}) AS audio_duration_seconds,
+    toInt64({{ iso8601_duration_seconds("ifNull(videoDuration, 'PT0S')") }}) AS video_duration_seconds,
+    toInt64({{ iso8601_duration_seconds("ifNull(screenShareDuration, 'PT0S')") }}) AS screen_share_duration_seconds,
     reportPeriod AS report_period,
     now() AS collected_at,
     'insight_m365' AS data_source,

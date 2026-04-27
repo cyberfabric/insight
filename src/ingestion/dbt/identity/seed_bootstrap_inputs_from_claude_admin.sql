@@ -37,7 +37,7 @@ observations AS (
     -- email
     SELECT
         UUIDNumToString(sipHash128(coalesce(tenant_id, '')))        AS insight_tenant_id,
-        toUUID('00000000-0000-0000-0000-000000000000')              AS insight_source_id,
+        '00000000-0000-0000-0000-000000000000'::Nullable(String)              AS insight_source_id,
         'claude_admin'                                              AS insight_source_type,
         source_id                                                   AS source_account_id,
         'email'                                                     AS alias_type,
@@ -52,7 +52,7 @@ observations AS (
     -- platform_id (Claude Admin user ID)
     SELECT
         UUIDNumToString(sipHash128(coalesce(tenant_id, ''))),
-        toUUID('00000000-0000-0000-0000-000000000000'),
+        '00000000-0000-0000-0000-000000000000'::Nullable(String),
         'claude_admin',
         source_id,
         'platform_id',
@@ -68,7 +68,7 @@ observations AS (
     -- display_name
     SELECT
         UUIDNumToString(sipHash128(coalesce(tenant_id, ''))),
-        toUUID('00000000-0000-0000-0000-000000000000'),
+        '00000000-0000-0000-0000-000000000000'::Nullable(String),
         'claude_admin',
         source_id,
         'display_name',
