@@ -18,10 +18,15 @@ spec:
         parameters:
           - name: insight_source_id
           - name: jira_enrich_image
+            default: {{ required "ingestion.jiraEnrichImage is required when ingestion.templates.enabled=true" .Values.ingestion.jiraEnrichImage | quote }}
           - name: clickhouse_host
+            default: {{ include "insight.clickhouse.fqdn" . | quote }}
           - name: clickhouse_port
+            default: {{ include "insight.clickhouse.port" . | quote }}
           - name: clickhouse_user
+            default: {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
           - name: batch_size
+            default: "10000"
       activeDeadlineSeconds: 7200
       container:
         image: {{ `"{{inputs.parameters.jira_enrich_image}}"` }}
