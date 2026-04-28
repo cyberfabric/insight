@@ -217,12 +217,20 @@ case "${command}" in
     # Run the exact jsonschema check the Builder UI performs (no $ref resolution).
     # Prints per-path errors with the deepest-matching oneOf branch context so the
     # user can pinpoint bad fields. Exits non-zero on any error.
+    # Schema path is resolved dynamically from `airbyte_cdk.__file__` so the
+    # validator survives Python-version bumps in the upstream image.
     docker run --rm \
       --entrypoint=/bin/sh \
       -v "${connector_dir}:/input:ro" \
       "${IMAGE}" -c "python3 - <<'PY'
-import sys, yaml, jsonschema
-SCHEMA_PATH = '/usr/local/lib/python3.13/site-packages/airbyte_cdk/sources/declarative/declarative_component_schema.yaml'
+import sys
+from pathlib import Path
+import airbyte_cdk
+import yaml, jsonschema
+SCHEMA_PATH = (
+    Path(airbyte_cdk.__file__).resolve().parent
+    / 'sources' / 'declarative' / 'declarative_component_schema.yaml'
+)
 with open(SCHEMA_PATH) as f:
     schema = yaml.safe_load(f)
 with open('/input/connector.yaml') as f:

@@ -93,14 +93,14 @@ transformations:
         value: "{{ config['insight_source_id'] }}"
 ```
 
-### Rule 3 — Integer-typed fields must be literal integers, not templates
+### Rule 3 — Integer-typed fields accept literal integers OR Jinja templates
 
-`OffsetIncrement.page_size`, `CursorPagination.page_size`, `concurrency_level.default_concurrency`, etc. are typed as `integer` in the schema. Templates fail the Builder validator silently.
+`OffsetIncrement.page_size`, `CursorPagination.page_size` and similar slots are typed as `integer | string-with-interpolation` in the schema. Both forms are accepted by the CDK and by the Builder UI strict validator:
 
-❌ `page_size: "{{ config.get('my_page_size', 50) }}"`
-✅ `page_size: 50`
+✅ `page_size: 50` (literal)
+✅ `page_size: "{{ config.get('my_page_size', 100) }}"` (config-driven)
 
-If you need page-size to be tenant-configurable, parameterize via CI-time manifest generation or switch to a Python CDK, not a template in a declarative manifest.
+Use the templated form to wire declared `*_page_size` config keys — otherwise operator overrides in the K8s Secret are silently ignored. `concurrency_level.default_concurrency` is integer-only and does NOT accept a template.
 
 ### Rule 4 — Schema URL
 
@@ -215,11 +215,12 @@ incremental_sync:
     type: MinMaxDatetime
     datetime: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S') }}"
     datetime_format: '%Y-%m-%dT%H:%M:%S'
+  cursor_granularity: PT1S                   # MUST be present whenever `step` is set
   step: P30D
   lookback_window: PT1H
 ```
 
-Keep both `%ms` (for live record values) and `%Y-%m-%dT%H:%M:%S` (for persisted state values re-parsed on resume) in `cursor_datetime_formats`.
+Keep both `%ms` (for live record values) and `%Y-%m-%dT%H:%M:%S` (for persisted state values re-parsed on resume) in `cursor_datetime_formats`. `cursor_granularity` MUST accompany `step` — if it is omitted, the CDK raises `ValueError: If step is defined, cursor_granularity should be as well and vice-versa`.
 
 ## Debugging strict-validation errors
 
@@ -243,12 +244,24 @@ Keep both `%ms` (for live record values) and `%Y-%m-%dT%H:%M:%S` (for persisted 
 
 → `page_size` was a template string. Make it a literal int.
 
-If you need raw validator output with all alternative branches, invoke manually:
+If you need raw validator output with all alternative branches, invoke manually. Resolve the schema path via `airbyte_cdk.__file__` so the snippet survives Python-version bumps in the upstream image:
 
 ```bash
 docker run --rm \
   -v "$PWD/src/ingestion/connectors/<class>/<connector>:/input:ro" \
   --entrypoint=/bin/sh \
   airbyte/source-declarative-manifest:local \
-  -c 'python3 -c "import yaml, jsonschema; s=yaml.safe_load(open(\"/usr/local/lib/python3.13/site-packages/airbyte_cdk/sources/declarative/declarative_component_schema.yaml\")); m=yaml.safe_load(open(\"/input/connector.yaml\")); [print(e) for e in jsonschema.Draft7Validator(s).iter_errors(m)]"'
+  -c "python3 - <<'PY'
+from pathlib import Path
+import airbyte_cdk, yaml, jsonschema
+schema_path = (
+    Path(airbyte_cdk.__file__).resolve().parent
+    / 'sources' / 'declarative' / 'declarative_component_schema.yaml'
+)
+s = yaml.safe_load(open(schema_path))
+m = yaml.safe_load(open('/input/connector.yaml'))
+for e in jsonschema.Draft7Validator(s).iter_errors(m):
+    print(e)
+PY
+"
 ```

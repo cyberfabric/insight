@@ -27,8 +27,8 @@ If `validate-strict` passed, these are already satisfied automatically — but e
 
 - [ ] No whole-object `$ref` to `#/definitions/<X>` or `#/streams/<N>`. Only leaf-field `$ref` into `#/definitions/linked/<Component>/<field>` is allowed.
 - [ ] Every `AddFields.fields[]` item has `type: AddedFieldDefinition`.
-- [ ] `OffsetIncrement.page_size` and `CursorPagination.page_size` are literal integers (not templates).
 - [ ] `concurrency_level.default_concurrency` is a literal integer.
+- [ ] `page_size` in `OffsetIncrement` / `CursorPagination` is either a literal integer OR a Jinja template like `"{{ config.get('x_page_size', 100) }}"` (both forms are accepted by the CDK and the Builder UI). Wire declared `*_page_size` config keys via the templated form so operator overrides take effect.
 - [ ] Schema `$schema` is `http://json-schema.org/schema#` (not draft-07).
 - [ ] Schema type arrays are `[type, "null"]`, not `["null", type]`.
 - [ ] `check` block is present and placed BEFORE `definitions`.
@@ -48,11 +48,11 @@ If `validate-strict` passed, these are already satisfied automatically — but e
 
 Run the per-stream `read` loop from `connector-create.md` §5.6 and verify, for every stream:
 
-- [ ] Record count > 0 (unless the source truly has no data).
-- [ ] Error count = 0 (any `ERROR` / `FATAL` in the log is a blocker).
+- [ ] First-read record count > 0 (unless the source truly has no data).
+- [ ] Error count = 0 in both first read and resume read (any `ERROR` / `FATAL` in the log is a blocker).
 - [ ] Every emitted record contains `tenant_id`, `source_id`, `unique_key`.
-- [ ] For incremental streams, a second consecutive `read` (without state reset) returns a strict subset of records — confirms the cursor is advancing.
-- [ ] For substreams, parent-ids on child records resolve to records emitted by the parent stream.
+- [ ] For substreams, the parent_key/partition_field uses the parent's stable internal id (e.g. `youtrack_id` from `record['id']`), NOT a nullable human-readable field like `id_readable` from `record.get('idReadable')` — a `null` value silently routes to `.../None/<endpoint>` which 404s and drops the slice.
+- [ ] For incremental streams, a **resume read** (second run after capturing the emitted `STATE` message from stdout and writing it to `state.json`) returns a strict subset of the first-read records — usually zero. The skill's smoke-test script in `connector-create.md` §5.6 does this capture + persist + resume automatically. A naive "second consecutive read" without persisting state cannot validate cursor advancement (`source.sh read` writes Airbyte Protocol JSON to stdout but does not update `state.json` itself).
 
 ## Step 3: Spec-level checklist
 

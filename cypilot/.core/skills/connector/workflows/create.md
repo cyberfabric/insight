@@ -192,9 +192,11 @@ MUST include:
 
 MUST NOT:
 - Use whole-object `$ref` (`#/definitions/auth`, `#/definitions/paginator`, `#/streams/N`, `#/definitions/add_fields`). Builder strict validator only accepts granular leaf-field `$ref` into `definitions.linked.<Component>/<field>`. For substream parents (`parent_stream_configs[0].stream`) and any object that cannot be leafed, inline the full definition or duplicate.
-- Put template strings in integer-typed slots — `OffsetIncrement.page_size`, `CursorPagination.page_size`, `ConcurrencyLevel.default_concurrency` MUST be literal integers, not `"{{ config.get('x_page_size', 50) }}"`. Parameterize via CI manifest generation or a Python CDK if config-driven page size is required.
 - Put template strings in request params that collide with API datetime dialects. YouTrack `updated: ` expects ISO 8601 with `T` separator, no braces, no spaces. Jira JQL expects `"YYYY-MM-DD HH:MM"` with space, no T. Always run `source.sh check <tenant>` against a real instance to confirm.
 - Convert epoch-millisecond cursor fields via a transformation like `"{{ format_datetime(record['updated'] / 1000, '%Y-%m-%dT%H:%M:%S') }}"` in `AddedFieldDefinition.value`. The value does not reliably interpolate before `cursor.observe()` sees it, and you'll get a runtime error with the literal Jinja template as the cursor value. Use Airbyte's native `%ms` (or `%s`, `%s_as_float`, `%epoch_microseconds`) token in `DatetimeBasedCursor.cursor_datetime_formats` instead. See `src/ingestion/tools/declarative-connector/README.md` §"Epoch millisecond cursors" for the exact pattern.
+- Route substreams through nullable parent fields (e.g. `parent_key: id_readable` / `record.get('idReadable')`). Use the parent's stable internal id (`record['id']`, surfaced as `youtrack_id` etc.). A `null` from the API silently routes to `.../None/<endpoint>` which 404s and drops the entire partition.
+
+NOTE on integer-typed slots: Airbyte declarative CDK accepts BOTH integers AND Jinja-interpolated strings for `OffsetIncrement.page_size`, `CursorPagination.page_size`, and similar slots — `page_size: "{{ config.get('x_page_size', 100) }}"` is valid and recommended for config-driven pagination. (Earlier guidance in this file was wrong; the strict validator's "literal integer" rejection in our YouTrack work was a downstream symptom of a different `$ref` issue, not of templated page_size.)
 
 See `src/ingestion/tools/declarative-connector/README.md` for the full Builder-UI rules list and datetime pitfalls.
 
@@ -440,11 +442,15 @@ Then read **each stream in isolation** — not just one combined read. `validate
 | `record.get('X', {}).get('Y')` when `record['X']` is present but `null` | `jinja2.exceptions.UndefinedError: 'None' has no attribute 'get'` — defaults on `.get()` only apply to **missing** keys, not `None` values | Replace with `(record.get('X') or {}).get('Y')`. Use the same pattern for every chain that may hit a nullable parent object. |
 | Source API query syntax (e.g. YouTrack `updated:`, Jira JQL, Salesforce SOQL) does not match your template | HTTP 400 `invalid_query` from the source | Never trust documentation alone — run `check` against a live tenant and inspect the generated URL. Each API has its own datetime dialect. See `src/ingestion/tools/declarative-connector/README.md` §"Datetime syntax pitfalls". |
 
-**Per-stream `read` pattern** (for thorough testing — saves the full catalog, swaps in single-stream catalog, resets state, runs `read`, then restores):
+**Per-stream `read` pattern** (for thorough testing — saves the full catalog, swaps in single-stream catalog, resets state, runs `read`, captures the emitted `STATE`, then runs `read` a second time to verify cursor advancement):
 
 ```bash
 INGESTION=src/ingestion
-CONN=$INGESTION/connectors/<category>/<name>
+CONNECTOR_PATH=<category>/<name>            # e.g. task-tracking/youtrack
+CONN=$INGESTION/connectors/$CONNECTOR_PATH
+CONNECTOR_NAME=$(basename "$CONN")
+TENANT=<tenant>                              # e.g. example-tenant
+
 cp "$CONN/configured_catalog.json" "$CONN/configured_catalog.json.bak"
 for stream in $(jq -r '.streams[].stream.name' "$CONN/configured_catalog.json.bak"); do
   # Build single-stream catalog
@@ -453,13 +459,29 @@ for stream in $(jq -r '.streams[].stream.name' "$CONN/configured_catalog.json.ba
   echo '[]' > "$CONN/state.json"
 
   echo "=== $stream ==="
-  log=/tmp/${name}_${stream}.log
-  # macOS: use gtimeout if available; Linux: use timeout
-  ( bash $INGESTION/tools/declarative-connector/source.sh read <category>/<name> <tenant> > "$log" 2>&1 ) &
+  log=/tmp/${CONNECTOR_NAME}_${stream}.log
+
+  # First read: from empty state.
+  ( bash $INGESTION/tools/declarative-connector/source.sh read "$CONNECTOR_PATH" "$TENANT" > "$log" 2>&1 ) &
   pid=$!; ( sleep 120; kill -TERM $pid 2>/dev/null ) & killer=$!
   wait $pid 2>/dev/null; kill -TERM $killer 2>/dev/null
 
-  # Count records + errors
+  # Capture last emitted STATE message and write to state.json so the next read resumes from it.
+  python3 - "$log" "$CONN/state.json" <<'PY'
+import json, sys
+states = []
+with open(sys.argv[1]) as f:
+    for line in f:
+        try: msg = json.loads(line)
+        except json.JSONDecodeError: continue
+        if msg.get("type") == "STATE":
+            states.append(msg.get("state", msg))
+if states:
+    with open(sys.argv[2], "w") as out:
+        json.dump([states[-1]], out)
+PY
+
+  # Count records + errors from first read.
   python3 -c "
 import json
 recs = 0; errs = []
@@ -468,8 +490,25 @@ for line in open('$log'):
     except: continue
     if o.get('type') == 'RECORD': recs += 1
     elif o.get('log',{}).get('level') in ('ERROR','FATAL'): errs.append(o['log']['message'][:300])
-print(f'  records: {recs}, errors: {len(errs)}')
+print(f'  first read:  records={recs}, errors={len(errs)}')
 for e in errs[:2]: print(f'    {e}')
+"
+
+  # Second read: with persisted state — for incremental streams this must produce a strict subset
+  # (often zero records). For full-refresh streams the count typically stays the same.
+  log2=/tmp/${CONNECTOR_NAME}_${stream}_resume.log
+  ( bash $INGESTION/tools/declarative-connector/source.sh read "$CONNECTOR_PATH" "$TENANT" > "$log2" 2>&1 ) &
+  pid=$!; ( sleep 60; kill -TERM $pid 2>/dev/null ) & killer=$!
+  wait $pid 2>/dev/null; kill -TERM $killer 2>/dev/null
+  python3 -c "
+import json
+recs = 0; errs = 0
+for line in open('$log2'):
+    try: o = json.loads(line)
+    except: continue
+    if o.get('type') == 'RECORD': recs += 1
+    elif o.get('log',{}).get('level') in ('ERROR','FATAL'): errs += 1
+print(f'  resume read: records={recs}, errors={errs}')
 "
 done
 cp "$CONN/configured_catalog.json.bak" "$CONN/configured_catalog.json"
@@ -477,11 +516,11 @@ rm "$CONN/configured_catalog.json.bak"
 ```
 
 Acceptance criteria for each stream:
-- [ ] Record count > 0 (unless source genuinely has no data — rare).
-- [ ] Error count = 0 (any `ERROR` / `FATAL` log message is a runtime bug — fix before deploy).
+- [ ] First-read record count > 0 (unless source genuinely has no data — rare).
+- [ ] Error count = 0 in both runs (any `ERROR` / `FATAL` log message is a runtime bug — fix before deploy).
 - [ ] Every emitted record has `tenant_id`, `source_id`, `unique_key`.
-- [ ] For substreams, parent records are enumerated first and child records reference valid parent ids.
-- [ ] For incremental streams, a second `read` run (without resetting state) produces a subset of records (or zero) — confirms state is advancing.
+- [ ] For substreams, parent records are enumerated first and child records reference valid parent ids (use the parent's stable internal id field — e.g. `youtrack_id` from `record['id']` — for routing, NOT a nullable `record.get('idReadable')`-style field, since YouTrack/Jira can return `null` for human-readable IDs in some payloads).
+- [ ] For incremental streams, the **resume read** (second run, with the captured STATE persisted in `state.json`) returns a strict subset of the first-read records — usually zero. If the resume read returns the same count as the first read, the cursor is not advancing and the manifest is broken.
 
 If any stream fails, do NOT deploy. Fix the manifest and re-run both `validate-strict` and the per-stream `read`.
 

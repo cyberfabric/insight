@@ -72,17 +72,17 @@ kubectl apply -f src/ingestion/secrets/connectors/youtrack.yaml
 
 | Stream | Endpoint | Sync Mode | Cursor | Pagination | Feature |
 |--------|----------|-----------|--------|------------|---------|
-| `youtrack_projects` | `GET /api/admin/projects` | Full refresh | — | Offset (`$skip/$top`) | 2.1 |
-| `youtrack_user` | `GET /api/users` | Full refresh | — | Offset | 2.2 *(planned)* |
-| `youtrack_agiles` | `GET /api/agiles` | Full refresh | — | Offset | 2.2 *(planned)* |
-| `youtrack_sprints` | `GET /api/agiles/{id}/sprints` | Substream of `youtrack_agiles` | — | Offset | 2.2 *(planned)* |
-| `youtrack_issue_link_types` | `GET /api/issueLinkTypes` | Full refresh | — | Offset | 2.2 *(planned)* |
-| `youtrack_issue` | `GET /api/issues?query=updated:...` | Incremental | `updated` | Offset | 2.3 *(planned)* |
-| `youtrack_issue_history` | `GET /api/issues/{id}/activitiesPage` | Substream of `youtrack_issue` | — | Cursor (`afterCursor/hasAfter`) | 2.3 *(planned)* |
-| `youtrack_comments` | `GET /api/issues/{id}/comments` | Substream of `youtrack_issue` | — | Offset | 2.3 *(planned)* |
-| `youtrack_worklogs` | `GET /api/issues/{id}/timeTracking/workItems` | Substream of `youtrack_issue` | — | Offset | 2.3 *(planned)* |
-| `youtrack_issue_links` | Projection of `youtrack_issue.links[]` | Derived | — | — | 2.3 *(planned)* |
-| `youtrack_project_custom_fields` | `GET /api/admin/projects/{id}/customFields` | Substream of `youtrack_projects` | — | Offset | 2.4 *(planned)* |
+| `youtrack_projects` | `GET /api/admin/projects` | Full refresh | — | Offset (`$skip/$top`) | 2.2 |
+| `youtrack_user` | `GET /api/users` | Full refresh | — | Offset | 2.2 |
+| `youtrack_agiles` | `GET /api/agiles` | Full refresh | — | Offset | 2.2 |
+| `youtrack_sprints` | `GET /api/agiles/{id}/sprints` | Substream of `youtrack_agiles` | — | Offset | 2.2 |
+| `youtrack_issue_link_types` | `GET /api/issueLinkTypes` | Full refresh | — | Offset | 2.2 |
+| `youtrack_issue` | `GET /api/issues?query=updated:...` | Incremental | `updated` (epoch ms) | Offset | 2.3 |
+| `youtrack_issue_history` | `GET /api/issues/{id}/activitiesPage` | Substream of `youtrack_issue` | — | Cursor (`afterCursor/hasAfter`) | 2.3 |
+| `youtrack_comments` | `GET /api/issues/{id}/comments` | Substream of `youtrack_issue` | — | Offset | 2.3 |
+| `youtrack_worklogs` | `GET /api/issues/{id}/timeTracking/workItems` | Substream of `youtrack_issue` | — | Offset | 2.3 |
+| `youtrack_project_custom_fields` | `GET /api/admin/projects/{id}/customFields` | Substream of `youtrack_projects` | — | Offset | 2.4 |
+| `youtrack_issue_links` | Projection of `youtrack_issue.links[]` | Derived | — | — | 2.5 *(deferred — emitted by dbt staging in feature 2.5, not by the manifest)* |
 
 ### Identity Key
 

@@ -52,10 +52,10 @@ The YouTrack task-tracker work is decomposed into ten features that together del
 
 **Dependency on PR #205**: feature 2.5 (dbt staging) onward consumes the silver package (`src/ingestion/silver/task-tracking/class_task_*`), the `create_task_field_history_staging` dbt macro, and the `ingestion-pipeline` Argo template introduced in PR #205. No code-level feature can land until PR #205 is merged to `main`.
 
-**Donor code references**:
+**Donor code references** (private repo, accessed by maintainers via the Phase 1 research notes — paths inside the donor repo are stable):
 
-- v2 — `/Users/roman/alemira/monitor/sources/youtrack/src/` — `youtrack/types.ts`, `youtrack/client.ts`, `replay/*` (replay algorithm donor for feature 2.6).
-- v1 — `/Users/roman/alemira/monitor/packages/cli/commands/youTrack/` — `fields/IssueActivities.ts` (activity category enumeration), `requests/fetchYouTrackUsers.ts` (users endpoint).
+- v2 — `monitor` repo, path `sources/youtrack/src/` — `youtrack/types.ts`, `youtrack/client.ts`, `replay/*` (replay algorithm donor for feature 2.6).
+- v1 — `monitor` repo, path `packages/cli/commands/youTrack/` — `fields/IssueActivities.ts` (activity category enumeration), `requests/fetchYouTrackUsers.ts` (users endpoint).
 - v1 KB-capacity ignored — project-specific legacy, out of scope.
 
 ---

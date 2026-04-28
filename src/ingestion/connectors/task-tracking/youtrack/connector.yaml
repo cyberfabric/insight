@@ -28,7 +28,7 @@ streams:
         field_name: $skip
       pagination_strategy:
         type: OffsetIncrement
-        page_size: 100
+        page_size: '{{ config.get(''youtrack_page_size'', 100) }}'
     requester:
       type: HttpRequester
       url_base: '{{ config[''youtrack_base_url''] }}'
@@ -172,7 +172,7 @@ streams:
         field_name: $skip
       pagination_strategy:
         type: OffsetIncrement
-        page_size: 200
+        page_size: '{{ config.get(''youtrack_page_size'', 100) }}'
     requester:
       type: HttpRequester
       url_base: '{{ config[''youtrack_base_url''] }}'
@@ -332,7 +332,7 @@ streams:
         field_name: $skip
       pagination_strategy:
         type: OffsetIncrement
-        page_size: 100
+        page_size: '{{ config.get(''youtrack_page_size'', 100) }}'
     requester:
       type: HttpRequester
       url_base: '{{ config[''youtrack_base_url''] }}'
@@ -460,7 +460,7 @@ streams:
         field_name: $skip
       pagination_strategy:
         type: OffsetIncrement
-        page_size: 100
+        page_size: '{{ config.get(''youtrack_page_size'', 100) }}'
     requester:
       type: HttpRequester
       url_base: '{{ config[''youtrack_base_url''] }}'
@@ -515,7 +515,7 @@ streams:
                 field_name: $skip
               pagination_strategy:
                 type: OffsetIncrement
-                page_size: 100
+                page_size: '{{ config.get(''youtrack_page_size'', 100) }}'
             requester:
               type: HttpRequester
               url_base: '{{ config[''youtrack_base_url''] }}'
@@ -747,7 +747,7 @@ streams:
         field_name: $skip
       pagination_strategy:
         type: OffsetIncrement
-        page_size: 100
+        page_size: '{{ config.get(''youtrack_page_size'', 100) }}'
     requester:
       type: HttpRequester
       url_base: '{{ config[''youtrack_base_url''] }}'
@@ -899,7 +899,7 @@ streams:
         field_name: $skip
       pagination_strategy:
         type: OffsetIncrement
-        page_size: 100
+        page_size: '{{ config.get(''youtrack_page_size'', 100) }}'
     requester:
       type: HttpRequester
       url_base: '{{ config[''youtrack_base_url''] }}'
@@ -1135,7 +1135,7 @@ streams:
         field_name: cursor
       pagination_strategy:
         type: CursorPagination
-        page_size: 200
+        page_size: '{{ config.get(''youtrack_activities_page_size'', 200) }}'
         cursor_value: '{{ response.get(''afterCursor'', '''') }}'
         stop_condition: '{{ not response.get(''hasAfter'') }}'
     requester:
@@ -1161,7 +1161,7 @@ streams:
           http_codes:
           - 401
           - 403
-      path: /api/issues/{{ stream_partition.id_readable }}/activitiesPage
+      path: /api/issues/{{ stream_partition.youtrack_id }}/activitiesPage
       request_parameters:
         fields: afterCursor,hasAfter,activities($type,id,timestamp,category(id,localizedName),targetMember,author(id,login,fullName),field($type,id,presentation,customField(id,fieldType(id,valueType,isMultiValue))),added,removed)
         categories: IssueCreatedCategory,SummaryCategory,DescriptionCategory,ProjectCategory,AttachmentsCategory,AttachmentRenameCategory,IssueResolvedCategory,IssueVisibilityCategory,TicketCCEventCategory,IssueDeletedCategory,IssueRestoredCategory,CommentsCategory,CustomFieldCategory,SprintCategory,TagsCategory,LinksCategory,VotersCategory,TotalVotesCategory,VcsChangeCategory,CommentAttachmentsCategory,CommentVisibilityCategory,CommentTextCategory,AttachmentVisibilityCategory
@@ -1193,7 +1193,7 @@ streams:
                 field_name: $skip
               pagination_strategy:
                 type: OffsetIncrement
-                page_size: 100
+                page_size: '{{ config.get(''youtrack_page_size'', 100) }}'
             requester:
               type: HttpRequester
               url_base: '{{ config[''youtrack_base_url''] }}'
@@ -1405,8 +1405,8 @@ streams:
               - tenant_id
               - source_id
               additionalProperties: true
-        parent_key: id_readable
-        partition_field: id_readable
+        parent_key: youtrack_id
+        partition_field: youtrack_id
         incremental_dependency: true
   transformations:
   - type: AddFields
@@ -1433,8 +1433,8 @@ streams:
       value: '{{ record.get(''$type'') }}'
     - type: AddedFieldDefinition
       path:
-      - id_readable
-      value: '{{ stream_partition.id_readable }}'
+      - youtrack_id
+      value: '{{ stream_partition.youtrack_id }}'
     - type: AddedFieldDefinition
       path:
       - category_id
@@ -1517,10 +1517,6 @@ streams:
           type:
           - string
           - 'null'
-        id_readable:
-          type:
-          - string
-          - 'null'
         category_id:
           type:
           - string
@@ -1577,6 +1573,10 @@ streams:
           type:
           - string
           - 'null'
+        youtrack_id:
+          type:
+          - string
+          - 'null'
       required:
       - unique_key
       - tenant_id
@@ -1605,7 +1605,7 @@ streams:
         field_name: $skip
       pagination_strategy:
         type: OffsetIncrement
-        page_size: 100
+        page_size: '{{ config.get(''youtrack_page_size'', 100) }}'
     requester:
       type: HttpRequester
       url_base: '{{ config[''youtrack_base_url''] }}'
@@ -1629,7 +1629,7 @@ streams:
           http_codes:
           - 401
           - 403
-      path: /api/issues/{{ stream_partition.id_readable }}/comments
+      path: /api/issues/{{ stream_partition.youtrack_id }}/comments
       request_parameters:
         fields: id,text,textPreview,created,updated,author(id,login,fullName,email),deleted
     partition_router:
@@ -1660,7 +1660,7 @@ streams:
                 field_name: $skip
               pagination_strategy:
                 type: OffsetIncrement
-                page_size: 100
+                page_size: '{{ config.get(''youtrack_page_size'', 100) }}'
             requester:
               type: HttpRequester
               url_base: '{{ config[''youtrack_base_url''] }}'
@@ -1872,8 +1872,8 @@ streams:
               - tenant_id
               - source_id
               additionalProperties: true
-        parent_key: id_readable
-        partition_field: id_readable
+        parent_key: youtrack_id
+        partition_field: youtrack_id
         incremental_dependency: true
   transformations:
   - type: AddFields
@@ -1896,8 +1896,8 @@ streams:
       value: '{{ record[''id''] }}'
     - type: AddedFieldDefinition
       path:
-      - id_readable
-      value: '{{ stream_partition.id_readable }}'
+      - youtrack_id
+      value: '{{ stream_partition.youtrack_id }}'
     - type: AddedFieldDefinition
       path:
       - author_id
@@ -1956,10 +1956,6 @@ streams:
           type:
           - string
           - 'null'
-        id_readable:
-          type:
-          - string
-          - 'null'
         author_id:
           type:
           - string
@@ -1996,6 +1992,10 @@ streams:
           type:
           - string
           - 'null'
+        youtrack_id:
+          type:
+          - string
+          - 'null'
       required:
       - unique_key
       - tenant_id
@@ -2024,7 +2024,7 @@ streams:
         field_name: $skip
       pagination_strategy:
         type: OffsetIncrement
-        page_size: 100
+        page_size: '{{ config.get(''youtrack_page_size'', 100) }}'
     requester:
       type: HttpRequester
       url_base: '{{ config[''youtrack_base_url''] }}'
@@ -2048,7 +2048,7 @@ streams:
           http_codes:
           - 401
           - 403
-      path: /api/issues/{{ stream_partition.id_readable }}/timeTracking/workItems
+      path: /api/issues/{{ stream_partition.youtrack_id }}/timeTracking/workItems
       request_parameters:
         fields: id,author(id,login,fullName,email),creator(id),date,duration(minutes),text,type(id,name)
     partition_router:
@@ -2079,7 +2079,7 @@ streams:
                 field_name: $skip
               pagination_strategy:
                 type: OffsetIncrement
-                page_size: 100
+                page_size: '{{ config.get(''youtrack_page_size'', 100) }}'
             requester:
               type: HttpRequester
               url_base: '{{ config[''youtrack_base_url''] }}'
@@ -2291,8 +2291,8 @@ streams:
               - tenant_id
               - source_id
               additionalProperties: true
-        parent_key: id_readable
-        partition_field: id_readable
+        parent_key: youtrack_id
+        partition_field: youtrack_id
         incremental_dependency: true
   transformations:
   - type: AddFields
@@ -2315,8 +2315,8 @@ streams:
       value: '{{ record[''id''] }}'
     - type: AddedFieldDefinition
       path:
-      - id_readable
-      value: '{{ stream_partition.id_readable }}'
+      - youtrack_id
+      value: '{{ stream_partition.youtrack_id }}'
     - type: AddedFieldDefinition
       path:
       - author_id
@@ -2379,10 +2379,6 @@ streams:
           type:
           - string
           - 'null'
-        id_readable:
-          type:
-          - string
-          - 'null'
         author_id:
           type:
           - string
@@ -2423,6 +2419,10 @@ streams:
           type:
           - string
           - 'null'
+        youtrack_id:
+          type:
+          - string
+          - 'null'
       required:
       - unique_key
       - tenant_id
@@ -2451,7 +2451,7 @@ streams:
         field_name: $skip
       pagination_strategy:
         type: OffsetIncrement
-        page_size: 100
+        page_size: '{{ config.get(''youtrack_page_size'', 100) }}'
     requester:
       type: HttpRequester
       url_base: '{{ config[''youtrack_base_url''] }}'
@@ -2506,7 +2506,7 @@ streams:
                 field_name: $skip
               pagination_strategy:
                 type: OffsetIncrement
-                page_size: 100
+                page_size: '{{ config.get(''youtrack_page_size'', 100) }}'
             requester:
               type: HttpRequester
               url_base: '{{ config[''youtrack_base_url''] }}'
