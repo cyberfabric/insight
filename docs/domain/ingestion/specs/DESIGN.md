@@ -27,6 +27,7 @@ date: 2026-03-23
   - [4.1 Production (Kubernetes + Helm)](#41-production-kubernetes--helm)
   - [4.2 Local Development (Kind K8s Cluster)](#42-local-development-kind-k8s-cluster)
   - [4.3 Ultra-Light Connector Debugging](#43-ultra-light-connector-debugging)
+  - [4.4 Schema Migrations](#44-schema-migrations)
 - [5. Additional Context](#5-additional-context)
   - [5.1 Superseded Components](#51-superseded-components)
 - [6. Open Questions](#6-open-questions)
@@ -646,8 +647,14 @@ K8s Cluster
 ├── namespace: argo
 │   ├── Argo Server (API + UI)
 │   └── Argo Controller (workflow execution)
-└── namespace: data
-    └── ClickHouse (single-node or cluster)
+├── namespace: data
+│   └── ClickHouse (single-node or cluster)
+└── namespace: insight
+    ├── MariaDB (metric definitions, service metadata)
+    ├── Analytics API (Rust/Axum)
+    ├── Identity Resolution (Rust stub)
+    ├── API Gateway (Rust/Axum, OIDC, proxy)
+    └── Frontend (SPA, nginx)
 ```
 
 Key deployment decisions:
@@ -656,6 +663,16 @@ Key deployment decisions:
 - External database for Airbyte metadata (PostgreSQL required by Airbyte, managed internally by abctl)
 - Helm charts: Airbyte via `abctl`, Argo via `argo/argo-workflows`
 - ClickHouse deployed via K8s manifests (`src/ingestion/k8s/clickhouse/`)
+- ClickHouse health probes use HTTP GET `/ping` endpoint (not `clickhouse-client` exec — avoids CLI flag parsing issues with auto-generated passwords)
+- MariaDB deployed via Bitnami Helm chart (`helmfile/values/mariadb.yaml`); `up.sh` installs it idempotently before backend services
+- CDK connector build script (`airbyte-toolkit/build-connector.sh`) uses `CLUSTER_NAME` env var (default `insight`) for Kind image loading — not hardcoded
+- Airbyte port-forward uses `nohup ... & disown` to avoid blocking the terminal
+- Argo `dbt-run` WorkflowTemplate uses locally-built `insight-toolbox:local` image (with `imagePullPolicy: IfNotPresent`) — not `ghcr.io/cyberfabric/insight-toolbox:latest`. Local builds via `tools/toolbox/build.sh` pick up dbt model changes without requiring a registry push. Template also accepts `full_refresh` parameter (pass `--full-refresh` to recreate tables from scratch)
+- CoreDNS is patched to use public DNS upstream (`8.8.8.8`, `8.8.4.4`) — WSL's `/etc/resolv.conf` points to an internal WSL nameserver that cannot reliably resolve external domains (e.g. `login.microsoftonline.com`). Patch is applied by `up.sh` and verified by `restart.sh`
+- `restart.sh` also cleans up stale Airbyte replication-job pods (from previous syncs that did not exit cleanly)
+- Gold views migration (`20260417000000_gold-views.sql`) references bronze tables from optional connectors (jira, m365, zoom). For connectors **without a credential secret** (neither `secrets/connectors/<name>.yaml` on disk nor a corresponding `airbyte-<connector>` Kubernetes Secret in the `airbyte` namespace), `scripts/create-bronze-placeholders.sh` creates empty placeholder tables with a minimal compatible schema so the gold-views migration succeeds on a partial install.
+  - **Placeholder handoff caveat**: Airbyte ClickHouse destination v2.0.8+ throws an error on the first sync if the target bronze table exists with a schema that does not match the destination's expected schema for that stream. The placeholder schemas in `create-bronze-placeholders.sh` are intentionally minimal (only the columns referenced by gold views) — they are **not** a drop-in replacement for a native Airbyte-generated table. Before enabling a previously-placeholdered connector, the operator should manually `DROP TABLE` the placeholder(s) in ClickHouse so Airbyte can create them fresh on its first sync.
+  - Script runs automatically via `init.sh` before migrations.
 - All credentials managed via Kubernetes Secrets (see §4.1.1)
 - Service access via NodePort: Airbyte (8000), Argo UI (30500), ClickHouse (30123)
 
@@ -665,8 +682,9 @@ All infrastructure and connector credentials are stored in Kubernetes Secrets. N
 
 | Secret | Namespace | Purpose | Required Keys | Created by |
 |--------|-----------|---------|---------------|------------|
-| `clickhouse-credentials` | `data` + `argo` | ClickHouse `default` user password | `username`, `password` | `secrets/apply.sh` |
+| `clickhouse-credentials` | `data` + `argo` + `insight` | ClickHouse `default` user password | `username`, `password` | `src/ingestion/up.sh` (auto-generated) |
 | `airbyte-auth-secrets` | `airbyte` | Airbyte internal auth | `instance-admin-password`, `instance-admin-client-id`, `instance-admin-client-secret`, `jwt-signature-secret` | Helm chart (auto) |
+| `insight-mariadb` | `insight` | MariaDB root + app credentials | `mariadb-root-password`, `mariadb-password` | Bitnami Helm chart (auto) |
 | `insight-{connector}-{source-id}` | `data` | Per-connector credentials (see [ADR-0003](ADR/0003-k8s-secrets-credentials.md)) | Connector-specific (e.g. `azure_client_id`, `azure_client_secret`) | `secrets/apply.sh` |
 
 Argo UI uses `--auth-mode=client` in production — authentication via K8s ServiceAccount Bearer tokens, no Secret required.
@@ -693,23 +711,50 @@ Argo UI uses `--auth-mode=client` in production — authentication via K8s Servi
 
 5. **Password rotation procedure.** Update Secret → apply to cluster → restart ClickHouse (Deployment uses `strategy: Recreate` to avoid PVC ReadWriteOnce conflicts) → run `airbyte-toolkit/connect.sh` to sync Airbyte destination password.
 
+6. **Destination sync modes.** `connect.sh` assigns destination sync modes based on source stream capabilities:
+   - `full_refresh` streams → `overwrite` (each sync replaces all data — no duplicate accumulation)
+   - `incremental` streams → `append_dedup` (appends new records, deduplicates by primary key)
+
 ### 4.2 Local Development (Kind K8s Cluster)
 
-All services run inside a Kind K8s cluster (`airbyte-abctl`):
-- Airbyte installed via `abctl local install`
-- Argo Workflows installed via Helm chart
+All services run inside a Kind K8s cluster (`insight`):
+- Airbyte installed via Helm chart (`airbyte/airbyte`)
+- Argo Workflows installed via Helm chart (`argo/argo-workflows`)
 - ClickHouse deployed via K8s manifests (Deployment + Service + PVC + ConfigMap)
+- MariaDB installed via Bitnami Helm chart
+- Backend services (Analytics API, Identity Resolution, API Gateway) deployed via per-service Helm charts
+- Frontend deployed via Helm chart (image from `ghcr.io/cyberfabric/insight-front`)
 - dbt runs as Argo container steps (`insight-toolbox`)
 
-KUBECONFIG: `~/.kube/kind-ingestion`
+KUBECONFIG: `~/.kube/insight.kubeconfig`
 
-Startup: `./up.sh` — installs Airbyte, deploys ClickHouse, installs Argo, applies WorkflowTemplates, initializes connections.
+#### Startup scripts
+
+| Script | Purpose |
+|--------|---------|
+| `./up.sh` | Full stack: creates Kind cluster, deploys all services (ingestion + MariaDB + backend + frontend). Uses `.env.local` for configuration. Idempotent — safe to re-run. |
+| `./restart.sh` | Quick restart after WSL/Docker crash: restarts existing Kind cluster and scales pods back to 1. Falls back to full `./up.sh` + `./init.sh` if cluster is gone. Cleans up stale containers and stuck Helm releases. |
+| `./down.sh` | Graceful stop: scales all pods to 0, stops Kind container. Data preserved — `./restart.sh` brings everything back. |
+| `./init.sh` | Post-startup init: applies secrets, runs ClickHouse migrations, registers connectors, creates Airbyte connections. (MariaDB schema is applied per-service by each backend service's own SeaORM `Migrator` at startup — see §4.4 and [ADR-0006](ADR/0006-service-owned-migrations.md).) |
+| `src/ingestion/sync-all.sh` | Trigger Airbyte sync for all connections. Reads connection IDs from state, calls Airbyte API. Use after `./init.sh` to start first data load, or anytime to re-sync all sources. |
+
+**First-time setup**:
+1. Copy `.env.local.example` → `.env.local`
+2. Copy connector secret examples → fill credentials (`src/ingestion/secrets/connectors/`)
+3. `./up.sh` — full stack deployment
+4. `./init.sh` — databases, connectors, connections
+5. `cd src/ingestion && ./sync-all.sh` — trigger first Airbyte sync for all connections
+
+**After WSL/Docker crash**: `./restart.sh` — one command, restores full state.
+
+**Environment support**: `./up.sh --env <name>` loads `.env.<name>` config. Supports `local` (Kind) and `remote` (external kubeconfig) modes.
 
 This enables:
 - Testing connector registration and sync execution
-- Running full extract -> transform pipeline via Argo DAG workflows
+- Running full extract → transform pipeline via Argo DAG workflows
 - Monitoring workflows via Argo UI
 - Validating dbt models against real data
+- Full backend API testing with OIDC disabled locally
 
 ### 4.3 Ultra-Light Connector Debugging
 
@@ -719,6 +764,76 @@ For rapid nocode connector iteration without the full Airbyte platform:
 - Mount custom manifest, pipe output to local destination
 
 See [Airbyte Connector DESIGN](../../connector/specs/DESIGN.md) for detailed debugging workflows.
+
+### 4.4 Schema Migrations
+
+The project persists data in two stores with two different migration
+mechanisms. **ClickHouse** schema is file-based and invoked from
+`init.sh` (cluster bootstrap path); **MariaDB** schema is service-
+owned — each backend service carries its own embedded `Migrator` and
+applies its migrations at startup (see [ADR-0006](../ADR/0006-service-owned-migrations.md)).
+The two paths diverge on bookkeeping because of different evolution
+patterns.
+
+#### 4.4.1 ClickHouse migrations
+
+- **Location**: `src/ingestion/scripts/migrations/*.sql`
+- **Naming**: `YYYYMMDDHHMMSS_<description>.sql` — timestamp prefix
+  enforces chronological order under lexicographic glob
+- **Runner**: inline loop in `init.sh`, applied via
+  `kubectl exec -i deploy/clickhouse -- clickhouse-client --multiquery`
+- **Bookkeeping**: none — every migration is re-run on every `init.sh`
+  invocation and therefore must be written idempotently
+  (`CREATE ... IF NOT EXISTS`, `ALTER ... IF NOT EXISTS`, etc.)
+- **Rationale**: analytics schema is mostly `CREATE TABLE` / `CREATE
+  VIEW` statements where idempotency guards are free, so a
+  `schema_migrations` bookkeeping table is unnecessary
+
+#### 4.4.2 MariaDB migrations — service-owned
+
+There is **no global MariaDB migration mechanism** in this project.
+Each backend service that owns MariaDB tables carries its own
+migrations inside the service codebase and applies them at startup.
+
+- **analytics-api**: SeaORM `Migrator` at
+  `src/backend/services/analytics-api/src/migration/`; tracker table
+  `seaql_migrations` in database `analytics`.
+- **identity-resolution**: SeaORM `Migrator` at
+  `src/backend/services/identity/src/migration/`; tracker table
+  `seaql_migrations` in database `identity`.
+- **Future backend services**: follow the same pattern — own
+  `src/.../migration/`, own tracker table in own database.
+
+All services use the same SeaORM-Rust flavour with `Migrator::up(db,
+None)` invoked at startup. This provides:
+
+- **Co-location**: schema changes ship with the Rust code that depends
+  on them; a service's DDL and its entity definitions never drift.
+- **Database isolation**: each service lives in its own MariaDB
+  database; cross-service table access is an explicit architectural
+  decision, not an accident of shared-schema layout.
+- **No ordering coupling between services**: no single `init.sh` step
+  must run before any service starts.
+
+Infra responsibility (in `up.sh`) stays minimal: provision the MariaDB
+instance, create the per-service databases (e.g. `CREATE DATABASE
+IF NOT EXISTS identity`), grant the app user access. **Schema inside
+each database** is the owning service's job.
+
+See [ADR-0006](ADR/0006-service-owned-migrations.md) for the decision
+record.
+
+#### 4.4.3 One-shot data seeds
+
+Operator-triggered data bootstraps (e.g. the identity-resolution
+`persons` seed reading from ClickHouse `identity.identity_inputs`) are
+not schema migrations and do not belong under the service's SeaORM
+`Migrator`. They live alongside the owning service as stand-alone
+scripts and are invoked explicitly by operators after migrations run
+and the underlying data source is populated.
+
+Currently:
+- `src/backend/services/identity/seed/seed-persons.sh` + `seed-persons-from-identity-input.py` — identity-resolution's one-shot seed.
 
 ## 5. Additional Context
 

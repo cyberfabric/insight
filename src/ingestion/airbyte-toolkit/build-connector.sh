@@ -64,12 +64,13 @@ echo "  Building Docker image..."
 docker build -t "$IMAGE" -f "$DOCKERFILE" "$CONNECTOR_DIR"
 
 # --- Step 2: Push to registry or load into Kind ---
+CLUSTER_NAME="${CLUSTER_NAME:-insight}"
 if [[ "$PUSH" -eq 1 ]]; then
   echo "  Pushing to registry..."
   docker push "$IMAGE"
-elif command -v kind &>/dev/null && kind get clusters 2>/dev/null | grep -q "^ingestion$"; then
-  echo "  Loading into Kind cluster (local dev)..."
-  kind load docker-image "$IMAGE" --name ingestion
+elif command -v kind &>/dev/null && kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
+  echo "  Loading into Kind cluster '${CLUSTER_NAME}' (local dev)..."
+  kind load docker-image "$IMAGE" --name "$CLUSTER_NAME"
 fi
 
 # --- Step 3: Register/update Airbyte source definition ---

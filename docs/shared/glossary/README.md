@@ -390,10 +390,10 @@ Use consistent `VARCHAR` lengths based on content type:
 
 | Tier | Length | Use for | Examples |
 |------|--------|---------|----------|
-| **Short** | `VARCHAR(50)` | Type codes, enum-like values, short identifiers | `alias_type`, `assignment_type`, `source` |
+| **Short** | `VARCHAR(50)` | Type codes, enum-like values, short identifiers | `value_type`, `assignment_type`, `source` |
 | **Medium** | `VARCHAR(100)` | System names, rule names, attribute names | `insight_source_type`, `attribute_name`, `condition_type` |
 | **Standard** | `VARCHAR(255)` | Human-readable names, display values | `display_name`, `name`, `role`, `location` |
-| **Long** | `VARCHAR(500)` | Emails, URLs, external identifiers, user agents | `alias_value`, `email`, `source_account_id`, `actor_user_agent` |
+| **Long** | `VARCHAR(500)` | Emails, URLs, external identifiers, user agents | `value`, `email`, `source_account_id`, `actor_user_agent` |
 | **Unbounded** | `TEXT` | Paths, free-form text, reasons, descriptions | `path`, `reason`, `description` |
 
 **Rules:**

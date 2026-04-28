@@ -25,13 +25,19 @@ kubectl exec -n data deploy/clickhouse -- clickhouse-client --password "$CH_PASS
 kubectl exec -n data deploy/clickhouse -- clickhouse-client --password "$CH_PASS" \
   --query "CREATE DATABASE IF NOT EXISTS insight" 2>/dev/null
 
-echo "=== Running migrations ==="
+echo "=== Creating bronze placeholders for missing connectors ==="
+"$SCRIPT_DIR/create-bronze-placeholders.sh"
+
+echo "=== Running ClickHouse migrations ==="
 for migration in "$SCRIPT_DIR/migrations"/*.sql; do
   [ -f "$migration" ] || continue
   echo "  $(basename "$migration")"
   grep -v '^\s*--' "$migration" \
     | kubectl exec -i -n data deploy/clickhouse -- clickhouse-client --password "$CH_PASS" --multiquery
 done
+
+# MariaDB migrations: each backend service now owns and applies its own
+# migrations at startup (SeaORM Migrator::up). See ADR-0006.
 
 echo "=== Registering connectors ==="
 "${TOOLKIT_DIR}/register.sh" --all

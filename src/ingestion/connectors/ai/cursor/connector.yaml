@@ -28,11 +28,13 @@ definitions:
     page_token_option:
       type: RequestOption
       inject_into: body_json
-      field_name: page
+      field_path:
+        - page
     page_size_option:
       type: RequestOption
       inject_into: body_json
-      field_name: pageSize
+      field_path:
+        - pageSize
 
   get_paginator:
     type: DefaultPaginator
@@ -494,12 +496,14 @@ streams:
         datetime_format: "%Y-%m-%d"
       start_time_option:
         type: RequestOption
-        field_name: startDate
         inject_into: body_json
+        field_path:
+          - startDate
       end_time_option:
         type: RequestOption
-        field_name: endDate
         inject_into: body_json
+        field_path:
+          - endDate
 
 spec:
   type: Spec

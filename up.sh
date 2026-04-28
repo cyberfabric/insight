@@ -90,6 +90,22 @@ OIDC_AUDIENCE="${OIDC_AUDIENCE:-api://default}"
 
 DEPLOY_TS="$(date +%s)"
 
+# ─── MariaDB credentials (dev defaults; production must override via env) ─
+# Kept at the top so Analytics API (below) can derive ANALYTICS_DB_URL from
+# the same values, and so an operator-provided override flows through the
+# whole pipeline without editing multiple places.
+MARIADB_ROOT_PASSWORD="${MARIADB_ROOT_PASSWORD:-root-local}"
+# Bitnami chart's "primary" database -- owned by analytics-api
+# (metrics / thresholds / table_columns / seaql_migrations).
+MARIADB_DATABASE="${MARIADB_DATABASE:-analytics}"
+# Identity-resolution-domain database -- owned by this repo's migration
+# runner + seed (persons, schema_migrations, future identity tables).
+# Created post-chart-install via `CREATE DATABASE IF NOT EXISTS`, with
+# GRANT for MARIADB_USER.
+IDENTITY_DB="${IDENTITY_DB:-identity}"
+MARIADB_USER="${MARIADB_USER:-insight}"
+MARIADB_PASSWORD="${MARIADB_PASSWORD:-insight-pass}"
+
 # ─── Sanity ───────────────────────────────────────────────────────────────
 if [[ "$AUTH_DISABLED" != "true" && -z "$OIDC_EXISTING_SECRET" ]]; then
   : "${OIDC_ISSUER:?ERROR: OIDC_ISSUER is required — set it in $ENV_FILE or use OIDC_EXISTING_SECRET}"
@@ -123,6 +139,19 @@ if [[ "$CLUSTER_MODE" == "local" ]]; then
   fi
   kind export kubeconfig --name "${CLUSTER_NAME}" --kubeconfig "${KUBECONFIG_PATH}" 2>/dev/null || true
   export KUBECONFIG="${KUBECONFIG_PATH}"
+
+  # Patch CoreDNS to use public DNS upstream — WSL /etc/resolv.conf forwards to
+  # a WSL-internal nameserver that cannot reliably resolve external domains
+  # (login.microsoftonline.com, api.zoom.us, etc). Idempotent.
+  if kubectl get configmap coredns -n kube-system -o yaml 2>/dev/null \
+    | grep -q "forward . /etc/resolv.conf"; then
+    echo "  Patching CoreDNS to use public DNS (8.8.8.8, 8.8.4.4)..."
+    kubectl get configmap coredns -n kube-system -o yaml \
+      | sed 's|forward \. /etc/resolv.conf|forward . 8.8.8.8 8.8.4.4|' \
+      | kubectl apply -f - >/dev/null
+    kubectl rollout restart deployment/coredns -n kube-system >/dev/null
+    kubectl rollout status deployment/coredns -n kube-system --timeout=60s >/dev/null || true
+  fi
 else
   # remote: KUBECONFIG must already be set via env file or shell
   : "${KUBECONFIG:?ERROR: KUBECONFIG must be set for CLUSTER_MODE=remote (set it in $ENV_FILE)}"
@@ -183,11 +212,65 @@ if [[ "$COMPONENT" == "all" || "$COMPONENT" == "ingestion" ]]; then
   ENV="$ENV_NAME" "$ROOT_DIR/src/ingestion/up.sh"
 fi
 
-# ─── App-level infra (redis) ──────────────────────────────────────────────
-# Plain Deployment + Service. Cache only — no persistence, no auth.
-# (Using redis:7-alpine from Docker Hub; bitnami/redis chart images moved
-# behind a paywall in 2025 and no longer pull freely.)
+# ─── App-level infra (MariaDB, Redis) ────────────────────────────────────
 if [[ "$COMPONENT" == "all" || "$COMPONENT" == "app" || "$COMPONENT" == "infra" ]]; then
+  # MariaDB -- required by Analytics API for metric definitions.
+  # Credentials are pre-loaded into a Kubernetes Secret and handed to the
+  # Bitnami chart via auth.existingSecret (avoids passing secret values on
+  # any helm/kubectl command line).
+  MARIADB_SECRET_NAME="insight-mariadb-auth"
+  _b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
+  kubectl apply -f - <<EOF >/dev/null
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ${MARIADB_SECRET_NAME}
+  namespace: ${NAMESPACE}
+type: Opaque
+data:
+  mariadb-root-password: $(_b64 "$MARIADB_ROOT_PASSWORD")
+  mariadb-password: $(_b64 "$MARIADB_PASSWORD")
+  mariadb-replication-password: $(_b64 "$MARIADB_PASSWORD")
+EOF
+  unset -f _b64
+
+  # `helm upgrade --install` is idempotent on its own -- always run it so
+  # chart / values / parameter changes reconcile even when the release
+  # already exists. Wrapping it in `if ! helm status` would silently
+  # skip reconciliation on re-runs.
+  echo "=== Deploying / updating MariaDB ==="
+  helm repo add bitnami https://charts.bitnami.com/bitnami 2>/dev/null || true
+  helm repo update bitnami >/dev/null
+  helm upgrade --install insight-mariadb bitnami/mariadb \
+    --namespace "$NAMESPACE" --version "~20" \
+    -f helmfile/values/mariadb.yaml \
+    --set auth.existingSecret="$MARIADB_SECRET_NAME" \
+    --set auth.database="$MARIADB_DATABASE" \
+    --set auth.username="$MARIADB_USER" \
+    --wait --timeout 5m
+
+  # Create identity-resolution-domain database and grant access to the
+  # app user. Bitnami chart only creates the single `auth.database`;
+  # additional databases are our responsibility. Uses the MariaDB root
+  # credentials via stdin (no password on command line).
+  echo "=== Ensuring '$IDENTITY_DB' database exists ==="
+  kubectl -n "$NAMESPACE" exec -i insight-mariadb-0 -c mariadb -- \
+    env MYSQL_PWD="$MARIADB_ROOT_PASSWORD" mariadb -u root --batch <<SQL
+CREATE DATABASE IF NOT EXISTS \`${IDENTITY_DB}\`
+  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+GRANT ALL PRIVILEGES ON \`${IDENTITY_DB}\`.* TO '${MARIADB_USER}'@'%';
+FLUSH PRIVILEGES;
+SQL
+
+  # MariaDB schema migrations: each backend service now owns and
+  # applies its own migrations at startup via SeaORM Migrator::up
+  # (see ADR-0006). No global migration step needed here -- up.sh is
+  # only responsible for provisioning the MariaDB instance + databases
+  # + user grants; the per-service schema arrives with the service.
+
+  # Plain Deployment + Service. Cache only — no persistence, no auth.
+  # (Using redis:7-alpine from Docker Hub; bitnami/redis chart images moved
+  # behind a paywall in 2025 and no longer pull freely.)
   if [[ "${DEPLOY_REDIS:-false}" == "true" ]]; then
     echo "=== Deploying Redis ==="
     kubectl apply -n "$NAMESPACE" -f - <<'EOF'
@@ -299,7 +382,10 @@ if [[ "$COMPONENT" == "all" || "$COMPONENT" == "app" || "$COMPONENT" == "backend
   GATEWAY_IMG=$(image_ref api-gateway)
 
   # ── Service wiring (env-configurable) ───────────────────────────────
-  ANALYTICS_DB_URL="${ANALYTICS_DB_URL:-mysql://insight:insight-pass@insight-mariadb:3306/analytics}"
+  # Derive ANALYTICS_DB_URL from the MARIADB_* variables above so operator
+  # overrides (USER / PASSWORD / DATABASE) propagate to the Analytics API
+  # without needing a separate ANALYTICS_DB_URL override.
+  ANALYTICS_DB_URL="${ANALYTICS_DB_URL:-mysql://${MARIADB_USER}:${MARIADB_PASSWORD}@insight-mariadb:3306/${MARIADB_DATABASE}}"
   CLICKHOUSE_URL="${CLICKHOUSE_URL:-http://clickhouse.data.svc.cluster.local:8123}"
   CLICKHOUSE_DB="${CLICKHOUSE_DB:-insight}"
   CLICKHOUSE_CREDENTIALS_SECRET="${CLICKHOUSE_CREDENTIALS_SECRET:-}"
@@ -342,11 +428,17 @@ if [[ "$COMPONENT" == "all" || "$COMPONENT" == "app" || "$COMPONENT" == "backend
     --set-string podAnnotations.deployedAt="$DEPLOY_TS" \
     --wait --timeout 3m
 
+  # Identity-resolution owns the `identity` MariaDB database and applies
+  # its schema via its own SeaORM Migrator (init container, see helm
+  # deployment.yaml). The URL points at the dedicated `identity` DB.
+  IDENTITY_DB_URL="${IDENTITY_DB_URL:-mysql://${MARIADB_USER}:${MARIADB_PASSWORD}@insight-mariadb:3306/${IDENTITY_DB}}"
+
   echo "=== Deploying Identity Resolution ==="
   # shellcheck disable=SC2046
   helm upgrade --install insight-identity src/backend/services/identity/helm/ \
     --namespace "$NAMESPACE" \
     $(helm_image_args "$IDENTITY_IMG") \
+    --set database.url="$IDENTITY_DB_URL" \
     --set clickhouse.url="$CLICKHOUSE_URL" \
     --set clickhouse.database="$CLICKHOUSE_DB" \
     "${CH_CREDS_ARGS[@]}" \
@@ -417,7 +509,8 @@ fi
 if [[ "$CLUSTER_MODE" == "local" && ("$COMPONENT" == "all" || "$COMPONENT" == "ingestion") ]]; then
   echo "=== Starting Airbyte port-forward ==="
   pkill -f 'port-forward.*airbyte' 2>/dev/null || true
-  kubectl -n airbyte port-forward svc/airbyte-airbyte-server-svc 8001:8001 >/dev/null 2>&1 &
+  nohup kubectl -n airbyte port-forward svc/airbyte-airbyte-server-svc 8001:8001 >/dev/null 2>&1 &
+  disown
 fi
 
 # ─── Summary ──────────────────────────────────────────────────────────────
