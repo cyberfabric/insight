@@ -112,7 +112,7 @@ Moving the token to an `HttpOnly`, `Secure`, `SameSite=Strict` cookie alone is n
 
 **ID**: `cpt-insightspec-actor-downstream-service`
 
-**Role**: Any internal Insight service that receives the gateway JWT from the BFF and authorizes the request based on its claims.
+**Role**: Any internal Insight service that receives the gateway JWT from the API gateway and authorizes the request based on its claims. The gateway is one service split into BFF and Router logic parts; from the downstream service's perspective the JWT comes from the gateway.
 
 #### Redis
 
