@@ -153,6 +153,11 @@ path = "docs/components/connectors/task-tracking/jira/specs/DESIGN.md"
 name = "Jira Connector Design"
 
 [[systems.artifacts]]
+kind = "DECOMPOSITION"
+path = "docs/components/connectors/task-tracking/youtrack/specs/DECOMPOSITION.md"
+name = "YouTrack Task-Tracker Connector Decomposition"
+
+[[systems.artifacts]]
 kind = "PRD"
 path = "docs/components/connectors/collaboration/m365/specs/PRD.md"
 name = "Microsoft 365 Connector PRD"

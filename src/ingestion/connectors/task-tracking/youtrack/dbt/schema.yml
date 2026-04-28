@@ -1,0 +1,23 @@
+version: 2
+
+# Bronze source declarations only.
+# Cross-source task-tracker unification (Silver `class_task_*`) is delivered by
+# the task-tracking Silver layer package. Per-source staging projections tagged
+# `silver:class_task_*` plug this connector into `union_by_tag`. Stream set is
+# populated as features 2.1–2.4 land (see
+# docs/components/connectors/task-tracking/youtrack/specs/DECOMPOSITION.md).
+
+sources:
+  - name: bronze_youtrack
+    schema: bronze_youtrack
+    tables:
+      - name: youtrack_projects
+      - name: youtrack_user
+      - name: youtrack_agiles
+      - name: youtrack_sprints
+      - name: youtrack_issue_link_types
+      - name: youtrack_issue
+      - name: youtrack_issue_history
+      - name: youtrack_comments
+      - name: youtrack_worklogs
+      - name: youtrack_project_custom_fields

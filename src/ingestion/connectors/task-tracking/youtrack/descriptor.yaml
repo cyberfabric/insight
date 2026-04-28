@@ -1,0 +1,15 @@
+name: youtrack
+version: "1.0"
+
+schedule: "0 3 * * *"
+workflow: sync
+
+# Silver routing (class_task_*) is delivered by the task-tracking Silver layer
+# package, not by this connector. This PR ships Bronze source declarations in
+# dbt/schema.yml only; the connector's dbt step is a deliberate no-op until
+# DECOMPOSITION §2.5 (per-source staging projections tagged `silver:class_task_*`)
+# lands. At that point flip dbt_select to `tag:youtrack`.
+dbt_select: ""
+
+connection:
+  namespace: bronze_youtrack

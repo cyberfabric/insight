@@ -31,9 +31,15 @@ Ask the user (skip questions where context already provides the answer):
 
 ### For nocode (`CONNECTOR_TYPE=nocode`):
 
-Read the reference connector for patterns:
+**⚠️ Pick the reference connector carefully.** Manifests that work at runtime can still be rejected by the Airbyte Builder UI. Read `src/ingestion/tools/declarative-connector/README.md` §"Builder-UI compatibility — hard rules" before copying anything.
+
+Builder-UI-compatible references (OK to copy):
 - `src/ingestion/connectors/collaboration/zoom/connector.yaml`
-- `src/ingestion/connectors/collaboration/zoom/descriptor.yaml`
+- `src/ingestion/connectors/collaboration/m365/connector.yaml`
+- `src/ingestion/connectors/hr-directory/bamboohr/connector.yaml`
+
+**Do NOT copy from**:
+- `src/ingestion/connectors/task-tracking/jira/connector.yaml` — uses whole-object `$ref` (`#/definitions/auth`, `#/definitions/paginator`, `#/streams/N`) which the Builder strict validator rejects. It loads via the CDK runtime but cannot be opened in the Builder UI without full expansion.
 
 Create files:
 
@@ -183,6 +189,16 @@ MUST include:
 - All config fields with source-specific prefixes (e.g. `azure_*`, `github_*`, `jira_*`)
 - `InlineSchemaLoader` with schema following Builder conventions (see above)
 - Incremental sync with computed dates (no config params for start/end)
+
+MUST NOT:
+- Use whole-object `$ref` (`#/definitions/auth`, `#/definitions/paginator`, `#/streams/N`, `#/definitions/add_fields`). Builder strict validator only accepts granular leaf-field `$ref` into `definitions.linked.<Component>/<field>`. For substream parents (`parent_stream_configs[0].stream`) and any object that cannot be leafed, inline the full definition or duplicate.
+- Put template strings in request params that collide with API datetime dialects. YouTrack `updated: ` expects ISO 8601 with `T` separator, no braces, no spaces. Jira JQL expects `"YYYY-MM-DD HH:MM"` with space, no T. Always run `source.sh check <tenant>` against a real instance to confirm.
+- Convert epoch-millisecond cursor fields via a transformation like `"{{ format_datetime(record['updated'] / 1000, '%Y-%m-%dT%H:%M:%S') }}"` in `AddedFieldDefinition.value`. The value does not reliably interpolate before `cursor.observe()` sees it, and you'll get a runtime error with the literal Jinja template as the cursor value. Use Airbyte's native `%ms` (or `%s`, `%s_as_float`, `%epoch_microseconds`) token in `DatetimeBasedCursor.cursor_datetime_formats` instead. See `src/ingestion/tools/declarative-connector/README.md` §"Epoch millisecond cursors" for the exact pattern.
+- Route substreams through nullable parent fields (e.g. `parent_key: id_readable` / `record.get('idReadable')`). Use the parent's stable internal id (`record['id']`, surfaced as `youtrack_id` etc.). A `null` from the API silently routes to `.../None/<endpoint>` which 404s and drops the entire partition.
+
+NOTE on integer-typed slots: Airbyte declarative CDK accepts BOTH integers AND Jinja-interpolated strings for `OffsetIncrement.page_size`, `CursorPagination.page_size`, and similar slots — `page_size: "{{ config.get('x_page_size', 100) }}"` is valid and recommended for config-driven pagination. (Earlier guidance in this file was wrong; the strict validator's "literal integer" rejection in our YouTrack work was a downstream symptom of a different `$ref` issue, not of templated page_size.)
+
+See `src/ingestion/tools/declarative-connector/README.md` for the full Builder-UI rules list and datetime pitfalls.
 
 #### 3.2 `descriptor.yaml`
 
@@ -380,9 +396,16 @@ kubectl apply -f src/ingestion/secrets/connectors/<name>.yaml
 
 ### 5.2 Validate manifest structure (no API call)
 
+Run **both** validators, in order — never skip `validate-strict`:
+
 ```bash
-./tools/declarative-connector/source.sh validate <category>/<name>
+./tools/declarative-connector/source.sh validate-strict <category>/<name>   # Builder-UI compat
+./tools/declarative-connector/source.sh validate        <category>/<name>   # CDK runtime
 ```
+
+If `validate-strict` fails, do NOT proceed. Fix per-path errors first — the Builder UI will reject the manifest otherwise. Common `validate-strict` errors and fixes are listed in `src/ingestion/tools/declarative-connector/README.md` §"Debugging strict-validation errors".
+
+If `validate-strict` passes but `validate` fails, there is a runtime problem — usually a bad Jinja expression, a template reference to an undefined config key, or a `$ref` pointing at a path that does not exist.
 
 ### 5.3 Check credentials against API
 
@@ -404,14 +427,102 @@ This saves real JSON schemas to `connectors/<category>/<name>/schemas/`.
 Replace InlineSchemaLoader schemas in `connector.yaml` with the generated ones from `schemas/`.
 Verify that all cursor fields exist in the schema (this prevents ClickHouse destination NPE).
 
-### 5.6 Read data locally
+### 5.6 Read data locally — per-stream smoke test (MANDATORY)
 
 ```bash
-./airbyte-toolkit/generate-catalog.sh <name>
-./tools/declarative-connector/source.sh read <category>/<name> <tenant>
+./airbyte-toolkit/generate-catalog.sh <category>/<name> <tenant>
 ```
 
-Verify every record has `tenant_id`, `source_id`, `unique_key`.
+Then read **each stream in isolation** — not just one combined read. `validate` and `validate-strict` are purely structural; **only a real `read` against the real API catches runtime pitfalls** that the Builder-UI (or Airbyte production) would otherwise hit. Known runtime-only landmines:
+
+| Landmine | Symptom at `read` time | Fix |
+|---|---|---|
+| `step` without `cursor_granularity` in `DatetimeBasedCursor` | `ValueError: If step is defined, cursor_granularity should be as well and vice-versa` | Add `cursor_granularity: PT1S` (or appropriate ISO duration) alongside `step`. |
+| `format_datetime(...)` inside `AddedFieldDefinition.value` for a cursor transformation | `ValueError: No format in [...] matching {{ format_datetime(record['x']/1000, ...) }}` — literal Jinja template stored as record value | Do not transform the cursor field. Use the native `%ms` / `%s` / `%s_as_float` / `%epoch_microseconds` tokens in `cursor_datetime_formats` to parse epoch values directly. |
+| `record.get('X', {}).get('Y')` when `record['X']` is present but `null` | `jinja2.exceptions.UndefinedError: 'None' has no attribute 'get'` — defaults on `.get()` only apply to **missing** keys, not `None` values | Replace with `(record.get('X') or {}).get('Y')`. Use the same pattern for every chain that may hit a nullable parent object. |
+| Source API query syntax (e.g. YouTrack `updated:`, Jira JQL, Salesforce SOQL) does not match your template | HTTP 400 `invalid_query` from the source | Never trust documentation alone — run `check` against a live tenant and inspect the generated URL. Each API has its own datetime dialect. See `src/ingestion/tools/declarative-connector/README.md` §"Datetime syntax pitfalls". |
+
+**Per-stream `read` pattern** (for thorough testing — saves the full catalog, swaps in single-stream catalog, resets state, runs `read`, captures the emitted `STATE`, then runs `read` a second time to verify cursor advancement):
+
+```bash
+INGESTION=src/ingestion
+CONNECTOR_PATH=<category>/<name>            # e.g. task-tracking/youtrack
+CONN=$INGESTION/connectors/$CONNECTOR_PATH
+CONNECTOR_NAME=$(basename "$CONN")
+TENANT=<tenant>                              # e.g. example-tenant
+
+cp "$CONN/configured_catalog.json" "$CONN/configured_catalog.json.bak"
+for stream in $(jq -r '.streams[].stream.name' "$CONN/configured_catalog.json.bak"); do
+  # Build single-stream catalog
+  jq --arg s "$stream" '.streams |= map(select(.stream.name == $s))' \
+     "$CONN/configured_catalog.json.bak" > "$CONN/configured_catalog.json"
+  echo '[]' > "$CONN/state.json"
+
+  echo "=== $stream ==="
+  log=/tmp/${CONNECTOR_NAME}_${stream}.log
+
+  # First read: from empty state.
+  ( bash $INGESTION/tools/declarative-connector/source.sh read "$CONNECTOR_PATH" "$TENANT" > "$log" 2>&1 ) &
+  pid=$!; ( sleep 120; kill -TERM $pid 2>/dev/null ) & killer=$!
+  wait $pid 2>/dev/null; kill -TERM $killer 2>/dev/null
+
+  # Capture last emitted STATE message and write to state.json so the next read resumes from it.
+  python3 - "$log" "$CONN/state.json" <<'PY'
+import json, sys
+states = []
+with open(sys.argv[1]) as f:
+    for line in f:
+        try: msg = json.loads(line)
+        except json.JSONDecodeError: continue
+        if msg.get("type") == "STATE":
+            states.append(msg.get("state", msg))
+if states:
+    with open(sys.argv[2], "w") as out:
+        json.dump([states[-1]], out)
+PY
+
+  # Count records + errors from first read.
+  python3 -c "
+import json
+recs = 0; errs = []
+for line in open('$log'):
+    try: o = json.loads(line)
+    except: continue
+    if o.get('type') == 'RECORD': recs += 1
+    elif o.get('log',{}).get('level') in ('ERROR','FATAL'): errs.append(o['log']['message'][:300])
+print(f'  first read:  records={recs}, errors={len(errs)}')
+for e in errs[:2]: print(f'    {e}')
+"
+
+  # Second read: with persisted state — for incremental streams this must produce a strict subset
+  # (often zero records). For full-refresh streams the count typically stays the same.
+  log2=/tmp/${CONNECTOR_NAME}_${stream}_resume.log
+  ( bash $INGESTION/tools/declarative-connector/source.sh read "$CONNECTOR_PATH" "$TENANT" > "$log2" 2>&1 ) &
+  pid=$!; ( sleep 60; kill -TERM $pid 2>/dev/null ) & killer=$!
+  wait $pid 2>/dev/null; kill -TERM $killer 2>/dev/null
+  python3 -c "
+import json
+recs = 0; errs = 0
+for line in open('$log2'):
+    try: o = json.loads(line)
+    except: continue
+    if o.get('type') == 'RECORD': recs += 1
+    elif o.get('log',{}).get('level') in ('ERROR','FATAL'): errs += 1
+print(f'  resume read: records={recs}, errors={errs}')
+"
+done
+cp "$CONN/configured_catalog.json.bak" "$CONN/configured_catalog.json"
+rm "$CONN/configured_catalog.json.bak"
+```
+
+Acceptance criteria for each stream:
+- [ ] First-read record count > 0 (unless source genuinely has no data — rare).
+- [ ] Error count = 0 in both runs (any `ERROR` / `FATAL` log message is a runtime bug — fix before deploy).
+- [ ] Every emitted record has `tenant_id`, `source_id`, `unique_key`.
+- [ ] For substreams, parent records are enumerated first and child records reference valid parent ids (use the parent's stable internal id field — e.g. `youtrack_id` from `record['id']` — for routing, NOT a nullable `record.get('idReadable')`-style field, since YouTrack/Jira can return `null` for human-readable IDs in some payloads).
+- [ ] For incremental streams, the **resume read** (second run, with the captured STATE persisted in `state.json`) returns a strict subset of the first-read records — usually zero. If the resume read returns the same count as the first read, the cursor is not advancing and the manifest is broken.
+
+If any stream fails, do NOT deploy. Fix the manifest and re-run both `validate-strict` and the per-stream `read`.
 
 ### 5.7 Only then deploy to Airbyte
 
