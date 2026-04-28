@@ -10,12 +10,13 @@ date: 2026-04-28
 - [1. Overview](#1-overview)
   - [1.1 Purpose](#11-purpose)
   - [1.2 Background / Problem Statement](#12-background--problem-statement)
-  - [1.3 Goals](#13-goals)
+  - [1.3 Goals (Business Outcomes)](#13-goals-business-outcomes)
   - [1.4 Glossary](#14-glossary)
 - [2. Actors](#2-actors)
   - [2.1 Human Actors](#21-human-actors)
   - [2.2 System Actors](#22-system-actors)
 - [3. Operational Concept & Environment](#3-operational-concept--environment)
+  - [3.1 Module-Specific Environment Constraints](#31-module-specific-environment-constraints)
 - [4. Scope](#4-scope)
   - [4.1 In Scope](#41-in-scope)
   - [4.2 Out of Scope](#42-out-of-scope)
@@ -30,7 +31,11 @@ date: 2026-04-28
   - [5.8 CSRF Protection](#58-csrf-protection)
   - [5.9 IdP Token Refresh (Internal)](#59-idp-token-refresh-internal)
 - [6. Non-Functional Requirements](#6-non-functional-requirements)
-- [7. Public Interfaces](#7-public-interfaces)
+  - [6.1 NFR Inclusions](#61-nfr-inclusions)
+  - [6.2 NFR Exclusions](#62-nfr-exclusions)
+- [7. Public Library Interfaces](#7-public-library-interfaces)
+  - [7.1 Public API Surface](#71-public-api-surface)
+  - [7.2 External Integration Contracts](#72-external-integration-contracts)
 - [8. Use Cases](#8-use-cases)
 - [9. Acceptance Criteria](#9-acceptance-criteria)
 - [10. Dependencies](#10-dependencies)
@@ -59,7 +64,7 @@ Moving the token to an `HttpOnly`, `Secure`, `SameSite=Strict` cookie alone is n
 2. The session to be revocable instantly, including "log out everywhere" for one user.
 3. Internal services to verify caller identity statelessly via a short-lived JWT signed by the gateway, not by the IdP.
 
-### 1.3 Goals
+### 1.3 Goals (Business Outcomes)
 
 - Remove all IdP and access tokens from browser storage.
 - Make sessions revocable per-session and per-user from a single store.
@@ -117,6 +122,8 @@ Moving the token to an `HttpOnly`, `Secure`, `SameSite=Strict` cookie alone is n
 
 ## 3. Operational Concept & Environment
 
+### 3.1 Module-Specific Environment Constraints
+
 - Single deployment per Insight installation, fronted by the cluster ingress.
 - Public hostname terminates TLS at the ingress; the BFF refuses requests received as plain HTTP.
 - The BFF and the SPA are served from the same registrable domain so cookies are first-party.
@@ -150,6 +157,8 @@ Moving the token to an `HttpOnly`, `Secure`, `SameSite=Strict` cookie alone is n
 
 ### 5.1 OIDC Login Flow
 
+#### Authorization Code with PKCE
+
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-bff-oidc-login`
 
 The system **MUST** implement OIDC authorization code flow with PKCE as a confidential client. The BFF **MUST** generate `state`, `nonce`, and PKCE verifier per login attempt and validate them on callback. The browser **MUST NOT** receive or transmit the IdP code, ID token, or access token at any point.
@@ -159,6 +168,8 @@ The system **MUST** implement OIDC authorization code flow with PKCE as a confid
 **Actors**: `cpt-insightspec-actor-browser-user`, `cpt-insightspec-actor-oidc-provider`
 
 ### 5.2 Session Cookie
+
+#### Session Cookie Issuance
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-bff-session-cookie`
 
@@ -180,6 +191,8 @@ The cookie value **MUST** be opaque -- no claims, no JWT, no user-identifying da
 **Actors**: `cpt-insightspec-actor-browser-user`
 
 ### 5.3 Session Refresh
+
+#### Explicit Session Refresh Endpoint
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-bff-session-refresh`
 
@@ -203,6 +216,8 @@ The SPA uses `refresh_at` to schedule its next call. `GET /auth/me` **MUST** ret
 
 ### 5.4 Session Store
 
+#### Redis-Backed Session Storage
+
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-bff-session-store`
 
 The system **MUST** store every session in Redis using BFF-owned key prefixes:
@@ -222,6 +237,8 @@ The system **MUST** run a periodic janitor that scans `bff:user_sessions:*`, rem
 **Actors**: `cpt-insightspec-actor-redis`
 
 ### 5.5 Gateway JWT (Downstream Token)
+
+#### Gateway JWT Claim Contract
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-bff-gateway-jwt`
 
@@ -255,11 +272,15 @@ Downstream services **MUST** verify the signature, `iss`, `aud`, and `exp` again
 
 ### 5.6 Session Management
 
+#### List Active Sessions
+
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-bff-session-list`
 
 The system **MUST** expose an authenticated endpoint that returns the active sessions for the calling user (created_at, expires_at, user_agent, ip, current=true/false). The endpoint **MUST** read from the user-sessions sorted set with `ZRANGEBYSCORE`, returning only entries with score > now.
 
 **Actors**: `cpt-insightspec-actor-browser-user`
+
+#### Revoke Sessions
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-bff-session-revoke`
 
@@ -277,6 +298,8 @@ Each operation **MUST** delete the session record(s) and remove them from `bff:u
 
 ### 5.7 Logout
 
+#### Logout (Local, RP-Initiated, Back-Channel)
+
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-bff-logout`
 
 The system **MUST** provide `POST /auth/logout` that revokes the current session, clears the cookie (`Max-Age=0`), and redirects (or returns a redirect URL) to the OIDC `end_session_endpoint` for RP-initiated logout.
@@ -288,6 +311,8 @@ The system **MUST** accept OIDC back-channel logout tokens at a dedicated endpoi
 **Actors**: `cpt-insightspec-actor-oidc-provider`, `cpt-insightspec-actor-browser-user`
 
 ### 5.8 CSRF Protection
+
+#### CSRF Defense
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-bff-csrf`
 
@@ -303,6 +328,8 @@ For state-changing methods (POST, PUT, PATCH, DELETE) on `/auth/*`, the system *
 **Actors**: `cpt-insightspec-actor-browser-user`
 
 ### 5.9 IdP Token Refresh (Internal)
+
+#### IdP Access Token Refresh
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-bff-idp-refresh`
 
@@ -370,7 +397,7 @@ Every login, logout, session refresh, IdP token refresh failure, session revocat
 
 - **Per-route rate limiting in the BFF**: Handled by the surrounding ingress and per-service middleware. The BFF only rate-limits `/auth/*` endpoints (login, callback, refresh) to slow brute force.
 
-## 7. Public Interfaces
+## 7. Public Library Interfaces
 
 ### 7.1 Public API Surface
 

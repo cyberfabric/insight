@@ -14,17 +14,32 @@ date: 2026-04-28
   - [1.2 Architecture Drivers](#12-architecture-drivers)
   - [1.3 Architecture Layers](#13-architecture-layers)
 - [2. Principles & Constraints](#2-principles--constraints)
+  - [2.1 Design Principles](#21-design-principles)
+  - [2.2 Constraints](#22-constraints)
 - [3. Technical Architecture](#3-technical-architecture)
-  - [3.1 Component Model](#31-component-model)
-  - [3.2 Interactions & Sequences](#32-interactions--sequences)
-  - [3.3 Route Configuration Schema](#33-route-configuration-schema)
-  - [3.4 Redis Keys (read-only and JWT cache)](#34-redis-keys-read-only-and-jwt-cache)
-  - [3.5 Boundary with the BFF](#35-boundary-with-the-bff)
+  - [3.1 Domain Model](#31-domain-model)
+  - [3.2 Component Model](#32-component-model)
+  - [3.3 API Contracts](#33-api-contracts)
+  - [3.4 Internal Dependencies](#34-internal-dependencies)
+  - [3.5 External Dependencies](#35-external-dependencies)
+  - [3.6 Interactions & Sequences](#36-interactions--sequences)
+  - [3.7 Database schemas & tables](#37-database-schemas--tables)
+  - [3.8 Route Configuration Schema](#38-route-configuration-schema)
+  - [3.9 Redis Keys (read-only and JWT cache)](#39-redis-keys-read-only-and-jwt-cache)
+  - [3.10 Boundary with the BFF](#310-boundary-with-the-bff)
 - [4. Cross-Cutting Concerns](#4-cross-cutting-concerns)
   - [4.1 Caching](#41-caching)
   - [4.2 Failure Handling](#42-failure-handling)
   - [4.3 Observability](#43-observability)
 - [5. Design Decisions](#5-design-decisions)
+  - [DD-ROUTER-01: Same Pod as BFF](#dd-router-01-same-pod-as-bff)
+  - [DD-ROUTER-02: ConfigMap Routes Over Service Discovery](#dd-router-02-configmap-routes-over-service-discovery)
+  - [DD-ROUTER-03: Redis-backed JWT Cache (not in-memory)](#dd-router-03-redis-backed-jwt-cache-not-in-memory)
+  - [DD-ROUTER-04: arc-swap for Route Table](#dd-router-04-arc-swap-for-route-table)
+  - [DD-ROUTER-05: Gateway Does Basic Auth Checks Only](#dd-router-05-gateway-does-basic-auth-checks-only)
+  - [DD-ROUTER-06: No Request Body Size Limits in v1](#dd-router-06-no-request-body-size-limits-in-v1)
+  - [DD-ROUTER-07: WebSocket JWT Frozen at Upgrade Time](#dd-router-07-websocket-jwt-frozen-at-upgrade-time)
+  - [DD-ROUTER-08: Header Strip List = Hardcoded + Config](#dd-router-08-header-strip-list--hardcoded--config)
 - [6. Traceability](#6-traceability)
 
 <!-- /toc -->
@@ -135,6 +150,8 @@ graph TB
 
 ## 2. Principles & Constraints
 
+### 2.1 Design Principles
+
 #### Hot path stays small
 
 - [ ] `p2` - **ID**: `cpt-insightspec-principle-router-hot-path`
@@ -159,9 +176,35 @@ Adding a service or rotating a key must not require a redeploy. The Router watch
 
 Rejection (404 unmatched, 401 no session, 503 not-ready) happens before any upstream call. Internal services see only valid, signed traffic.
 
+### 2.2 Constraints
+
+#### Same-pod with the BFF
+
+- [ ] `p2` - **ID**: `cpt-insightspec-constraint-router-same-pod`
+
+The Router runs in the same Rust binary as the BFF. It links the BFF's session manager as a library, not over RPC. Splitting the modules into separate processes is not supported in v1.
+
+#### Routes loaded from K8s ConfigMap
+
+- [ ] `p2` - **ID**: `cpt-insightspec-constraint-router-configmap`
+
+Route configuration lives in a single K8s ConfigMap watched by the pod. No service discovery, no Consul, no service mesh. Adding a service requires a ConfigMap edit.
+
 ## 3. Technical Architecture
 
-### 3.1 Component Model
+### 3.1 Domain Model
+
+The Router holds no business entities. The runtime objects it owns are:
+
+| Entity | Purpose | Storage |
+|---|---|---|
+| `RouteTable` | In-memory longest-prefix trie of routes | `arc-swap` in-process |
+| `SigningKey` | EdDSA key pair (current + optional previous) | K8s Secret + in-process cache |
+| `JwtCacheEntry` | Last minted gateway JWT for a session | Redis `router:jwt_cache:{sid}` |
+
+It reads the BFF-owned `Session` entity ([BFF DESIGN §3.1](../bff/DESIGN.md#31-domain-model)) read-only.
+
+### 3.2 Component Model
 
 ```mermaid
 graph LR
@@ -202,7 +245,7 @@ graph LR
 - [ ] `p2` - **ID**: `cpt-insightspec-component-router-matcher`
 
 ##### Why this component exists
-First gate on every request. Determines the upstream and per-route options.
+First gate on every request. Without it, no other component knows which upstream to forward to.
 
 ##### Responsibility scope
 Holds an `arc-swap<RouteTable>`. Performs longest-prefix match. Returns matched route or 404.
@@ -210,69 +253,169 @@ Holds an `arc-swap<RouteTable>`. Performs longest-prefix match. Returns matched 
 ##### Responsibility boundaries
 Does not enforce auth. Does not call upstreams. Does not parse cookies.
 
+##### Related components (by ID)
+- `cpt-insightspec-component-router-cfgwatcher` -- supplies the table.
+- `cpt-insightspec-component-router-auth` -- runs after match.
+
 #### Cookie Auth Middleware
 
 - [ ] `p2` - **ID**: `cpt-insightspec-component-router-auth`
+
+##### Why this component exists
+The Router cannot mint a JWT for a non-user. This middleware is the gate that ensures every forwarded request is tied to a valid session.
 
 ##### Responsibility scope
 Reads `__Host-sid` cookie, calls `SessionManager::lookup`, attaches the session record to the request extensions or returns 401.
 
 ##### Responsibility boundaries
-No write operations. Does not handle CSRF (CSRF lives in the BFF and only matters on state-changing routes that the BFF owns; per-API CSRF is enforced by the BFF middleware that runs in the same chain when the request is to `/auth/*`, and by `Origin` checks here for safety).
+No write operations on session state. Does not handle CSRF -- `SameSite=Strict` covers `/api/*`; CSRF tokens are a `/auth/*` concern owned by the BFF.
+
+##### Related components (by ID)
+- `cpt-insightspec-component-bff-session-manager` -- read-only consumer of this BFF-owned library.
+- `cpt-insightspec-component-router-jwt-minter` -- runs next, with the resolved session in hand.
 
 #### JWT Minter + Cache
 
 - [ ] `p2` - **ID**: `cpt-insightspec-component-router-jwt-minter`
 
+##### Why this component exists
+Internal services must receive a fresh, signed identity claim per request without round-tripping to a central authz service. This component produces that claim.
+
 ##### Responsibility scope
-On each request, fetch `jwt_cache:{sid}` from Redis. On miss, build claims from the session record + Identity Service snapshot held in the session, sign with `KeyStore.current`, write back to cache.
+On each request, fetch `router:jwt_cache:{sid}` from Redis. On miss, build claims (`iss`, `aud`, `sub`, `tid`, `sid`, `iat`, `exp`, `jti`) from the session record, sign with `KeyStore.current`, write back to cache with TTL ≤ 60 s.
 
 ##### Responsibility boundaries
-Does not refresh IdP access tokens. Does not validate JWTs (that's the downstream services' job).
+Does not refresh IdP access tokens. Does not validate JWTs (downstream services do that). Does not include `lic`, `roles`, or `scopes` -- those are not part of the v1 contract.
+
+##### Related components (by ID)
+- `cpt-insightspec-component-router-keystore` -- supplies the signing key.
+- `cpt-insightspec-component-router-claims-sub` -- invalidates this cache on user-level events.
 
 #### Request Rewriter
 
 - [ ] `p2` - **ID**: `cpt-insightspec-component-router-rewriter`
 
+##### Why this component exists
+Browser-supplied `Authorization` headers and gateway-internal cookies must never reach internal services. This middleware is the boundary.
+
 ##### Responsibility scope
-Strip browser `Authorization` and gateway-reserved cookies. Inject `Authorization: Bearer ...`, `X-Correlation-Id`, `X-Forwarded-*`. Apply `strip_prefix` if the route says so.
+Strip browser `Authorization` and gateway-reserved cookies. Inject `Authorization: Bearer ...`, `X-Correlation-Id`, `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`. Apply operator-configured `strip_request_headers`. Apply `strip_prefix` if the route says so.
+
+##### Responsibility boundaries
+Does not modify request body. Does not modify response headers (apart from stripping reserved `Set-Cookie`). Does not enforce header allowlists.
+
+##### Related components (by ID)
+- `cpt-insightspec-component-router-jwt-minter` -- supplier of the JWT to inject.
+- `cpt-insightspec-component-router-proxy` -- next stage.
 
 #### Hyper Proxy
 
 - [ ] `p2` - **ID**: `cpt-insightspec-component-router-proxy`
 
+##### Why this component exists
+The terminal stage of the request path -- everything else feeds into the upstream call.
+
 ##### Responsibility scope
-Open the upstream connection (with pooled `hyper::Client`), stream request body, await response, stream response body back. Enforce `timeout_ms`. Handle WebSocket upgrade.
+Open the upstream connection (pooled `hyper::Client`), stream request body, await response, stream response body back. Enforce `timeout_ms`. Handle WebSocket upgrade for routes flagged `websocket: true`.
+
+##### Responsibility boundaries
+No retries. No payload transformation. No per-tenant rate limiting -- that's the ingress and per-service middleware.
+
+##### Related components (by ID)
+- `cpt-insightspec-component-router-rewriter` -- previous stage.
 
 #### JWKS Handler
 
 - [ ] `p2` - **ID**: `cpt-insightspec-component-router-jwks`
 
+##### Why this component exists
+Internal services need a stable, cacheable URL to fetch the public keys used to verify gateway JWTs.
+
 ##### Responsibility scope
-Serve `GET /.well-known/jwks.json` from the `KeyStore` snapshot. Cache header set to 1 h.
+Serve `GET /.well-known/jwks.json` from the `KeyStore` snapshot. Set `Cache-Control: public, max-age=3600`.
+
+##### Responsibility boundaries
+Stateless read-only handler. Does not authenticate clients (the endpoint is public by design).
+
+##### Related components (by ID)
+- `cpt-insightspec-component-router-keystore` -- source of the keys.
 
 #### ConfigMap Watcher
 
 - [ ] `p2` - **ID**: `cpt-insightspec-component-router-cfgwatcher`
 
+##### Why this component exists
+Adding a new internal service or changing a route's timeout must not require a redeploy. This watcher applies ConfigMap changes hot.
+
 ##### Responsibility scope
-Watch the route ConfigMap via the K8s API. On change, parse + validate. Atomically swap the live `RouteTable` if valid; emit alert and keep old table if not.
+Watch the route ConfigMap via the K8s API. On change, parse + validate. Atomically swap the live `RouteTable` via `arc-swap` if valid; emit alert and keep the old table if not.
+
+##### Responsibility boundaries
+Does not match routes itself (that's the matcher). Does not validate signing keys (separate watcher).
+
+##### Related components (by ID)
+- `cpt-insightspec-component-router-matcher` -- consumer of the table it builds.
 
 #### Key Store
 
 - [ ] `p2` - **ID**: `cpt-insightspec-component-router-keystore`
 
+##### Why this component exists
+Signing keys must be rotatable without downtime. This component holds and swaps them safely.
+
 ##### Responsibility scope
-Hold `current` and `previous` EdDSA keys. Signed handles for the JWT minter. Public-key view for JWKS. Reloads on Secret change.
+Hold `current` and optional `previous` EdDSA keys. Provide signing handles to the JWT minter. Provide public-key view to JWKS. Reload on Secret change. Refuse to start if no keys are present.
+
+##### Responsibility boundaries
+Does not run rotation policy itself -- the operator triggers rotation by editing the Secret.
+
+##### Related components (by ID)
+- `cpt-insightspec-component-router-jwt-minter` -- consumer of signing keys.
+- `cpt-insightspec-component-router-jwks` -- consumer of public keys.
 
 #### Claims Event Subscriber
 
 - [ ] `p2` - **ID**: `cpt-insightspec-component-router-claims-sub`
 
-##### Responsibility scope
-Subscribe to a Redpanda topic published by the Identity Service when a user's roles or license change. On event, delete `jwt_cache:{sid}` for every active session of that user. The BFF publishes session-revoke events to the same topic; this subscriber also reacts to those.
+##### Why this component exists
+Without it, a user-level change (revoke, role change in future versions) would not invalidate cached gateway JWTs until the cache TTL expired.
 
-### 3.2 Interactions & Sequences
+##### Responsibility scope
+Subscribe to a Redpanda topic where the BFF publishes session-revoke events. On event, delete `router:jwt_cache:{sid}` for the affected session(s). Will also subscribe to Identity-Service claims-change events when role/license claims are added in a future version.
+
+##### Responsibility boundaries
+Does not modify session state. Does not republish events. Skips events older than `2 × jwt_ttl` -- by then any cached JWT is already expired.
+
+##### Related components (by ID)
+- `cpt-insightspec-component-router-jwt-minter` -- owner of the cache being invalidated.
+- `cpt-insightspec-component-bff-auth-controller` -- producer of the revoke events.
+
+### 3.3 API Contracts
+
+The Router exposes the **Reverse Proxy** and **JWKS** interfaces declared in [PRD §7.1](./PRD.md#71-public-api-surface) (`cpt-insightspec-interface-router-proxy`, `cpt-insightspec-interface-router-jwks`). It owns the contracts declared in PRD §7.2 (`cpt-insightspec-contract-router-gateway-jwt`, `cpt-insightspec-contract-router-config`).
+
+| Path | Implementation |
+|---|---|
+| `GET /.well-known/jwks.json` | `JWKS Handler` over `Key Store` |
+| `ANY /api/**` | Route Matcher → Cookie Auth → JWT Minter → Request Rewriter → Hyper Proxy |
+
+### 3.4 Internal Dependencies
+
+| Dependency | Interface | Purpose |
+|---|---|---|
+| BFF Session Manager (sibling) | Rust crate | Read-only session validation; no RPC |
+| BFF Auth Controller | None (cross-module function call) | Sender of session-revoke events; consumed via Redpanda subscriber |
+| Audit Service | Redpanda producer | Emit config-reload, key-rotation, suspicious-event audit records |
+
+### 3.5 External Dependencies
+
+| System | Protocol | Purpose |
+|---|---|---|
+| Redis | RESP (TCP/TLS) | Session reads (`bff:session:*`), JWT cache (`router:jwt_cache:*`) |
+| K8s API | watch | ConfigMap and Secret hot reload |
+| Downstream services | HTTP/1.1 + HTTP/2 + WebSocket | Targets of `/api/*` forwarding |
+
+### 3.6 Interactions & Sequences
 
 #### Request flow (cache hit)
 
@@ -395,11 +538,15 @@ sequenceDiagram
     ES->>RD: DEL router:jwt_cache:{sid1..N}
 ```
 
-### 3.3 Route Configuration Schema
+### 3.7 Database schemas & tables
 
-- [ ] `p2` - **ID**: `cpt-insightspec-contract-router-config`
+This module's "database" is Redis, shared with the BFF. The Router reads keys defined and owned by the BFF (see [BFF DESIGN §3.7](../bff/DESIGN.md#37-database-schemas--tables)) and writes one key family of its own. The full layout is in §3.8 below.
 
-ConfigMap key: `routes.yaml`.
+### 3.8 Route Configuration Schema
+
+- [ ] `p2` - **ID**: `cpt-insightspec-design-router-config-schema`
+
+This section is the technical specification for the contract `cpt-insightspec-contract-router-config` declared in [PRD §7.2](./PRD.md#72-external-integration-contracts). ConfigMap key: `routes.yaml`.
 
 ```yaml
 version: 1
@@ -453,7 +600,7 @@ Validation rules (enforced on load and on every reload):
 - No two routes share an exact prefix.
 - `strip_request_headers` entries must be valid HTTP header names; reserved gateway headers (`Authorization`, `X-Correlation-Id`, `X-Forwarded-*`, gateway cookies) **MUST NOT** appear in this list -- they are stripped unconditionally.
 
-### 3.4 Redis Keys (read-only and JWT cache)
+### 3.9 Redis Keys (read-only and JWT cache)
 
 The Router reads keys defined and owned by the BFF; see [BFF DESIGN §3.7](../bff/DESIGN.md#37-redis-data-model). It writes only to one key family of its own (`router:jwt_cache:*`).
 
@@ -467,7 +614,7 @@ The Router reads keys defined and owned by the BFF; see [BFF DESIGN §3.7](../bf
 
 `router:jwt_cache:{sid}` value is the full signed JWT, TTL = `min(60, jwt_remaining)`. The BFF deletes these keys as part of session-revoke flows so revocations propagate within one TTL.
 
-### 3.5 Boundary with the BFF
+### 3.10 Boundary with the BFF
 
 | Concern | Owner | Notes |
 |---|---|---|
@@ -634,6 +781,4 @@ Everything else passes through.
 - **PRD**: [PRD.md](./PRD.md)
 - **Sibling**: [BFF PRD](../bff/PRD.md), [BFF DESIGN](../bff/DESIGN.md) -- session lifecycle, OIDC, gateway JWT schema (3.8), Redis data model (3.7)
 - **Parent**: [Backend PRD](../../specs/PRD.md), [Backend DESIGN](../../specs/DESIGN.md)
-- **ADRs**: [ADR/](./ADR/) -- to be authored:
-  - `cpt-insightspec-adr-router-configmap-routes`
-  - `cpt-insightspec-adr-router-redis-jwt-cache`
+- **ADRs**: [ADR/](./ADR/) -- to be authored alongside implementation. Decisions captured inline as DD-ROUTER-01..08 in §5 until then.

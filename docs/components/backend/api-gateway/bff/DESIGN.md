@@ -14,6 +14,8 @@ date: 2026-04-28
   - [1.2 Architecture Drivers](#12-architecture-drivers)
   - [1.3 Architecture Layers](#13-architecture-layers)
 - [2. Principles & Constraints](#2-principles--constraints)
+  - [2.1 Design Principles](#21-design-principles)
+  - [2.2 Constraints](#22-constraints)
 - [3. Technical Architecture](#3-technical-architecture)
   - [3.1 Domain Model](#31-domain-model)
   - [3.2 Component Model](#32-component-model)
@@ -21,7 +23,7 @@ date: 2026-04-28
   - [3.4 Internal Dependencies](#34-internal-dependencies)
   - [3.5 External Dependencies](#35-external-dependencies)
   - [3.6 Interactions & Sequences](#36-interactions--sequences)
-  - [3.7 Redis Data Model](#37-redis-data-model)
+  - [3.7 Database schemas & tables](#37-database-schemas--tables)
   - [3.8 Gateway JWT Claim Contract](#38-gateway-jwt-claim-contract)
   - [3.9 Boundary with the Router](#39-boundary-with-the-router)
 - [4. Cross-Cutting Concerns](#4-cross-cutting-concerns)
@@ -30,6 +32,15 @@ date: 2026-04-28
   - [4.3 Janitor for Expired Sessions](#43-janitor-for-expired-sessions)
   - [4.4 Observability](#44-observability)
 - [5. Design Decisions](#5-design-decisions)
+  - [DD-BFF-01: Opaque Session vs JWT Cookie](#dd-bff-01-opaque-session-vs-jwt-cookie)
+  - [DD-BFF-02: Explicit Session Refresh, No Sliding TTL](#dd-bff-02-explicit-session-refresh-no-sliding-ttl)
+  - [DD-BFF-03: ZSET (Not SET) for User-Session Index](#dd-bff-03-zset-not-set-for-user-session-index)
+  - [DD-BFF-04: BFF-Prefixed Redis Keys](#dd-bff-04-bff-prefixed-redis-keys)
+  - [DD-BFF-05: EdDSA Algorithm for Gateway JWT Contract](#dd-bff-05-eddsa-algorithm-for-gateway-jwt-contract)
+  - [DD-BFF-06: Redis Outage = No Auth (Fail Closed)](#dd-bff-06-redis-outage--no-auth-fail-closed)
+  - [DD-BFF-07: `/auth/refresh` Returns Next-Refresh Deadline](#dd-bff-07-authrefresh-returns-next-refresh-deadline)
+  - [DD-BFF-08: `SameSite=Strict` Today, Pluggable Cookie Classes Later](#dd-bff-08-samesitestrict-today-pluggable-cookie-classes-later)
+  - [DD-BFF-09: Janitor Coordinates via Redis Lock](#dd-bff-09-janitor-coordinates-via-redis-lock)
 - [6. Traceability](#6-traceability)
 
 <!-- /toc -->
@@ -78,11 +89,11 @@ The BFF is built on **cyberfabric-core ModKit** (same framework as the rest of t
 
 #### Architecture Decision Records
 
-| ADR | Decision |
-|---|---|
-| `cpt-insightspec-adr-bff-opaque-session` | Use opaque server-side session, not JWT, for the browser-facing cookie. Driven by revocation, blast radius, and simplicity of "log out everywhere". (Draft.) |
-| `cpt-insightspec-adr-bff-explicit-refresh` | Session TTL extended only by explicit `POST /auth/refresh`, not by sliding TTL on `/api/*` traffic. (Draft.) |
-| `cpt-insightspec-adr-bff-zset-user-index` | Use ZSET (not SET) for `bff:user_sessions:*` so expired entries are findable in O(log N). (Draft.) |
+ADRs to be authored alongside implementation; decisions captured inline in §5 (Design Decisions) until then:
+
+- Opaque server-side session, not JWT, for the browser-facing cookie -- see DD-BFF-01.
+- Session TTL extended only by explicit `POST /auth/refresh` -- see DD-BFF-02.
+- ZSET (not SET) for `bff:user_sessions:*` -- see DD-BFF-03.
 
 ### 1.3 Architecture Layers
 
@@ -134,6 +145,8 @@ graph TB
 - [ ] `p3` - **ID**: `cpt-insightspec-tech-bff`
 
 ## 2. Principles & Constraints
+
+### 2.1 Design Principles
 
 #### Opaque to the browser
 
@@ -226,41 +239,109 @@ graph LR
 
 - [ ] `p2` - **ID**: `cpt-insightspec-component-bff-auth-controller`
 
-Owns every endpoint under `/auth/*`: login, callback, refresh, logout, sessions list/revoke, back-channel logout, CSRF, `/auth/me`. Does not authorize business operations -- downstream services do that.
+##### Why this component exists
+The single owner of every endpoint under `/auth/*` -- the only place where session state changes start. Without it, session creation, refresh, and revocation would be scattered across the codebase.
+
+##### Responsibility scope
+Login start, OIDC callback, session refresh, logout, session list / revoke (single + all), back-channel logout receiver, CSRF token issuance, `/auth/me`.
+
+##### Responsibility boundaries
+Does not authorize business operations -- downstream services do that. Does not own user data -- Identity Service does. Does not mint gateway JWTs or proxy `/api/*` -- the Router does.
+
+##### Related components (by ID)
+- `cpt-insightspec-component-bff-session-manager` -- creates / reads / refreshes / revokes sessions.
+- `cpt-insightspec-component-bff-oidc-client` -- runs the OIDC handshake.
+- `cpt-insightspec-component-bff-csrf-verifier` -- issues and checks CSRF tokens.
+- `cpt-insightspec-component-bff-audit-emitter` -- publishes auth events.
 
 #### Session Manager (shared library)
 
 - [ ] `p2` - **ID**: `cpt-insightspec-component-bff-session-manager`
 
-The single entry point for every read or write of session state. Used by the BFF for writes; the Router links to it for read-only validation. All Lua scripts (`create_session`, `refresh_session`, `revoke_session`, `revoke_user`) live here.
+##### Why this component exists
+The single entry point for every read or write of session state. Centralising Redis access here keeps atomicity guarantees and metrics uniform, and lets the Router link to the same code as a library for read-only session validation.
+
+##### Responsibility scope
+Create, read, refresh, list-by-user, revoke (single, all-but-current, all). Owns the Lua scripts (`create_session`, `refresh_session`, `revoke_session`, `revoke_user`) that keep `bff:session:*` and `bff:user_sessions:*` consistent.
+
+##### Responsibility boundaries
+Does not call the OIDC provider. Does not authenticate requests by itself -- callers (Auth Controller, Router) do. Does not own the cookie format.
+
+##### Related components (by ID)
+- `cpt-insightspec-component-bff-auth-controller` -- primary writer.
+- `cpt-insightspec-component-router-auth` (Router-side) -- read-only consumer.
 
 #### OIDC Client
 
 - [ ] `p2` - **ID**: `cpt-insightspec-component-bff-oidc-client`
 
-Authorization code + PKCE flow, ID token validation (`iss`, `aud`, `nonce`, `exp`, signature), access-token refresh, RP-initiated logout, back-channel logout token validation.
+##### Why this component exists
+Encapsulates the OIDC protocol so the rest of the BFF treats it as a small set of operations: authorize, exchange, refresh, end-session, validate logout token.
+
+##### Responsibility scope
+Authorization code + PKCE flow, ID token validation (`iss`, `aud`, `nonce`, `exp`, signature), access-token refresh, RP-initiated logout, back-channel logout token validation per OIDC spec.
+
+##### Responsibility boundaries
+Does not store sessions. Does not maintain user-side state. Holds no IdP tokens beyond the lifetime of one operation.
+
+##### Related components (by ID)
+- `cpt-insightspec-component-bff-auth-controller` -- only caller.
+- `cpt-insightspec-component-bff-session-manager` -- recipient of the tokens that result from each OIDC operation.
 
 #### CSRF Verifier
 
 - [ ] `p2` - **ID**: `cpt-insightspec-component-bff-csrf-verifier`
 
-Issues CSRF tokens bound to the session ID, verifies them on state-changing `/auth/*` methods, falls back to `Origin` allowlist.
+##### Why this component exists
+Provides defence-in-depth on top of `SameSite=Strict` for state-changing `/auth/*` methods.
+
+##### Responsibility scope
+Issue per-session CSRF tokens at login (and rotate on privilege change), constant-time compare them on POST/PUT/PATCH/DELETE, fall back to verifying `Origin` against the allowlist when no token is present.
+
+##### Responsibility boundaries
+Does not protect `/api/*` -- those rely on `SameSite=Strict` and the ingress. Does not store the token outside the session record.
+
+##### Related components (by ID)
+- `cpt-insightspec-component-bff-auth-controller` -- consumer.
+- `cpt-insightspec-component-bff-session-manager` -- holds `csrf_token` inside `bff:session:*`.
 
 #### Audit Emitter
 
 - [ ] `p2` - **ID**: `cpt-insightspec-component-bff-audit-emitter`
 
-Publishes auth events (login, refresh, logout, IdP-refresh-fail, revoke, back-channel logout) to the Redpanda audit topic.
+##### Why this component exists
+Centralises audit event publication so every auth-relevant action lands on the Redpanda topic with the same envelope and correlation fields.
+
+##### Responsibility scope
+Publish auth events (login OK / fail, refresh OK / fail, logout, IdP-refresh-fail, revoke single / all / admin, back-channel logout) to the audit topic consumed by Audit Service.
+
+##### Responsibility boundaries
+Does not run audit policy or retention -- Audit Service does. Does not log to disk -- the standard logger does.
+
+##### Related components (by ID)
+- `cpt-insightspec-component-bff-auth-controller` -- only caller.
 
 #### Expired-Session Janitor
 
 - [ ] `p2` - **ID**: `cpt-insightspec-component-bff-janitor`
 
-Periodically scans `bff:user_sessions:*` keys, removes members with score in the past via `ZREMRANGEBYSCORE`, and emits a metric on backlog size.
+##### Why this component exists
+Per-session Redis TTL removes the record itself, but the user-index ZSET still lists the expired `session_id` until it is explicitly removed. Without the janitor, the index grows unbounded for users who never log out.
+
+##### Responsibility scope
+Periodic pass that elects one pod via a Redis lock, scans `bff:user_sessions:*`, and trims expired members with `ZREMRANGEBYSCORE`. Emits backlog and removed-count metrics.
+
+##### Responsibility boundaries
+Does not delete session records (they expire on their own). Does not run on every BFF pod simultaneously -- one elected pod per pass.
+
+##### Related components (by ID)
+- `cpt-insightspec-component-bff-session-manager` -- shares the same key conventions; janitor reads only.
 
 ### 3.3 API Contracts
 
-- [ ] `p2` - **ID**: `cpt-insightspec-interface-bff-auth-api`
+- [ ] `p2` - **ID**: `cpt-insightspec-design-bff-auth-api-spec`
+
+This section specifies the implementation of the auth API declared in [PRD §7.1](./PRD.md#71-public-api-surface) (`cpt-insightspec-interface-bff-auth-api`).
 
 - **Contracts**: `cpt-insightspec-contract-bff-gateway-jwt`, `cpt-insightspec-contract-bff-oidc`, `cpt-insightspec-contract-bff-jwks-url`
 - **Technology**: REST / OpenAPI 3.1
@@ -438,9 +519,11 @@ sequenceDiagram
     B-->>I: 200
 ```
 
-### 3.7 Redis Data Model
+### 3.7 Database schemas & tables
 
 - [ ] `p3` - **ID**: `cpt-insightspec-db-bff-redis`
+
+This module's "database" is Redis. The schema below describes the keyspace.
 
 All BFF-owned keys carry the `bff:` prefix. The Router owns one prefix (`router:`) for its JWT cache; cross-references between the two are explicit.
 
@@ -468,8 +551,6 @@ graph LR
 
 #### Key: `bff:session:{session_id}`
 
-**ID**: `cpt-insightspec-dbtable-bff-session`
-
 **Type**: Redis HASH
 
 | Field | Type | Description |
@@ -493,8 +574,6 @@ graph LR
 
 #### Key: `bff:user_sessions:{user_id}`
 
-**ID**: `cpt-insightspec-dbtable-bff-user-sessions`
-
 **Type**: Redis ZSET
 
 **Member**: `session_id`
@@ -510,8 +589,6 @@ graph LR
 **Maintenance**: Mutated atomically with `bff:session:*` via Lua scripts.
 
 #### Key: `bff:sid_index:{iss}:{idp_sid}`
-
-**ID**: `cpt-insightspec-dbtable-bff-sid-index`
 
 **Type**: Redis SET
 
@@ -533,9 +610,9 @@ Owned by the Router, not by the BFF. The BFF deletes these keys as part of revok
 
 ### 3.8 Gateway JWT Claim Contract
 
-- [ ] `p2` - **ID**: `cpt-insightspec-contract-bff-gateway-jwt`
+- [ ] `p2` - **ID**: `cpt-insightspec-design-bff-jwt-claim-spec`
 
-The BFF defines the contract. The Router mints. Downstream services verify.
+This section is the technical specification for the contract `cpt-insightspec-contract-bff-gateway-jwt` declared in [PRD §7.2](./PRD.md#72-external-integration-contracts). The BFF defines the contract; the Router mints; downstream services verify.
 
 **Header**:
 
@@ -787,7 +864,4 @@ Audit (via Audit Service): login OK, login fail, refresh, logout, revoke (single
 - **Sibling**: [Router PRD](../router/PRD.md), [Router DESIGN](../router/DESIGN.md) -- gateway JWT minting, JWKS, `/api/*` proxy, route config
 - **Parent**: [API Gateway PRD](../PRD.md), [API Gateway DESIGN](../DESIGN.md) -- umbrella docs
 - **Backend**: [Backend PRD](../../specs/PRD.md), [Backend DESIGN](../../specs/DESIGN.md)
-- **ADRs**: [ADR/](./ADR/) -- to be authored:
-  - `cpt-insightspec-adr-bff-opaque-session`
-  - `cpt-insightspec-adr-bff-explicit-refresh`
-  - `cpt-insightspec-adr-bff-zset-user-index`
+- **ADRs**: [ADR/](./ADR/) -- to be authored alongside implementation. Decisions captured inline as DD-BFF-01..09 in §5 until then.

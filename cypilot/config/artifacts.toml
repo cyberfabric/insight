@@ -419,6 +419,30 @@ name = "Backend Architecture"
 traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/backend/api-gateway/bff/PRD.md"
+name = "BFF (Backend-for-Frontend) PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/backend/api-gateway/bff/DESIGN.md"
+name = "BFF Architecture"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/backend/api-gateway/router/PRD.md"
+name = "API Gateway Router PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/backend/api-gateway/router/DESIGN.md"
+name = "API Gateway Router Architecture"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
 kind = "ADR"
 path = "docs/shared/glossary/ADR/0001-uuidv7-primary-key.md"
 name = "ADR-0001: UUIDv7 as Universal Primary Key"

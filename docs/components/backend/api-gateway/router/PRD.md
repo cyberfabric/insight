@@ -10,12 +10,13 @@ date: 2026-04-28
 - [1. Overview](#1-overview)
   - [1.1 Purpose](#11-purpose)
   - [1.2 Background / Problem Statement](#12-background--problem-statement)
-  - [1.3 Goals](#13-goals)
+  - [1.3 Goals (Business Outcomes)](#13-goals-business-outcomes)
   - [1.4 Glossary](#14-glossary)
 - [2. Actors](#2-actors)
   - [2.1 Human Actors](#21-human-actors)
   - [2.2 System Actors](#22-system-actors)
 - [3. Operational Concept & Environment](#3-operational-concept--environment)
+  - [3.1 Module-Specific Environment Constraints](#31-module-specific-environment-constraints)
 - [4. Scope](#4-scope)
   - [4.1 In Scope](#41-in-scope)
   - [4.2 Out of Scope](#42-out-of-scope)
@@ -29,7 +30,11 @@ date: 2026-04-28
   - [5.7 Config Management](#57-config-management)
   - [5.8 Signing Key Rotation](#58-signing-key-rotation)
 - [6. Non-Functional Requirements](#6-non-functional-requirements)
-- [7. Public Interfaces](#7-public-interfaces)
+  - [6.1 NFR Inclusions](#61-nfr-inclusions)
+  - [6.2 NFR Exclusions](#62-nfr-exclusions)
+- [7. Public Library Interfaces](#7-public-library-interfaces)
+  - [7.1 Public API Surface](#71-public-api-surface)
+  - [7.2 External Integration Contracts](#72-external-integration-contracts)
 - [8. Use Cases](#8-use-cases)
 - [9. Acceptance Criteria](#9-acceptance-criteria)
 - [10. Dependencies](#10-dependencies)
@@ -60,7 +65,7 @@ The BFF creates and stores user sessions, but it does not forward requests on it
 
 Doing this in the BFF would mix browser session concerns with cluster routing concerns. Splitting them gives a small, focused, hot-path component (Router) and a larger session-aware component (BFF) with their own change cadences.
 
-### 1.3 Goals
+### 1.3 Goals (Business Outcomes)
 
 - Add no more than 15 ms p95 latency between the browser and the internal service.
 - Make every internal service receive a fresh, verifiable identity claim per request.
@@ -113,9 +118,11 @@ Doing this in the BFF would mix browser session concerns with cluster routing co
 
 **ID**: `cpt-insightspec-actor-redis`
 
-**Role**: Reads of `session:{id}` and `jwt_cache:{sid}`. The Router never writes session records, only the JWT cache.
+**Role**: Read-only access to `bff:session:*`; read/write on `router:jwt_cache:*`. The Router never writes session records.
 
 ## 3. Operational Concept & Environment
+
+### 3.1 Module-Specific Environment Constraints
 
 - Same process and pod as the BFF -- the API Gateway is one binary with two modules. Single ingress entry, single TLS endpoint.
 - Stateless. Any pod can serve any request. Hot path uses Redis only.
@@ -148,6 +155,8 @@ Doing this in the BFF would mix browser session concerns with cluster routing co
 
 ### 5.1 Session Validation
 
+#### Cookie-Based Session Validation
+
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-router-session-validate`
 
 For every request matched by the route table, the system **MUST** read the session cookie, look up `session:{id}` in Redis, and reject the request with 401 if the cookie is missing, malformed, expired, or not present in Redis. The cookie value **MUST NOT** be logged or echoed.
@@ -159,6 +168,8 @@ The system **MUST NOT** modify session state. All writes (refresh, revoke) belon
 **Actors**: `cpt-insightspec-actor-browser-user`, `cpt-insightspec-actor-redis`
 
 ### 5.2 Gateway JWT Mint and Cache
+
+#### EdDSA-Signed Gateway JWT Per Request
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-router-jwt-mint`
 
@@ -176,6 +187,8 @@ The system **MUST** invalidate the JWT cache for a session when it receives a cl
 **Actors**: `cpt-insightspec-actor-downstream-service`, `cpt-insightspec-actor-redis`
 
 ### 5.3 Route Resolution
+
+#### Longest-Prefix Route Match
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-router-route-resolve`
 
@@ -195,6 +208,8 @@ Each route entry **MUST** specify at minimum:
 
 ### 5.4 Reverse Proxy
 
+#### Streaming Reverse Proxy
+
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-router-proxy`
 
 The system **MUST** forward the matched request to the resolved upstream and stream the response back. Body streaming **MUST** be supported in both directions to keep memory bounded for large CSV exports and uploads. WebSocket upgrades **MUST** be supported on routes flagged `websocket: true`.
@@ -206,6 +221,8 @@ The per-route `timeout_ms` **MUST** be enforced on upstream connect, write, and 
 **Actors**: `cpt-insightspec-actor-downstream-service`
 
 ### 5.5 Header Rewriting
+
+#### Strip + Inject on Forward
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-router-header-rewrite`
 
@@ -227,6 +244,8 @@ Response headers **MUST** be passed through with no modification except for stri
 
 ### 5.6 JWKS Publication
 
+#### JWKS Endpoint
+
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-router-jwks`
 
 The system **MUST** serve `GET /.well-known/jwks.json` returning the current and previous public verification keys with stable `kid` values. The response **MUST** include `Cache-Control: public, max-age=3600`.
@@ -237,9 +256,13 @@ The system **MUST** serve `GET /.well-known/jwks.json` returning the current and
 
 ### 5.7 Config Management
 
+#### ConfigMap Load and Validation
+
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-router-config-load`
 
 The system **MUST** load route configuration from a K8s ConfigMap on startup and validate it against a schema (unique prefixes, valid URLs, sane timeouts). Validation failure **MUST** prevent the service from becoming ready -- never start with a partially valid table.
+
+#### Atomic Hot Reload
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-router-config-reload`
 
@@ -252,6 +275,8 @@ In-flight requests **MUST** continue to use the route they were matched against;
 **Actors**: `cpt-insightspec-actor-operator`
 
 ### 5.8 Signing Key Rotation
+
+#### Hot Key Rotation with Overlap
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-router-key-rotation`
 
@@ -304,7 +329,7 @@ If Redis is unreachable, signing keys are missing, or the route table is empty, 
 - **Per-tenant rate limiting**: Inherited from parent backend NFR; ingress and per-service middleware handle it.
 - **Distributed tracing**: Inherited as out-of-scope from the parent backend PRD; correlation_id only.
 
-## 7. Public Interfaces
+## 7. Public Library Interfaces
 
 ### 7.1 Public API Surface
 
