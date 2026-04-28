@@ -101,6 +101,31 @@ Key groups:
 - `apiGateway.proxy.routes` — reverse-proxy config to downstream services
 - `ingestion.templates.enabled` — whether to ship Argo WorkflowTemplates; requires Argo CRDs to be present in the cluster
 
+## Bitnami Legacy images — maintenance model
+
+In late 2025 Bitnami removed free image distribution from `docker.io/bitnami/*` ([bitnami/charts#30850](https://github.com/bitnami/charts/issues/30850)) and moved unsupported tags to a `docker.io/bitnamilegacy/*` namespace. The umbrella points the bundled MariaDB and Redis subcharts at `bitnamilegacy` so the eval / on-prem path keeps working without a paid Bitnami subscription. This is documented inline in `values.yaml` (`mariadb.image.repository`, `redis.image.repository`).
+
+**Ownership and cadence.** Insight maintainers own the upgrade cadence for these images. The chart `~20.0.0` / `~21.0.0` constraints allow patch-level (CVE) bumps, but **minor releases require an explicit chart edit** — minors can carry breaking changes that need verification.
+
+- **CVE-driven bumps**: tracked via Renovate against `bitnamilegacy/mariadb` and `bitnamilegacy/redis` tags; a critical CVE in either image opens a PR within 24h.
+- **Routine bumps**: scheduled monthly review of the `~MAJOR.0.0` constraint window. Minor-version bumps (e.g. `mariadb 20.x → 21.x`) ship in a dedicated PR with regression tests.
+- **Upstream deprecation risk**: if Bitnami deprecates `bitnamilegacy/*` (no announced timeline as of 2026-04), Insight will mirror the last-good tags into a self-hosted registry and update `image.repository` / `image.registry` in `values.yaml`.
+
+**Enterprise customers** with a Bitnami subscription or an internal mirror should override the registry once in their values overlay:
+
+```yaml
+mariadb:
+  image:
+    registry: registry.internal.example.com
+    repository: my-mirror/mariadb
+redis:
+  image:
+    registry: registry.internal.example.com
+    repository: my-mirror/redis
+```
+
+…and unset `global.security.allowInsecureImages` (the Bitnami chart's `secure-images` allowlist will accept your registry once images come from a non-`bitnamilegacy` path).
+
 ## Operations
 
 ```bash

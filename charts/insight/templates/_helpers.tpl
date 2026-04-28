@@ -40,9 +40,20 @@ Contract per dep:
 ==============================================================================
 */}}
 
-{{/* ---------- ClickHouse ---------- */}}
+{{/* ---------- ClickHouse ---------- *
+     `host` resolution is fail-fast at the helper level (defense-in-depth):
+     - deploy=true  → if .host is empty, default to `{release}-clickhouse`
+                      (the bundled subchart Service name).
+     - deploy=false → .host MUST be supplied; we `required`-fail right here
+                      so any consumer that resolves the host before the
+                      validator template renders still gets a readable
+                      error rather than an empty/stale value. */}}
 {{- define "insight.clickhouse.host" -}}
+{{- if .Values.clickhouse.deploy -}}
 {{- default (printf "%s-clickhouse" .Release.Name) .Values.clickhouse.host -}}
+{{- else -}}
+{{- required "clickhouse.host is required when clickhouse.deploy=false" .Values.clickhouse.host -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "insight.clickhouse.port" -}}
@@ -67,7 +78,11 @@ http://{{ include "insight.clickhouse.host" . }}:{{ include "insight.clickhouse.
 
 {{/* ---------- MariaDB ---------- */}}
 {{- define "insight.mariadb.host" -}}
+{{- if .Values.mariadb.deploy -}}
 {{- default (printf "%s-mariadb" .Release.Name) .Values.mariadb.host -}}
+{{- else -}}
+{{- required "mariadb.host is required when mariadb.deploy=false" .Values.mariadb.host -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "insight.mariadb.port" -}}
@@ -80,7 +95,11 @@ http://{{ include "insight.clickhouse.host" . }}:{{ include "insight.clickhouse.
 
 {{/* ---------- Redis ---------- */}}
 {{- define "insight.redis.host" -}}
+{{- if .Values.redis.deploy -}}
 {{- default (printf "%s-redis-master" .Release.Name) .Values.redis.host -}}
+{{- else -}}
+{{- required "redis.host is required when redis.deploy=false" .Values.redis.host -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "insight.redis.port" -}}
@@ -99,7 +118,11 @@ redis://{{ include "insight.redis.host" . }}:{{ include "insight.redis.port" . }
      redpanda.brokers when pointing at an external cluster.
 */}}
 {{- define "insight.redpanda.brokers" -}}
+{{- if .Values.redpanda.deploy -}}
 {{- default (printf "%s-redpanda:9093" .Release.Name) .Values.redpanda.brokers -}}
+{{- else -}}
+{{- required "redpanda.brokers is required when redpanda.deploy=false" .Values.redpanda.brokers -}}
+{{- end -}}
 {{- end -}}
 
 {{/*
@@ -135,36 +158,49 @@ Invoked from NOTES.txt so they fire on every install.
 ==============================================================================
 */}}
 {{- define "insight.validate" -}}
-  {{- /* OIDC: when auth is enabled, require either existingSecret or all
-         three inline fields. Defensive `default dict` guards against
+  {{- /* GitOps + autoGenerate guard.
+         Under ArgoCD/Flux, charts are rendered with `helm template` where
+         Helm's `lookup` always returns nil. Combined with `autoGenerate=true`,
+         this would regenerate `randAlphaNum 24` on every reconcile and rotate
+         every DB password silently. There is no reliable in-chart way to
+         detect the rendering tool, so we require the operator to declare
+         the deployment mode explicitly and refuse the unsafe combination.
+         Default is `helm` (imperative install); GitOps overlays MUST set
+         `deploymentMode: gitops` AND `autoGenerate: false` together. */ -}}
+  {{- $creds := default dict .Values.credentials -}}
+  {{- $mode  := default "helm" $creds.deploymentMode -}}
+  {{- if not (has $mode (list "helm" "gitops")) -}}
+    {{- fail (printf "credentials.deploymentMode=%q is invalid; expected one of: helm, gitops" $mode) -}}
+  {{- end -}}
+  {{- if and (eq $mode "gitops") $creds.autoGenerate -}}
+    {{- fail "credentials.deploymentMode=gitops is incompatible with credentials.autoGenerate=true. ArgoCD renders via `helm template` where `lookup` returns nil — auto-gen would rotate every DB password on each sync. Set credentials.autoGenerate: false and pre-create `insight-db-creds` (ExternalSecrets / sealed-secrets / SOPS)." -}}
+  {{- end -}}
+
+  {{- /* OIDC: when auth is enabled, require either existingSecret or ALL
+         four inline fields. Defensive `default dict` guards against
          aggressive override files that remove the whole apiGateway /
          apiGateway.oidc block — without these, a nil-map dereference
-         would replace the fail message with a cryptic template error. */ -}}
+         would replace the fail message with a cryptic template error.
+
+         NB: `clientSecret` is intentionally NOT validated. The api-gateway
+         uses Authorization Code + PKCE (public client flow) — `client_secret`
+         has no meaning in this architecture. Operators with a Confidential
+         IdP app should reconfigure it as Public/SPA-with-PKCE. */ -}}
   {{- $gw  := default dict .Values.apiGateway -}}
   {{- $oid := default dict $gw.oidc -}}
   {{- if not $gw.authDisabled -}}
     {{- if not $oid.existingSecret -}}
-      {{- if or (not $oid.issuer) (not $oid.clientId) (not $oid.redirectUri) -}}
-        {{- fail "apiGateway.oidc: when existingSecret is empty and authDisabled=false, issuer AND clientId AND redirectUri are ALL required" -}}
+      {{- if or (not $oid.issuer) (not $oid.audience) (not $oid.clientId) (not $oid.redirectUri) -}}
+        {{- fail "apiGateway.oidc: when existingSecret is empty and authDisabled=false, ALL of issuer + audience + clientId + redirectUri are required" -}}
       {{- end -}}
     {{- end -}}
   {{- end -}}
 
-  {{- /* External-mode hosts: when a dep is not deployed by the umbrella,
-         the consumer-facing host must be supplied. Internal deployments
-         compute the host from the release name automatically. */ -}}
-  {{- if and (not .Values.clickhouse.deploy) (not .Values.clickhouse.host) -}}
-    {{- fail "clickhouse.deploy=false requires clickhouse.host" -}}
-  {{- end -}}
-  {{- if and (not .Values.mariadb.deploy) (not .Values.mariadb.host) -}}
-    {{- fail "mariadb.deploy=false requires mariadb.host" -}}
-  {{- end -}}
-  {{- if and (not .Values.redis.deploy) (not .Values.redis.host) -}}
-    {{- fail "redis.deploy=false requires redis.host" -}}
-  {{- end -}}
-  {{- if and (not .Values.redpanda.deploy) (not .Values.redpanda.brokers) -}}
-    {{- fail "redpanda.deploy=false requires redpanda.brokers" -}}
-  {{- end -}}
+  {{- /* External-mode hosts (deploy=false → consumer must supply host):
+         the helper templates `insight.<dep>.host` already `required`-fail
+         in this case, so any template that resolves the host before this
+         validator runs gets a readable error. We keep the redpanda check
+         here because `insight.redpanda.brokers` covers it the same way. */ -}}
 
   {{- /* Passwords live in Secrets — never inline. Validate that the
          passwordSecret reference is present; the actual Secret may be

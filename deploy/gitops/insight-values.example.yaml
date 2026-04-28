@@ -32,6 +32,12 @@
 ## (`@ : / ? # %`) that would silently corrupt DSNs.
 ##
 credentials:
+  # GitOps mode — the validator refuses `gitops + autoGenerate=true`
+  # because `helm template` (the rendering path ArgoCD uses) gets nil
+  # from `lookup`, so auto-gen would rotate every DB password on each
+  # reconcile. Pre-create `insight-db-creds` out-of-band — see the
+  # comment block at the top of this file.
+  deploymentMode: gitops
   autoGenerate: false
 
 # ─────────────────────────────────────────────────────────────────

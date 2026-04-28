@@ -76,6 +76,14 @@
 # and uses it; the umbrella's BYO validator refuses any install where
 # a required key is missing, empty, or contains URL-reserved characters.
 credentials:
+  # Imperative `helm install/upgrade` is the default; the umbrella
+  # generates random passwords on first install and reuses them via
+  # `lookup` on every upgrade. Under ArgoCD/Flux (`helm template`) lookup
+  # returns nil, so the GitOps overlay MUST flip `deploymentMode: gitops`
+  # AND `autoGenerate: false` — the validator refuses the combination
+  # `gitops + autoGenerate=true` because it would silently rotate every
+  # DB password on each reconcile.
+  deploymentMode: helm           # helm | gitops
   autoGenerate: true
 
 # ─── Global values ────────────────────────────────────────────────────────
