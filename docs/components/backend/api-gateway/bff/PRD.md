@@ -163,6 +163,8 @@ Moving the token to an `HttpOnly`, `Secure`, `SameSite=Strict` cookie alone is n
 
 The system **MUST** implement OIDC authorization code flow with PKCE as a confidential client. The BFF **MUST** generate `state`, `nonce`, and PKCE verifier per login attempt and validate them on callback. The browser **MUST NOT** receive or transmit the IdP code, ID token, or access token at any point.
 
+The new `session_id` issued at the end of a successful callback **MUST** be generated server-side from a CSPRNG and **MUST NOT** be derived from, or equal to, any value present in the incoming request (cookies, headers, query). Any `__Host-sid` cookie present on the `/auth/callback` request **MUST** be ignored; if its value maps to a live session in Redis, that session **MUST** be revoked before the new session is created. This prevents session-fixation where an attacker plants a known SID before the victim logs in.
+
 **Rationale**: The whole point of this redesign -- IdP tokens never leave the server.
 
 **Actors**: `cpt-insightspec-actor-browser-user`, `cpt-insightspec-actor-oidc-provider`
@@ -304,7 +306,11 @@ The system **MUST** provide `POST /auth/logout` that revokes the current session
 
 The system **MUST** accept OIDC back-channel logout tokens at a dedicated endpoint, validate the `logout_token` per spec, locate sessions by `(iss, sid)` or `(iss, sub)`, and revoke them.
 
-**Rationale**: Without back-channel logout, IdP-side session termination does not propagate. Without RP-initiated logout, users stay signed in to the IdP after pressing "log out".
+The system **MUST** protect the back-channel endpoint against replay: every accepted `logout_token` **MUST** be recorded by `(iss, jti)` with a TTL of at least `iat + max_clock_skew`, and any subsequent delivery of the same `(iss, jti)` **MUST** short-circuit to a successful response without performing another revoke.
+
+The system **MUST** document and accept that a `logout_token` carrying only `sub` (no `sid`) will revoke every active session for that user across all browsers ("log out everywhere"). This is OIDC-spec-compliant fallback behaviour, but operators **MUST** be informed in the runbook so a misconfigured IdP does not silently widen blast radius.
+
+**Rationale**: Without back-channel logout, IdP-side session termination does not propagate. Without RP-initiated logout, users stay signed in to the IdP after pressing "log out". Without `jti` replay protection, a captured valid `logout_token` is replayable for as long as its signature verifies, enabling repeated forced revocations / DoS for reconnecting users.
 
 **Actors**: `cpt-insightspec-actor-oidc-provider`, `cpt-insightspec-actor-browser-user`
 
@@ -391,9 +397,19 @@ Every login, logout, session refresh, IdP token refresh failure, session revocat
 
 **Threshold**: 100% coverage of auth events.
 
+#### Rate Limiting on `/auth/*`
+
+- [ ] `p1` - **ID**: `cpt-insightspec-nfr-bff-rate-limit-auth`
+
+The BFF **MUST** rate-limit `/auth/login`, `/auth/callback`, and `/auth/refresh` per source IP (token bucket). Defaults: `auth_rate_per_ip = 10 req/min`, `auth_burst_per_ip = 20`. The BFF **MUST** also enforce a global cap on concurrent active `bff:login_state:*` entries (default `1000` per pod) and reject new `/auth/login` requests with `429` once the cap is hit, to prevent Redis exhaustion via a flood of unfinished login attempts.
+
+**Threshold**: under sustained 100 req/s/IP attack, login does not consume more than `1000` `bff:login_state:*` entries per pod and CPU is bounded.
+
+**Rationale**: an attacker can otherwise flood `/auth/login` with concurrent `state` UUIDs, each writing a 5-minute Redis HASH, and exhaust Redis memory or BFF event-loop CPU.
+
 ### 6.2 NFR Exclusions
 
-- **Per-route rate limiting in the BFF**: Handled by the surrounding ingress and per-service middleware. The BFF only rate-limits `/auth/*` endpoints (login, callback, refresh) to slow brute force.
+- **Per-route rate limiting on `/api/*`**: Handled by the surrounding ingress and per-service middleware. The BFF rate-limits only `/auth/*` per `cpt-insightspec-nfr-bff-rate-limit-auth`.
 
 ## 7. Public Library Interfaces
 
@@ -577,5 +593,6 @@ JWKS publication and `/api/*` reverse proxy live on the [Router](../router/PRD.m
 | BFF on the auth-critical path | Single point of failure for all UI traffic | Stateless horizontal scaling; readiness probes; ingress retries |
 | `SameSite=Strict` breaks deep links from external sites | User lands logged out when following email/Slack links | Documented behavior; fall back to `Lax` only if UX requires it |
 | Janitor falls behind | `bff:user_sessions:*` accumulates expired entries | Metric on backlog size; alert when above threshold; pass interval is shorter than session TTL |
-| Back-channel logout endpoint abuse | Spoofed logout tokens trigger session revocation | Strict OIDC `logout_token` validation: signature, `iss`, `aud`, `iat`, `events`, `jti` replay protection |
+| Back-channel logout endpoint abuse | Spoofed logout tokens trigger session revocation | Strict OIDC `logout_token` validation: signature, `iss`, `aud`, `iat`, `events`. `jti` replay protection via `bff:logout_jti:{iss}:{jti}` SET-NX with TTL ≥ `iat + max_clock_skew`. |
+| `logout_token` without `sid` widens blast radius | A misconfigured IdP that omits `sid` causes every back-channel logout to behave as "log out everywhere" for the named `sub` | Runbook callout; operator-facing log line on every `(iss, sub)`-only fallback so the pattern is detectable |
 | User-sessions index drift | Index lists sessions that no longer exist (or vice versa) | Atomic ops via Lua script; janitor reconciles |

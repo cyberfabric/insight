@@ -137,7 +137,7 @@ Doing this in the BFF would mix browser session concerns with cluster routing co
 - Route table loading from ConfigMap.
 - Hot reload of route config and signing keys without restart.
 - HTTP reverse proxy (request and response streaming, including chunked + WebSocket upgrades).
-- Header rewriting (strip browser-supplied auth, inject `Authorization: Bearer ...`, propagate `X-Correlation-Id`).
+- Header rewriting (strip browser-supplied auth, inject `Authorization: Bearer ...`, always strip and regenerate `X-Correlation-Id` as UUID v7).
 - JWKS endpoint with key rotation overlap.
 - Per-route timeout enforcement.
 - Health and readiness probes for K8s.
@@ -230,7 +230,7 @@ Before forwarding, the system **MUST** strip headers in two categories and pass 
 
 **Hardcoded gateway-reserved (always stripped, then re-set by the gateway)**:
 - `Authorization` -- replaced with `Bearer <gateway-jwt>`.
-- `X-Correlation-Id` -- passed through if present, otherwise generated as UUID v7.
+- `X-Correlation-Id` -- always stripped from the incoming request and regenerated as UUID v7 by the gateway. Client-supplied values **MUST NOT** be propagated; this prevents browser-supplied values from poisoning correlation logs across tenants.
 - `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host` -- set by the gateway per RFC.
 - Gateway-reserved cookies (`__Host-sid`, CSRF cookie) -- stripped from `Cookie` header.
 
@@ -467,6 +467,9 @@ If Redis is unreachable, signing keys are missing, or the route table is empty, 
 | Header rewrite bug leaks browser `Authorization` downstream | Internal service accepts a forged identity | Snapshot tests on outbound headers; fuzz tests with malicious cookie/header combinations |
 | Redis blip blocks all `/api/*` traffic | Whole product unavailable | Inherits BFF mitigation: HA Redis, optional short degraded-read window (see BFF OQ-BFF-01) |
 | Operator deletes `current` without overlap | All gateway JWTs invalid until reload | Documented runbook; admission-controller-style validation on the Secret if feasible |
+| Operator removes `previous` signing key before overlap window elapses | Cached JWTs signed with `previous` are rejected by downstream services that already refetched JWKS | Runbook enforces minimum overlap = `jwt_ttl + downstream_jwks_max_age` ≈ 65 min. Optional `router:jwt_cache:*` flush on rotation eliminates residue. See key-rotation flow in DESIGN §3.6. |
+| WebSocket revocation lag | Sessions revoked while a WS is open continue receiving traffic up to `websocket_max_lifetime_seconds`. Default 1 h global ceiling can be too lax for high-sensitivity streams. | Per-route `websocket_max_lifetime_seconds` override in the route ConfigMap (see DESIGN §3.8); tighten globally via Helm; future revocation-triggered disconnect via shared Redis pub/sub if needed (see DD-ROUTER-07). |
+| ConfigMap reload leaves WS connections on a removed route | Decommissioned upstream keeps receiving traffic via still-open WebSockets up to the lifetime cap | ConfigMap Watcher walks the open-WebSocket registry on reload and closes sockets whose matched route was removed or had its upstream changed. See DESIGN §3.6 Config reload. |
 
 ## 13. Related Documents
 

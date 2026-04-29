@@ -40,6 +40,8 @@ date: 2026-04-28
   - [DD-ROUTER-06: No Request Body Size Limits in v1](#dd-router-06-no-request-body-size-limits-in-v1)
   - [DD-ROUTER-07: WebSocket JWT Frozen at Upgrade Time, Bounded by Max Lifetime](#dd-router-07-websocket-jwt-frozen-at-upgrade-time-bounded-by-max-lifetime)
   - [DD-ROUTER-08: Header Strip List = Hardcoded + Config](#dd-router-08-header-strip-list--hardcoded--config)
+  - [DD-ROUTER-09: JWT Cache Size Cap](#dd-router-09-jwt-cache-size-cap)
+  - [DD-ROUTER-10: Cache Fill on Miss Uses `SET … NX EX`](#dd-router-10-cache-fill-on-miss-uses-set--nx-ex)
 - [6. Traceability](#6-traceability)
 
 <!-- /toc -->
@@ -281,7 +283,7 @@ No write operations on session state. Does not handle CSRF -- `SameSite=Strict` 
 Internal services must receive a fresh, signed identity claim per request without round-tripping to a central authz service. This component produces that claim.
 
 ##### Responsibility scope
-On each request, fetch `router:jwt_cache:{sid}` from Redis. On miss, build claims (`iss`, `aud`, `sub`, `tid`, `sid`, `iat`, `exp`, `jti`) from the session record, sign with `KeyStore.current`, write back to cache with TTL ≤ 60 s.
+On each request, fetch `router:jwt_cache:{sid}` from Redis. On miss, build claims (`iss`, `aud`, `sub`, `tid`, `sid`, `iat`, `exp`, `jti`) from the session record, sign with `KeyStore.current`, then `SET router:jwt_cache:{sid} <jwt> NX EX <ttl>`. If `NX` returns `nil` (a parallel request already filled the cache), re-`GET` and serve the winner's JWT instead of the freshly-minted one. See DD-ROUTER-10.
 
 ##### Responsibility boundaries
 Does not refresh IdP access tokens. Does not validate JWTs (downstream services do that). Does not include `lic`, `roles`, or `scopes` -- those are not part of the v1 contract.
@@ -298,7 +300,7 @@ Does not refresh IdP access tokens. Does not validate JWTs (downstream services 
 Browser-supplied `Authorization` headers and gateway-internal cookies must never reach internal services. This middleware is the boundary.
 
 ##### Responsibility scope
-Strip browser `Authorization` and gateway-reserved cookies. Inject `Authorization: Bearer ...`, `X-Correlation-Id`, `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`. Apply operator-configured `strip_request_headers`. Apply `strip_prefix` if the route says so.
+Strip browser `Authorization` and gateway-reserved cookies. Strip any client-supplied `X-Correlation-Id` and regenerate it as a fresh UUID v7. Inject `Authorization: Bearer ...`, the regenerated `X-Correlation-Id`, `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`. Apply operator-configured `strip_request_headers`. Apply `strip_prefix` if the route says so.
 
 ##### Responsibility boundaries
 Does not modify request body. Does not modify response headers (apart from stripping reserved `Set-Cookie`). Does not enforce header allowlists.
@@ -315,7 +317,7 @@ Does not modify request body. Does not modify response headers (apart from strip
 The terminal stage of the request path -- everything else feeds into the upstream call.
 
 ##### Responsibility scope
-Open the upstream connection (pooled `hyper::Client`), stream request body, await response, stream response body back. Enforce `timeout_ms`. Handle WebSocket upgrade for routes flagged `websocket: true`, including enforcing the global `gateway.websocket_max_lifetime_seconds` cap (see DD-ROUTER-07) -- close the socket with a normal-closure code when the deadline is reached.
+Open the upstream connection (pooled `hyper::Client`), stream request body, await response, stream response body back. Enforce `timeout_ms`. Handle WebSocket upgrade for routes flagged `websocket: true`. For each upgraded socket, enforce the route's effective max lifetime: per-route `websocket_max_lifetime_seconds` if present, otherwise the global `gateway.websocket_max_lifetime_seconds` (see DD-ROUTER-07) -- close the socket with a normal-closure code when the deadline is reached. Each open WebSocket is registered in an in-process table keyed by `(route_prefix, socket_id)` so the ConfigMap Watcher can close sockets bound to a removed route on hot reload.
 
 ##### Responsibility boundaries
 No retries. No payload transformation. No per-tenant rate limiting -- that's the ingress and per-service middleware.
@@ -347,13 +349,21 @@ Stateless read-only handler. Does not authenticate clients (the endpoint is publ
 Adding a new internal service or changing a route's timeout must not require a redeploy. This watcher applies ConfigMap changes hot.
 
 ##### Responsibility scope
-Watch the route ConfigMap via the K8s API. On change, parse + validate. Atomically swap the live `RouteTable` via `arc-swap` if valid; emit alert and keep the old table if not.
+Watch the route ConfigMap via the K8s API. On change: parse + validate, then **diff against the previous table**:
+
+1. Build the new `RouteTable`.
+2. Compute the set of route prefixes that disappeared (removed entirely or whose `upstream` changed).
+3. Atomically swap the live `RouteTable` via `arc-swap`.
+4. For every removed/changed prefix, walk the Hyper Proxy's open-WebSocket registry and close every socket whose `(route_prefix)` matches with a normal-closure code. Clients reconnect against the new table.
+
+If validation fails, keep the old table, emit an alert, do not touch active sockets.
 
 ##### Responsibility boundaries
-Does not match routes itself (that's the matcher). Does not validate signing keys (separate watcher).
+Does not match routes itself (that's the matcher). Does not validate signing keys (separate watcher). Does not close HTTP requests on reload -- they hold an `Arc` to the previous table for their lifetime, which is bounded by per-route `timeout_ms`.
 
 ##### Related components (by ID)
 - `cpt-insightspec-component-router-matcher` -- consumer of the table it builds.
+- `cpt-insightspec-component-router-proxy` -- maintains the open-WebSocket registry the watcher walks on reload.
 
 #### Key Store
 
@@ -446,7 +456,14 @@ sequenceDiagram
     R->>K: get current signing key
     K-->>R: (kid, secret)
     R->>R: build claims (iss, aud, sub, tid, sid, iat, exp, jti)<br/>sign EdDSA
-    R->>RD: SETEX router:jwt_cache:{sid} 60s
+    R->>RD: SET router:jwt_cache:{sid} <jwt> NX EX <ttl>
+    alt NX OK (we won)
+        Note over R,RD: Use the JWT we just minted.
+    else NX nil (someone else won)
+        R->>RD: GET router:jwt_cache:{sid}
+        RD-->>R: <winner's jwt>
+        Note over R,RD: Serve the winner's JWT, discard our own.<br/>One canonical JWT per (sid, cache window).<br/>See DD-ROUTER-10.
+    end
     R->>S: request + Bearer <jwt>
     S-->>R: response
     R-->>U: response
@@ -463,17 +480,24 @@ sequenceDiagram
     participant W as ConfigMap Watcher
     participant V as Validator
     participant T as Route Table (arc-swap)
-    participant Live as Live request handlers
+    participant P as Hyper Proxy<br/>(WS registry)
+    participant HTTP as Live HTTP handlers
 
     K8s-->>W: ConfigMap changed
     W->>V: parse + validate new YAML
     alt valid
-        V-->>W: ok (new RouteTable)
+        V-->>W: ok (new RouteTable, removed_prefixes)
         W->>T: store(new)
-        Note over Live: New requests use new table.<br/>In-flight requests keep their existing match.
+        Note over HTTP: New requests use new table.<br/>In-flight HTTP requests keep their existing<br/>match (bounded by route timeout_ms).
+        loop for each prefix in removed_prefixes
+            W->>P: close all sockets registered for prefix
+            P-->>W: closed N sockets (normal-closure)
+        end
+        Note over P: Clients reconnect; they either land on the<br/>renamed/replaced upstream or get a 404.
     else invalid
         V-->>W: errors
         W->>W: emit alert, keep old table
+        Note over P: WebSocket sweep is NOT performed on<br/>validation failure -- existing sockets stay open.
     end
 ```
 
@@ -489,19 +513,33 @@ sequenceDiagram
     participant W as Secret Watcher
     participant KS as Key Store
     participant J as JWKS
+    participant RD as Redis
     participant DS as Downstream
 
     Op->>K8s: update Secret bff-signing-keys<br/>(promote new → current, demote → previous)
     K8s-->>W: Secret changed
     W->>KS: load(current, previous)
     KS->>J: publish both kids
+    KS->>RD: DEL all router:jwt_cache:* (FLUSH on rotation)
+    Note over RD: Optional but recommended.<br/>Cache size cap (see DD-ROUTER-09)<br/>also bounds the residue.
     Note over DS: On unknown kid in token,<br/>refetch JWKS, accept either.
-    Note over KS: After overlap window,<br/>operator removes 'previous'.
+    Note over KS: Overlap window MUST be ≥<br/>jwt_max_ttl + downstream_jwks_max_age<br/>= 300 s + 3600 s ≈ 65 minutes<br/>before the operator removes 'previous'.
     Op->>K8s: update Secret (drop previous)
     K8s-->>W: Secret changed
     W->>KS: load(current only)
     KS->>J: publish current only
 ```
+
+**Overlap window math.** A downstream service caches JWKS up to `Cache-Control: max-age=3600` (1 h). After `previous` is removed from the Router's JWKS, a downstream service that has not yet refetched JWKS still has the old `kid` in its in-process cache and continues to verify old-key tokens. But a downstream service that *did* refetch -- because it saw an unknown `kid` from the new key -- now has only the new key, and any cached gateway JWT still signed with `previous` (TTL ≤ 60 s) is rejected. Worst-case window the operator runbook **MUST** wait before removing `previous` is therefore:
+
+```
+overlap_min = gateway.jwt_ttl_seconds (≤ 300) + downstream JWKS max-age (3600)
+            ≈ 65 minutes
+```
+
+`gateway.websocket_max_lifetime_seconds` (default 3600 s, see DD-ROUTER-07) is *not* an additional addend here -- WebSocket connections retain the JWT minted at upgrade and never re-verify against fresh JWKS, so they are unaffected by JWKS-cache eviction. They are bounded separately by their own lifetime cap.
+
+**Optional but recommended on rotation.** Flushing `router:jwt_cache:*` (a single Redis-side `SCAN + UNLINK` or, if a future DD-ROUTER-09 caps cache size, just clearing the cap'd structure) eliminates the residue of JWTs signed under the previous key. Cost: a transient mint storm for active sessions, mitigated by the `SET ... NX` cache-fill from DD-ROUTER-10.
 
 #### Cache busting on session revoke
 
@@ -571,6 +609,9 @@ routes:
     upstream: http://analytics-api.insight.svc.cluster.local:8080
     websocket: true
     timeout_ms: 0
+    # Per-route override for the global gateway.websocket_max_lifetime_seconds.
+    # Tighter ceiling for high-sensitivity streams; bounds post-revoke staleness.
+    websocket_max_lifetime_seconds: 600
 ```
 
 Validation rules (enforced on load and on every reload):
@@ -582,6 +623,7 @@ Validation rules (enforced on load and on every reload):
 - `timeout_ms ≥ 0`. `0` only allowed when `websocket: true`.
 - No two routes share an exact prefix.
 - `strip_request_headers` entries must be valid HTTP header names; reserved gateway headers (`Authorization`, `X-Correlation-Id`, `X-Forwarded-*`, gateway cookies) **MUST NOT** appear in this list -- they are stripped unconditionally.
+- `websocket_max_lifetime_seconds` (per-route) is permitted only when `websocket: true`. Must be `>= 30` and `<=` the global `gateway.websocket_max_lifetime_seconds`. Falls back to the global value if absent.
 
 ### 3.9 Redis Keys (read-only and JWT cache)
 
@@ -735,7 +777,12 @@ Audit (via Audit Service): config reload (with diff), key rotation, JWKS fetch f
 
 ### DD-ROUTER-07: WebSocket JWT Frozen at Upgrade Time, Bounded by Max Lifetime
 
-**Decision**: A WebSocket connection carries the JWT minted at upgrade. The Router does **not** re-mint or re-inject during the connection's lifetime. To bound the post-revoke staleness window, the Router enforces a configurable **max socket lifetime** (Helm value `gateway.websocket_max_lifetime_seconds`, default `3600` = 1 hour). When the wall-clock deadline is reached, the Router closes the socket with a normal-closure code; the client reconnects and re-authenticates, picking up the current session state (or 401 if the session is gone).
+**Decision**: A WebSocket connection carries the JWT minted at upgrade. The Router does **not** re-mint or re-inject during the connection's lifetime. To bound the post-revoke staleness window, the Router enforces a configurable **max socket lifetime** with a global default and a per-route override:
+
+- Global default: Helm value `gateway.websocket_max_lifetime_seconds`, default `3600` = 1 hour.
+- Per-route override: `websocket_max_lifetime_seconds` in the route entry of the ConfigMap (see §3.8). Must be `>= 30` and `<=` the global value. Used for high-sensitivity streams (admin operations, live pipeline events) that need a tighter ceiling than the dashboard default.
+
+When the effective deadline is reached, the Router closes the socket with a normal-closure code; the client reconnects and re-authenticates, picking up the current session state (or 401 if the session is gone). Open WebSocket connections are also closed by the ConfigMap Watcher when their matched route is removed or its upstream changes (see §3.6 Config reload).
 
 **Why**:
 - v1 has no plan for in-band JWT refresh on a live socket -- complicates the protocol, complicates client code, and the only real benefit is faster claim freshness which the JWT TTL bound (≤ 300 s) already covers for non-WebSocket traffic.
@@ -764,9 +811,31 @@ Everything else passes through.
 
 **Consequences**: New downstream services can rely on any non-reserved header passing through. The config-driven strip list is reviewed at deploy time alongside the route table.
 
+### DD-ROUTER-09: JWT Cache Size Cap
+
+**Decision**: `router:jwt_cache:*` is bounded both by per-entry TTL (≤ 60 s) and by an upper bound on total active session count enforced through Redis `maxmemory-policy=allkeys-lru` on the Redis instance (or a dedicated logical DB if the operator wants strict isolation). The Router does not maintain its own LRU.
+
+**Why**:
+- An upper bound on cache size prevents an attacker who can rapidly create sessions from inflating the JWT cache to memory pressure.
+- Relying on Redis eviction policy is operationally simple. The cache is a true cache -- losing entries only costs an EdDSA sign on the next request.
+- Per-key TTL alone is not enough to bound steady-state memory if active session count grows.
+
+**Consequences**: Operators must size the Redis instance for `(active_sessions × avg_jwt_size) + (active_sessions × avg_session_record_size)` plus headroom; `allkeys-lru` evicts cache entries before session records when the JWT cache key has shorter idle time, which is the desired behaviour.
+
+### DD-ROUTER-10: Cache Fill on Miss Uses `SET … NX EX`
+
+**Decision**: On JWT cache miss, the Router fills with `SET router:jwt_cache:{sid} <jwt> NX EX <ttl>`. On `nil` return (someone else won the race), the Router re-`GET`s and serves the winner's JWT instead of using its own freshly-minted one.
+
+**Why**:
+- A SPA opening N parallel API calls right after login otherwise causes N parallel cache misses, N EdDSA signs, and N `SETEX` writes (last-writer-wins). All but one of the minted JWTs are immediately stale in the cache, each with a unique `jti`.
+- `SET ... NX` is atomic at Redis. Cost of the conflict path is one extra `GET`. Cost of the happy path is unchanged.
+- Removes a future foot-gun: a `jti` denylist (out of scope today, but plausible) would have to track every minted JWT regardless of cache outcome. With NX-fill there is one canonical JWT per session per cache window.
+
+**Consequences**: Single canonical cached JWT per session per cache window. Transient `SET-NX` collisions visible in metrics on traffic bursts; expected and benign.
+
 ## 6. Traceability
 
 - **PRD**: [PRD.md](./PRD.md)
 - **Sibling**: [BFF PRD](../bff/PRD.md), [BFF DESIGN](../bff/DESIGN.md) -- session lifecycle, OIDC, gateway JWT schema (3.8), Redis data model (3.7)
 - **Parent**: [Backend PRD](../../specs/PRD.md), [Backend DESIGN](../../specs/DESIGN.md)
-- **ADRs**: [ADR/](./ADR/) -- to be authored alongside implementation. Decisions captured inline as DD-ROUTER-01..08 in §5 until then.
+- **ADRs**: [ADR/](./ADR/) -- to be authored alongside implementation. Decisions captured inline as DD-ROUTER-01..10 in §5 until then.

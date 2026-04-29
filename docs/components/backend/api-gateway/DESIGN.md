@@ -149,7 +149,12 @@ Helm values that affect both modules:
 | `gateway.session_refresh_safety_margin_seconds` | 30 | `refresh_at = expires_at − safety_margin` returned to the SPA |
 | `gateway.session_absolute_lifetime_seconds` | 28800 | Hard cap (BFF) |
 | `gateway.jwt_ttl_seconds` | 120 | Gateway JWT TTL (Router); must be ≤300 |
-| `gateway.websocket_max_lifetime_seconds` | 3600 | Hard cap on WebSocket connection lifetime (Router); bounds post-revoke staleness, see [Router DD-ROUTER-07](./router/DESIGN.md#dd-router-07-websocket-jwt-frozen-at-upgrade-time-bounded-by-max-lifetime) |
+| `gateway.websocket_max_lifetime_seconds` | 3600 | Global hard cap on WebSocket connection lifetime (Router). Per-route override available in `routes.yaml`. Bounds post-revoke staleness, see [Router DD-ROUTER-07](./router/DESIGN.md#dd-router-07-websocket-jwt-frozen-at-upgrade-time-bounded-by-max-lifetime). |
+| `gateway.auth_rate_per_ip` | 10 | `/auth/*` token-bucket rate per source IP, requests/min (BFF) |
+| `gateway.auth_burst_per_ip` | 20 | `/auth/*` token-bucket burst per source IP (BFF) |
+| `gateway.auth_login_state_max` | 1000 | Per-pod cap on concurrent `bff:login_state:*` entries (BFF); excess `/auth/login` returns 429 |
+| `gateway.idp_refresh_timeout_seconds` | 10 | Per-session refresh-lock TTL guarding concurrent IdP refresh (BFF) |
+| `gateway.logout_jti_clock_skew_seconds` | 60 | Tolerance for `iat` skew on OIDC `logout_token` -- inflates the replay-guard TTL by this amount (BFF) |
 | `gateway.csrf_origins` | [] | Allowlist of acceptable `Origin` values for `/auth/*` mutations |
 | `gateway.routes_configmap` | `gateway-routes` | ConfigMap with the route table |
 | `gateway.signing_keys_secret` | `bff-signing-keys` | Secret with signing keys |
