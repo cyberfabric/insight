@@ -650,6 +650,268 @@ streams:
       datetime_format: "%Y-%m-%d"
       lookback_window: P0D
       cursor_granularity: P1D
+  - type: DeclarativeStream
+    name: users
+    retriever:
+      type: SimpleRetriever
+      paginator:
+        $ref: "#/definitions/linked/SimpleRetriever/paginator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - value
+      requester:
+        type: HttpRequester
+        http_method: GET
+        authenticator:
+          type: SessionTokenAuthenticator
+          login_requester:
+            type: HttpRequester
+            url: >-
+              https://login.microsoftonline.com/{{ config['azure_tenant_id']
+              }}/oauth2/v2.0/token
+            http_method: GET
+            request_body:
+              $ref: "#/definitions/linked/HttpRequester/request_body"
+          session_token_path:
+            - access_token
+          expiration_duration: PT1H
+          request_authentication:
+            type: Bearer
+        request_parameters:
+          $select: id,userPrincipalName,displayName,mail,accountEnabled
+          $filter: accountEnabled eq true
+        url: https://graph.microsoft.com/v1.0/users
+    primary_key:
+      - id
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          id:
+            type: string
+          userPrincipalName:
+            type:
+              - string
+              - "null"
+          displayName:
+            type:
+              - string
+              - "null"
+          mail:
+            type:
+              - string
+              - "null"
+          accountEnabled:
+            type:
+              - boolean
+              - "null"
+          tenant_id:
+            type: string
+          source_id:
+            type: string
+        required:
+          - id
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+  - type: DeclarativeStream
+    name: calendar_events
+    retriever:
+      type: SimpleRetriever
+      paginator:
+        $ref: "#/definitions/linked/SimpleRetriever/paginator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - value
+      requester:
+        type: HttpRequester
+        http_method: GET
+        authenticator:
+          type: SessionTokenAuthenticator
+          login_requester:
+            type: HttpRequester
+            url: >-
+              https://login.microsoftonline.com/{{ config['azure_tenant_id']
+              }}/oauth2/v2.0/token
+            http_method: GET
+            request_body:
+              $ref: "#/definitions/linked/HttpRequester/request_body"
+          session_token_path:
+            - access_token
+          expiration_duration: PT1H
+          request_authentication:
+            type: Bearer
+        request_parameters:
+          startDateTime: "{{ stream_slice.start_time }}T00:00:00Z"
+          endDateTime: "{{ stream_slice.end_time }}T00:00:00Z"
+          $select: id,subject,start,end,organizer,attendees,isOnlineMeeting,onlineMeetingProvider,onlineMeeting,location,bodyPreview,webLink,isCancelled,showAs,sensitivity,seriesMasterId,type
+          $top: '200'
+        url: >-
+          https://graph.microsoft.com/v1.0/users/{{ stream_partition.user_id
+          }}/calendarView
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - stream: "#/streams/4"
+            parent_key: id
+            partition_field: user_id
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          id:
+            type: string
+          subject:
+            type:
+              - string
+              - "null"
+          start:
+            type:
+              - object
+              - "null"
+            properties:
+              dateTime:
+                type:
+                  - string
+                  - "null"
+              timeZone:
+                type:
+                  - string
+                  - "null"
+          end:
+            type:
+              - object
+              - "null"
+            properties:
+              dateTime:
+                type:
+                  - string
+                  - "null"
+              timeZone:
+                type:
+                  - string
+                  - "null"
+          organizer:
+            type:
+              - object
+              - "null"
+          attendees:
+            type:
+              - array
+              - "null"
+          isOnlineMeeting:
+            type:
+              - boolean
+              - "null"
+          onlineMeetingProvider:
+            type:
+              - string
+              - "null"
+          onlineMeeting:
+            type:
+              - object
+              - "null"
+          location:
+            type:
+              - object
+              - "null"
+          bodyPreview:
+            type:
+              - string
+              - "null"
+          webLink:
+            type:
+              - string
+              - "null"
+          isCancelled:
+            type:
+              - boolean
+              - "null"
+          showAs:
+            type:
+              - string
+              - "null"
+          sensitivity:
+            type:
+              - string
+              - "null"
+          seriesMasterId:
+            type:
+              - string
+              - "null"
+          type:
+            type:
+              - string
+              - "null"
+          user_id:
+            type: string
+          tenant_id:
+            type: string
+          source_id:
+            type: string
+          unique_key:
+            type: string
+        required:
+          - unique_key
+          - id
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - user_id
+            value: "{{ stream_partition.user_id }}"
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ stream_partition.user_id }}-{{ record['id'] }}
+    incremental_sync:
+      type: DatetimeBasedCursor
+      step: P1D
+      cursor_field: start.dateTime
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ (today_utc() + duration('P1D')).strftime('%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ (today_utc() - duration('P30D')).strftime('%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+      datetime_format: "%Y-%m-%dT%H:%M:%S%z"
+      lookback_window: P0D
+      cursor_granularity: P1D
 
 spec:
   type: Spec
@@ -720,6 +982,22 @@ metadata:
       hasResponse: true
       responsesAreSuccessful: true
       hasRecords: true
+      primaryKeysArePresent: true
+      primaryKeysAreUnique: true
+    users:
+      streamHash: ""
+      isStale: true
+      hasResponse: false
+      responsesAreSuccessful: false
+      hasRecords: false
+      primaryKeysArePresent: true
+      primaryKeysAreUnique: true
+    calendar_events:
+      streamHash: ""
+      isStale: true
+      hasResponse: false
+      responsesAreSuccessful: false
+      hasRecords: false
       primaryKeysArePresent: true
       primaryKeysAreUnique: true
   autoImportSchema: {}

@@ -88,6 +88,72 @@ models:
         tests:
           - not_null
 
+  - name: class_meeting
+    description: "Meetings at event grain (one row per meeting). Sources: Zoom (Dashboard API, internally hosted only). Future: Teams callRecords."
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: insight_source_id
+        tests:
+          - not_null
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: meeting_uid
+        description: "Source-native meeting identifier (Zoom UUID, Teams callRecord id)"
+        tests:
+          - not_null
+      - name: data_source
+        tests:
+          - not_null
+
+  - name: class_meeting_attendance
+    description: "Meeting attendance at (meeting × person × session) grain. A user who drops and rejoins produces multiple rows."
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: insight_source_id
+        tests:
+          - not_null
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: meeting_uid
+        tests:
+          - not_null
+      - name: person_key
+        tests:
+          - not_null
+      - name: data_source
+        tests:
+          - not_null
+
+  - name: class_meeting_invite
+    description: "Calendar invites (planned meetings) at event grain. Pair with class_meeting_attendance to detect meetings on external Zoom tenants. Sources: M365 calendar."
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: insight_source_id
+        tests:
+          - not_null
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: invite_uid
+        tests:
+          - not_null
+      - name: online_provider
+        description: "Detected provider: teams | zoom | google | webex | other | ''"
+      - name: data_source
+        tests:
+          - not_null
+
   - name: class_collab_document_activity
     description: "Unified daily document activity per user (M365 OneDrive + SharePoint)"
     columns:

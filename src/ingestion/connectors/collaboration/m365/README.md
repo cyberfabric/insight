@@ -5,8 +5,17 @@ Microsoft 365 activity reports (email, Teams, OneDrive, SharePoint).
 ## Prerequisites
 
 1. Create an App Registration in Azure AD
-2. Grant application permissions: `Reports.Read.All`, `User.Read.All`
+2. Grant application permissions (all type **Application**, not Delegated; admin consent required):
+
+   | Scope | Used by | Required for |
+   |-------|---------|--------------|
+   | `Reports.Read.All` | `email_activity`, `teams_activity`, `onedrive_activity`, `sharepoint_activity` | All daily activity reports |
+   | `User.Read.All` | `users` (parent stream for `calendar_events`) | Enumerating mailboxes to slice calendar by |
+   | `Calendars.Read` | `calendar_events` | Reading per-user calendar invites — required for the `class_meeting_invite` silver class. **New scope; existing deployments need re-consent.** |
+
 3. Create a client secret
+
+> **Migration note for existing deployments:** the `Calendars.Read` scope is new in this version. Until tenant admin grants consent, the `calendar_events` stream will fail with `Authorization_RequestDenied` and `class_meeting_invite` will be empty. Other streams continue to work.
 
 ## K8s Secret
 

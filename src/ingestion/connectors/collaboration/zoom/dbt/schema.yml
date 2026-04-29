@@ -28,3 +28,50 @@ models:
       - name: date
         tests:
           - not_null
+
+  - name: zoom__meeting
+    description: "Zoom meeting (event grain) → staging, feeds class_meeting"
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: insight_source_id
+        tests:
+          - not_null
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: meeting_uid
+        tests:
+          - not_null
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['insight_zoom']
+
+  - name: zoom__meeting_attendance
+    description: "Zoom meeting participant sessions (event × person × session grain) → staging, feeds class_meeting_attendance"
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: insight_source_id
+        tests:
+          - not_null
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: meeting_uid
+        tests:
+          - not_null
+      - name: person_key
+        tests:
+          - not_null
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['insight_zoom']
