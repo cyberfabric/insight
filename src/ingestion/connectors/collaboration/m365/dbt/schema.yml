@@ -8,6 +8,8 @@ sources:
       - name: teams_activity
       - name: onedrive_activity
       - name: sharepoint_activity
+      - name: users
+      - name: calendar_events
 
 models:
   - name: m365__collab_chat_activity
@@ -119,3 +121,25 @@ models:
           - not_null
           - accepted_values:
               values: ['sharepoint']
+
+  - name: m365__meeting_invite
+    description: "M365 calendar events (planned meetings) → staging, feeds class_meeting_invite"
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: insight_source_id
+        tests:
+          - not_null
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: invite_uid
+        tests:
+          - not_null
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['insight_m365_calendar']
