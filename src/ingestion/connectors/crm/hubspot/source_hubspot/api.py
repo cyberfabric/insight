@@ -11,7 +11,7 @@ policy across describe-time and sync-time traffic.
 """
 
 import logging
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 import requests
 from requests import adapters as request_adapters
@@ -37,8 +37,6 @@ class Hubspot:
     the appropriate stream name for error handler attribution.
     """
 
-    logger = logging.getLogger("airbyte")
-
     # HTTP connection pool size. Parallel describes + parallel slice fetches.
     POOL_SIZE = 50
 
@@ -57,25 +55,25 @@ class Hubspot:
 
         self._http_client = HttpClient(
             "hubspot_api",
-            self.logger,
+            logger,
             session=self.session,
             error_handler=HubspotErrorHandler("hubspot_api"),
         )
 
-        # Per-entity describe cache: {object_type: [property dict, ...]}.
+        # Per-entity describe cache: {object_type: (property dict, ...)}.
         # Populated by ``properties_for()`` so ``custom_property_names()`` and
         # schema generation share a single describe call per object.
-        self._properties_cache: Dict[str, List[Mapping[str, Any]]] = {}
+        self._properties_cache: Dict[str, Tuple[Mapping[str, Any], ...]] = {}
 
     # ------- Check connection (scope validation) -----------------------------
 
-    def check_connection(self) -> Tuple[bool, Optional[str]]:
-        """Lightweight call to verify the token works.
+    def check_connection(self) -> Optional[str]:
+        """Verify the token works. Returns None on success, reason string on failure.
 
         Uses ``/crm/v3/owners/`` with ``limit=1`` because it's cheap, tests a
         CRM scope, and doesn't require any specific object permission. The
         CDK error handler converts 401/403/530 into AirbyteTracedException;
-        catch it here so the ``(bool, Optional[str])`` contract stays honest.
+        catch it here so the caller doesn't have to.
         """
         url = f"{BASE_URL}/crm/v3/owners/"
         try:
@@ -83,12 +81,12 @@ class Hubspot:
                 "GET", url, headers={}, params={"limit": 1}, request_kwargs={}
             )
         except AirbyteTracedException as exc:
-            return False, exc.message or str(exc)
+            return exc.message or str(exc)
         except Exception as exc:  # noqa: BLE001 — surface any transport error cleanly
-            return False, f"HubSpot connectivity check failed: {exc!r}"
+            return f"HubSpot connectivity check failed: {exc!r}"
         if resp.ok:
-            return True, None
-        return False, f"HubSpot connectivity check failed: HTTP {resp.status_code} {resp.text[:500]}"
+            return None
+        return f"HubSpot connectivity check failed: HTTP {resp.status_code} {resp.text[:500]}"
 
     # ------- Property discovery ---------------------------------------------
 
@@ -102,7 +100,7 @@ class Hubspot:
         """
         cached = self._properties_cache.get(object_type)
         if cached is not None:
-            return tuple(cached)
+            return cached
 
         # HubSpot v3 properties endpoint — v2 still works but is deprecated.
         url = f"{BASE_URL}/crm/v3/properties/{object_type}"
@@ -130,9 +128,9 @@ class Hubspot:
         # v3 wraps properties in ``{"results": [...]}``; v2 returned a bare
         # list. Handle both so a future endpoint swap is transparent.
         if isinstance(body, Mapping):
-            payload = list(body.get("results") or [])
+            payload = tuple(body.get("results") or ())
         elif isinstance(body, list):
-            payload = list(body)
+            payload = tuple(body)
         else:
             raise AirbyteTracedException(
                 message=f"Unexpected HubSpot properties payload shape for '{object_type}'.",
@@ -140,7 +138,7 @@ class Hubspot:
                 failure_type=FailureType.system_error,
             )
         self._properties_cache[object_type] = payload
-        return tuple(payload)
+        return payload
 
     def custom_property_names(self, object_type: str) -> frozenset:
         """Names of properties where ``hubspotDefined`` is False.
@@ -148,13 +146,11 @@ class Hubspot:
         These get routed into the ``custom_fields`` JSON blob by the envelope,
         keeping Bronze schema stable across portals with different customizations.
         """
-        props = self._properties_cache.get(object_type)
-        if props is None:
-            props = list(self.properties_for(object_type))
+        props = self.properties_for(object_type)
         return frozenset(
             p["name"]
             for p in props
-            if p.get("name") and not p.get("hubspotDefined", False)
+            if p.get("name") and not p.get("hubspotDefined")
         )
 
     def property_names(self, object_type: str) -> Tuple[str, ...]:
@@ -163,9 +159,7 @@ class Hubspot:
         Used to build the ``properties`` request body on Search calls so we
         retrieve every field in one round-trip.
         """
-        props = self._properties_cache.get(object_type)
-        if props is None:
-            props = list(self.properties_for(object_type))
+        props = self.properties_for(object_type)
         return tuple(p["name"] for p in props if p.get("name"))
 
     def generate_schema(self, object_type: str) -> Mapping[str, Any]:
@@ -175,7 +169,7 @@ class Hubspot:
         Custom properties are NOT advertised per-column — they're packed into
         the ``custom_fields`` JSON blob by the envelope.
         """
-        props = list(self.properties_for(object_type))
+        props = self.properties_for(object_type)
         schema: Dict[str, Any] = {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
@@ -190,7 +184,7 @@ class Hubspot:
         warned_unknown: set = set()
         for prop in props:
             name = prop.get("name")
-            if not name or not prop.get("hubspotDefined", False):
+            if not name or not prop.get("hubspotDefined"):
                 continue
             schema["properties"][f"properties_{name}"] = _prop_to_json_schema(
                 prop, warned_unknown

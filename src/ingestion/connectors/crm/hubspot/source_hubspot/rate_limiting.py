@@ -75,16 +75,11 @@ class HubspotErrorHandler(ErrorHandler):
     and the only useful action is to surface a config error.
     """
 
+    max_retries: Optional[int] = 5
+    max_time: Optional[int] = 600
+
     def __init__(self, stream_name: str = "<unknown stream>") -> None:
         self._stream_name = stream_name
-
-    @property
-    def max_retries(self) -> Optional[int]:
-        return 5
-
-    @property
-    def max_time(self) -> Optional[int]:
-        return 600
 
     def interpret_response(
         self, response: Optional[Union[requests.Response, Exception]]

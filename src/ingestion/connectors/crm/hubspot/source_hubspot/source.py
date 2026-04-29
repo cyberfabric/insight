@@ -107,8 +107,8 @@ class SourceHubspot(ConcurrentSourceAdapter):
         self._validate_iso_duration(config.get("hubspot_stream_slice_step"), "hubspot_stream_slice_step")
         self._validate_iso_duration(config.get("hubspot_lookback_window"), "hubspot_lookback_window")
         hubspot = Hubspot(access_token=config["hubspot_access_token"])
-        ok, reason = hubspot.check_connection()
-        if not ok:
+        reason = hubspot.check_connection()
+        if reason is not None:
             return False, reason
         # Probe property discovery on a stream the operator actually enabled
         # — hard-coding "contacts" would false-fail tokens scoped to, say,
