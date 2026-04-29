@@ -3,9 +3,9 @@ set -euo pipefail
 
 # Run only the Silver transformations for Jira on bronze data that's already
 # in ClickHouse (no Airbyte sync). Steps:
-#   1. dbt run --select tag:jira       — staging models
-#   2. tt-enrich-jira-run               — Rust binary writes task_field_history
-#   3. dbt run --select tag:silver      — final silver transforms
+#   1. dbt run --select tag:jira              — staging models
+#   2. tt-enrich-jira-run                     — Rust binary writes task_field_history
+#   3. dbt run --select tag:silver,tag:jira+  — silver models downstream of jira (class_task_*)
 #
 # All ingestion infrastructure parameters (toolbox_image, jira_enrich_image,
 # clickhouse_host/port/user, batch_size) come from WorkflowTemplate defaults —
@@ -116,7 +116,7 @@ spec:
             arguments:
               parameters:
                 - name: dbt_select
-                  value: "tag:silver"
+                  value: "tag:silver,tag:jira+"
 EOF
 
 echo
