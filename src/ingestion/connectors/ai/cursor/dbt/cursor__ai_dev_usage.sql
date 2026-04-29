@@ -1,71 +1,65 @@
--- Bronze -> Staging: Cursor usage events -> staging.cursor__ai_dev_usage
--- Deduplication rule:
---   Yesterday and earlier: cursor_usage_events_daily_resync (authoritative, finalized costs)
---   Today only: cursor_usage_events (near-real-time, costs may change)
+-- Bronze → Silver step 1: Cursor per-user per-day usage → class_ai_dev_usage
+--
+-- Source: bronze_cursor.cursor_daily_usage — daily aggregate stream from
+-- POST /teams/daily-usage-data. One row per (userId, date) when the user was
+-- active that day (isActive=true).
+--
+-- Filter: isActive=true AND email IS NOT NULL AND trim(email)!=''.
+--
+-- session_count semantics: Cursor does not expose a per-day "session count" —
+-- it exposes chat/composer/agent request counters instead. For class_ai_dev_usage
+-- we set session_count=1 per active day, which matches the concept of
+-- "a day the user used the tool". Alternative counters (chatRequests,
+-- agentRequests, totalTabsAccepted) are carried through as dedicated columns.
+--
+-- Note: the previous implementation of this model read cursor_usage_events* and
+-- produced per-event rows with token granularity. It was replaced with a per-day
+-- aggregation because class_ai_dev_usage consumers expect (tenant, email, day,
+-- tool) granularity. Per-event / token-level data remains in Bronze and can be
+-- tapped by a separate staging model if ever needed.
 {{ config(
     materialized='incremental',
     unique_key='unique_key',
     order_by=['unique_key'],
+    settings={'allow_nullable_key': 1},
     schema='staging',
     tags=['cursor', 'silver:class_ai_dev_usage']
 ) }}
 
-WITH resync AS (
-    -- Authoritative data for completed days (yesterday and earlier)
-    SELECT
-        tenant_id,
-        source_id,
-        unique_key,
-        userEmail                   AS user_email,
-        timestamp                   AS event_timestamp,
-        kind                        AS event_kind,
-        model,
-        requestsCosts               AS request_cost,
-        cursorTokenFee              AS platform_fee,
-        isTokenBasedCall            AS is_token_based,
-        isFreeBugbot                AS is_free_bugbot,
-        maxMode                     AS max_mode,
-        JSONExtractFloat(toString(tokenUsage), 'inputTokens')      AS input_tokens,
-        JSONExtractFloat(toString(tokenUsage), 'outputTokens')     AS output_tokens,
-        JSONExtractFloat(toString(tokenUsage), 'cacheReadTokens')  AS cache_read_tokens,
-        JSONExtractFloat(toString(tokenUsage), 'cacheWriteTokens') AS cache_write_tokens,
-        JSONExtractFloat(toString(tokenUsage), 'totalCents')       AS total_cents,
-        'cursor'                    AS source
-    FROM {{ source('bronze_cursor', 'cursor_usage_events_daily_resync') }}
-    WHERE toDate(fromUnixTimestamp64Milli(CAST(timestamp AS Int64))) < today()
-    {% if is_incremental() %}
-      AND timestamp >= (SELECT coalesce(max(event_timestamp), '0') FROM {{ this }})
-    {% endif %}
-),
-
-realtime AS (
-    -- Near-real-time data for today only
-    SELECT
-        tenant_id,
-        source_id,
-        unique_key,
-        userEmail                   AS user_email,
-        timestamp                   AS event_timestamp,
-        kind                        AS event_kind,
-        model,
-        requestsCosts               AS request_cost,
-        cursorTokenFee              AS platform_fee,
-        isTokenBasedCall            AS is_token_based,
-        isFreeBugbot                AS is_free_bugbot,
-        maxMode                     AS max_mode,
-        JSONExtractFloat(toString(tokenUsage), 'inputTokens')      AS input_tokens,
-        JSONExtractFloat(toString(tokenUsage), 'outputTokens')     AS output_tokens,
-        JSONExtractFloat(toString(tokenUsage), 'cacheReadTokens')  AS cache_read_tokens,
-        JSONExtractFloat(toString(tokenUsage), 'cacheWriteTokens') AS cache_write_tokens,
-        JSONExtractFloat(toString(tokenUsage), 'totalCents')       AS total_cents,
-        'cursor'                    AS source
-    FROM {{ source('bronze_cursor', 'cursor_usage_events') }}
-    WHERE toDate(fromUnixTimestamp64Milli(CAST(timestamp AS Int64))) = today()
-    {% if is_incremental() %}
-      AND timestamp >= (SELECT coalesce(max(event_timestamp), '0') FROM {{ this }})
-    {% endif %}
-)
-
-SELECT *, toUnixTimestamp64Milli(now64()) AS _version FROM resync
-UNION ALL
-SELECT *, toUnixTimestamp64Milli(now64()) AS _version FROM realtime
+SELECT
+    tenant_id                                       AS insight_tenant_id,
+    source_id,
+    CAST(concat(coalesce(tenant_id, ''), '-', coalesce(source_id, ''), '-', coalesce(userId, ''), '-', toString(toDate(fromUnixTimestamp64Milli(CAST(date AS Int64))))) AS String)
+                                                    AS unique_key,
+    lower(trim(email))                              AS email,
+    CAST(NULL AS Nullable(String))                  AS api_key_id,
+    toDate(fromUnixTimestamp64Milli(CAST(date AS Int64))) AS day,
+    'cursor'                                        AS tool,
+    toUInt32(1)                                     AS session_count,
+    toUInt32(coalesce(acceptedLinesAdded, 0))       AS lines_added,
+    toUInt32(coalesce(acceptedLinesDeleted, 0))     AS lines_removed,
+    -- total_lines_added/removed = ALL lines the user wrote/deleted that day
+    -- (not just AI-accepted ones). Needed by gold metrics like
+    -- ai_loc_share = accepted/total to express AI contribution percentage.
+    toUInt32(coalesce(totalLinesAdded, 0))          AS total_lines_added,
+    toUInt32(coalesce(totalLinesDeleted, 0))        AS total_lines_removed,
+    toUInt32OrNull(toString(totalTabsShown))        AS tool_use_offered,
+    toUInt32OrNull(toString(totalTabsAccepted))     AS tool_use_accepted,
+    toUInt32OrNull(toString(totalTabsAccepted))     AS completions_count,
+    toUInt32OrNull(toString(agentRequests))         AS agent_sessions,
+    toUInt32(coalesce(chatRequests, 0) + coalesce(composerRequests, 0))
+                                                    AS chat_requests,
+    CAST(NULL AS Nullable(UInt32))                  AS cost_cents,
+    'cursor'                                        AS source,
+    'insight_cursor'                                AS data_source,
+    CAST(_airbyte_extracted_at AS Nullable(DateTime64(3))) AS collected_at
+FROM {{ source('bronze_cursor', 'cursor_daily_usage') }}
+WHERE isActive = true
+  AND email IS NOT NULL
+  AND trim(email) != ''
+{% if is_incremental() %}
+  AND toDate(fromUnixTimestamp64Milli(CAST(date AS Int64))) > (
+      SELECT coalesce(max(day), toDate('1970-01-01')) - INTERVAL 3 DAY
+      FROM {{ this }}
+  )
+{% endif %}

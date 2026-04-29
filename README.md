@@ -106,9 +106,9 @@ The solution consists of five main components:
 ### Root scripts
 
 ```
-./up.sh               ← Create Kind cluster + deploy all services
+./dev-up.sh               ← Create Kind cluster + deploy all services
 ./init.sh             ← Apply secrets + initialize ingestion stack
-./down.sh             ← Stop services (data preserved)
+./dev-down.sh             ← Stop services (data preserved)
 ./cleanup.sh          ← Delete cluster and all data
 k8s/kind-config.yaml  ← Kind cluster configuration
 ```
@@ -232,7 +232,7 @@ For frontend development (optional): `nvm install 25`
 ### 2. Create cluster and deploy services
 
 ```bash
-./up.sh
+./dev-up.sh
 ```
 
 This creates a Kind cluster, installs ingress-nginx, and deploys:
@@ -287,11 +287,11 @@ cd src/ingestion
 
 | Command | Description |
 |---------|-------------|
-| `./up.sh` | Create cluster + deploy everything (idempotent) |
-| `./up.sh ingestion` | Only Airbyte, Argo, ClickHouse |
-| `./up.sh app` | Only backend + frontend |
+| `./dev-up.sh` | Create cluster + deploy everything (idempotent) |
+| `./dev-up.sh ingestion` | Only Airbyte, Argo, ClickHouse |
+| `./dev-up.sh app` | Only backend + frontend |
 | `./init.sh` | Apply secrets + initialize ingestion stack |
-| `./down.sh` | Stop all services (data preserved) |
+| `./dev-down.sh` | Stop all services (data preserved) |
 | `./cleanup.sh` | Delete cluster and all data |
 
 ### Image configuration

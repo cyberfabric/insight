@@ -2,6 +2,7 @@
     materialized='incremental',
     unique_key='unique_key',
     order_by=['unique_key'],
+    settings={'allow_nullable_key': 1},
     schema='staging',
     tags=['slack', 'silver:class_collab_chat_activity']
 ) }}
@@ -37,7 +38,7 @@ SELECT
     CAST(NULL AS Nullable(String)) AS report_period,
     now() AS collected_at,
     'insight_slack' AS data_source,
-    toUnixTimestamp64Milli(now()) AS _version
+    toUnixTimestamp64Milli(now64()) AS _version
 FROM {{ source('bronze_slack', 'users_details') }} AS u
 WHERE u.user_id IS NOT NULL
   AND u.user_id != ''

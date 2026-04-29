@@ -1,0 +1,137 @@
+{{- if .Values.ingestion.templates.enabled }}
+{{- /*
+Argo parameter references ({{inputs.parameters.foo}}, {{steps.x.outputs.result}})
+are escaped with Go-template raw-string literals (`…`) so Helm emits them
+verbatim for Argo to resolve at workflow-run time. Helm-resolved values are
+unescaped: they use `include` helpers and .Values references directly.
+
+SECURITY:
+  Argo substitutes parameter refs as LITERAL TEXT. Splicing them
+  directly into Python source enables arbitrary code execution by any
+  submitter — e.g. a crafted connection_id can become valid Python.
+  Mitigation: every workflow-time parameter is exposed to the Python
+  script via env vars (os.environ[...]); the Python source is a static,
+  parameter-free string.
+*/}}
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: airbyte-sync
+  labels:
+    {{- include "insight.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingestion-template
+spec:
+  entrypoint: sync
+  templates:
+    - name: sync
+      inputs:
+        parameters:
+          - name: connection_id
+          - name: airbyte_url
+      steps:
+        - - name: trigger
+            template: trigger-sync
+            arguments:
+              parameters:
+                - name: connection_id
+                  value: {{ `"{{inputs.parameters.connection_id}}"` }}
+                - name: airbyte_url
+                  value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
+        - - name: poll
+            template: poll-job
+            arguments:
+              parameters:
+                - name: job_id
+                  value: {{ `"{{steps.trigger.outputs.result}}"` }}
+                - name: airbyte_url
+                  value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
+
+    - name: trigger-sync
+      inputs:
+        parameters:
+          - name: connection_id
+          - name: airbyte_url
+      script:
+        image: python:3.12-alpine
+        command: [python3]
+        env:
+          - name: JWT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: {{ required "airbyte.jwtSecret.name is required" .Values.airbyte.jwtSecret.name | quote }}
+                key:  {{ required "airbyte.jwtSecret.key is required"  .Values.airbyte.jwtSecret.key  | quote }}
+          - name: CONNECTION_ID
+            value: {{ `"{{inputs.parameters.connection_id}}"` }}
+          - name: AIRBYTE_URL
+            value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
+        source: |
+          import urllib.request, urllib.error, json, sys, hmac, hashlib, base64, time, os
+          def b64url(data):
+              return base64.urlsafe_b64encode(json.dumps(data).encode()).rstrip(b"=").decode()
+          def mint_token():
+              header = b64url({"alg": "HS256", "typ": "JWT"})
+              now = int(time.time())
+              payload = b64url({"iss": "airbyte-server", "sub": "00000000-0000-0000-0000-000000000000", "iat": now, "exp": now + 300})
+              sig = base64.urlsafe_b64encode(hmac.new(os.environ["JWT_SECRET"].encode(), f"{header}.{payload}".encode(), hashlib.sha256).digest()).rstrip(b"=").decode()
+              return f"{header}.{payload}.{sig}"
+          token = mint_token()
+          headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
+          data = json.dumps({"connectionId": os.environ["CONNECTION_ID"]}).encode()
+          req = urllib.request.Request(f"{os.environ['AIRBYTE_URL']}/api/v1/connections/sync", data=data, headers=headers)
+          try:
+              resp = json.load(urllib.request.urlopen(req))
+          except urllib.error.HTTPError as e:
+              body = e.read().decode()
+              print(f"Airbyte API error {e.code}: {body}", file=sys.stderr)
+              sys.exit(1)
+          print(resp["job"]["id"])
+
+    - name: poll-job
+      inputs:
+        parameters:
+          - name: job_id
+          - name: airbyte_url
+      activeDeadlineSeconds: 10800
+      script:
+        image: python:3.12-alpine
+        command: [python3]
+        env:
+          - name: JWT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: {{ required "airbyte.jwtSecret.name is required" .Values.airbyte.jwtSecret.name | quote }}
+                key:  {{ required "airbyte.jwtSecret.key is required"  .Values.airbyte.jwtSecret.key  | quote }}
+          - name: JOB_ID
+            value: {{ `"{{inputs.parameters.job_id}}"` }}
+          - name: AIRBYTE_URL
+            value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
+        source: |
+          import urllib.request, urllib.error, json, time, sys, hmac, hashlib, base64, os
+          def b64url(data):
+              return base64.urlsafe_b64encode(json.dumps(data).encode()).rstrip(b"=").decode()
+          def mint_token():
+              header = b64url({"alg": "HS256", "typ": "JWT"})
+              now = int(time.time())
+              payload = b64url({"iss": "airbyte-server", "sub": "00000000-0000-0000-0000-000000000000", "iat": now, "exp": now + 300})
+              sig = base64.urlsafe_b64encode(hmac.new(os.environ["JWT_SECRET"].encode(), f"{header}.{payload}".encode(), hashlib.sha256).digest()).rstrip(b"=").decode()
+              return f"{header}.{payload}.{sig}"
+          job_id = int(os.environ["JOB_ID"])
+          airbyte_url = os.environ["AIRBYTE_URL"]
+          while True:
+              token = mint_token()
+              headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
+              req = urllib.request.Request(
+                  f"{airbyte_url}/api/v1/jobs/get",
+                  data=json.dumps({"id": job_id}).encode(),
+                  headers=headers)
+              resp = json.load(urllib.request.urlopen(req))
+              status = resp["job"]["status"]
+              print(f"Job {job_id} status: {status}", flush=True)
+              if status == "succeeded":
+                  print("Sync complete")
+                  sys.exit(0)
+              elif status in ("failed", "cancelled"):
+                  print(f"Sync failed: {status}")
+                  sys.exit(1)
+              time.sleep(30)
+{{- end }}

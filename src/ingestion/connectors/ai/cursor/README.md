@@ -16,7 +16,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: insight-cursor-main                          # convention: insight-{connector}-{source-id}
-  namespace: data                                    # connect.sh discovers secrets in this namespace
+  namespace: insight                                    # connect.sh discovers secrets in this namespace
   labels:
     app.kubernetes.io/part-of: insight
   annotations:

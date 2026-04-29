@@ -1,0 +1,7 @@
+name: openai
+version: '1.0'
+schedule: 0 2 * * *
+dbt_select: tag:openai+
+workflow: sync
+connection:
+  namespace: bronze_openai

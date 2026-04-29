@@ -2,11 +2,17 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Build a CDK connector: Docker image → Kind load → Airbyte definition register/update.
+# Build a CDK connector: Docker image → push to registry → Airbyte definition
+# register/update.
 #
 # Usage:
 #   ./airbyte-toolkit/build-connector.sh <connector_path>
-#   ./airbyte-toolkit/build-connector.sh git/github
+#   ./airbyte-toolkit/build-connector.sh git/bitbucket-cloud
+#   IMAGE_TAG=v0.2.0 ./airbyte-toolkit/build-connector.sh git/bitbucket-cloud --push
+#
+# Env:
+#   IMAGE_TAG        image tag (default: local)
+#   IMAGE_REGISTRY   registry prefix (e.g. ghcr.io/cyberfabric); empty = local-only
 #
 # For nocode connectors (connector.yaml), use airbyte-toolkit/register.sh instead.
 # ---------------------------------------------------------------------------
@@ -33,9 +39,22 @@ if [[ "$CONNECTOR_TYPE" != "cdk" ]]; then
   exit 1
 fi
 
-IMAGE_NAME="source-${CONNECTOR_NAME}-insight"
+IMAGE_BASE="source-${CONNECTOR_NAME}-insight"
 IMAGE_TAG="${IMAGE_TAG:-local}"
-IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
+IMAGE_REGISTRY="${IMAGE_REGISTRY:-}"
+
+PUSH=0
+for arg in "${@:2}"; do
+  case "$arg" in
+    --push) PUSH=1 ;;
+  esac
+done
+
+if [[ -n "$IMAGE_REGISTRY" ]]; then
+  IMAGE="${IMAGE_REGISTRY}/${IMAGE_BASE}:${IMAGE_TAG}"
+else
+  IMAGE="${IMAGE_BASE}:${IMAGE_TAG}"
+fi
 
 echo "=== Building CDK connector: ${CONNECTOR_NAME} ==="
 echo "  Image: ${IMAGE}"
@@ -44,9 +63,12 @@ echo "  Image: ${IMAGE}"
 echo "  Building Docker image..."
 docker build -t "$IMAGE" -f "$DOCKERFILE" "$CONNECTOR_DIR"
 
-# --- Step 2: Load into Kind (local only) ---
-if command -v kind &>/dev/null && kind get clusters 2>/dev/null | grep -q "^ingestion$"; then
-  echo "  Loading into Kind cluster..."
+# --- Step 2: Push to registry or load into Kind ---
+if [[ "$PUSH" -eq 1 ]]; then
+  echo "  Pushing to registry..."
+  docker push "$IMAGE"
+elif command -v kind &>/dev/null && kind get clusters 2>/dev/null | grep -q "^ingestion$"; then
+  echo "  Loading into Kind cluster (local dev)..."
   kind load docker-image "$IMAGE" --name ingestion
 fi
 
@@ -57,8 +79,11 @@ fi
 
 EXISTING_DEF_ID=$(state_get "definitions.${CONNECTOR_NAME}.id")
 
+# For Airbyte registration, use the full image path (with registry) if available
+DOCKER_REPO="${IMAGE_REGISTRY:+${IMAGE_REGISTRY}/}${IMAGE_BASE}"
+
 DEF_ID=$(python3 - "$AIRBYTE_API" "$AIRBYTE_TOKEN" "$WORKSPACE_ID" \
-  "$CONNECTOR_NAME" "$IMAGE_NAME" "$IMAGE_TAG" "$EXISTING_DEF_ID" <<'PYTHON'
+  "$CONNECTOR_NAME" "$DOCKER_REPO" "$IMAGE_TAG" "$EXISTING_DEF_ID" <<'PYTHON'
 import sys, json, urllib.request, urllib.error
 
 airbyte_url, token, workspace_id, name, docker_repo, docker_tag, existing_def_id = sys.argv[1:8]

@@ -10,6 +10,7 @@
     materialized='incremental',
     unique_key='id',
     order_by=['id'],
+    settings={'allow_nullable_key': 1},
     schema='person',
     tags=['identity:seed', 'person']
 ) }}

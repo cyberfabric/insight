@@ -1,90 +1,106 @@
--- Bronze → Silver step 1: Claude Admin messages usage → class_ai_api_usage
--- Joins with api_keys and workspaces for dimension name enrichment.
--- person_id is always NULL at this stage: Admin API token usage is attributed
--- to api_key_id / workspace_id, not to individual users.
+-- Bronze → Silver step 1: Claude Admin programmatic API usage → class_ai_api_usage
+--
+-- Source: bronze_claude_admin.claude_admin_messages_usage — daily token usage
+-- from /v1/organizations/usage_report/messages, grouped by
+-- (date, model, api_key_id, workspace_id, service_tier, context_window).
+--
+-- email is always NULL here: programmatic API calls authenticate via API keys
+-- and Anthropic cannot attribute consumption to individual users at request
+-- time. Per-user attribution comes via Silver Step 2 (Identity Resolution) by
+-- treating api_key_id as an identity key — when the organisation provisions
+-- one API key per developer (common practice), api_key_id → person_id is a
+-- clean 1:1 mapping. Fallback per-user attribution via Enterprise engagement
+-- (claude_enterprise_users.chat_*) in claude_enterprise__ai_api_usage.
+--
+-- channel = 'api' for all rows produced here.
+--
+-- Resilience: if bronze_claude_admin.claude_admin_messages_usage is absent
+-- (stream disabled at the connection level, e.g. to work around an ongoing
+-- rate-limit issue at the Anthropic Admin API layer, or a fresh deploy before
+-- the first sync), emit an empty structurally-typed relation instead of
+-- failing the run. downstream class_ai_api_usage keeps its other
+-- contributions (claude_enterprise web/office/cowork branches) intact.
 {{ config(
     materialized='incremental',
-    unique_key='unique_id',
-    order_by=['unique_id'],
-    tags=['claude-admin']
+    unique_key='unique_key',
+    order_by=['unique_key'],
+    schema='staging',
+    tags=['claude-admin', 'silver:class_ai_api_usage']
 ) }}
 
-WITH usage AS (
-    SELECT
-        tenant_id,
-        insight_source_id,
-        date                                        AS report_date,
-        model,
-        api_key_id,
-        workspace_id,
-        service_tier,
-        context_window,
-        uncached_input_tokens,
-        cache_read_tokens,
-        cache_creation_5m_tokens,
-        cache_creation_1h_tokens,
-        output_tokens,
-        web_search_requests,
-        -- derived: total input = uncached + cache reads + cache creation
-        uncached_input_tokens
-            + cache_read_tokens
-            + cache_creation_5m_tokens
-            + cache_creation_1h_tokens              AS total_input_tokens,
-        -- derived: total tokens
-        uncached_input_tokens
-            + cache_read_tokens
-            + cache_creation_5m_tokens
-            + cache_creation_1h_tokens
-            + output_tokens                         AS total_tokens,
-        collected_at,
-        'insight_claude_admin'                      AS data_source
-    FROM {{ source('bronze_claude_admin', 'claude_admin_messages_usage') }}
-    {% if is_incremental() %}
-    WHERE date > (SELECT max(report_date) FROM {{ this }})
-    {% endif %}
-),
+{%- set messages_usage = adapter.get_relation(database=none, schema='bronze_claude_admin', identifier='claude_admin_messages_usage') -%}
 
-keys AS (
-    SELECT DISTINCT tenant_id, id, name AS key_name
-    FROM {{ source('bronze_claude_admin', 'claude_admin_api_keys') }}
-),
-
-workspaces AS (
-    SELECT DISTINCT tenant_id, id, display_name AS workspace_name
-    FROM {{ source('bronze_claude_admin', 'claude_admin_workspaces') }}
-)
+{%- if not messages_usage %}
+-- messages_usage Bronze table missing; emit empty result so the pipeline
+-- still compiles and materialises downstream silver views without error.
+SELECT
+    CAST(NULL AS Nullable(String))                  AS insight_tenant_id,
+    CAST(NULL AS Nullable(String))                  AS source_id,
+    CAST('' AS String)                              AS unique_key,
+    CAST(NULL AS Nullable(String))                  AS email,
+    CAST(NULL AS Nullable(String))                  AS api_key_id,
+    CAST(NULL AS Nullable(String))                  AS workspace_id,
+    CAST(NULL AS Nullable(Date))                    AS day,
+    CAST('anthropic' AS String)                     AS provider,
+    CAST('api' AS String)                           AS channel,
+    CAST(NULL AS Nullable(UInt32))                  AS conversation_count,
+    CAST(NULL AS Nullable(UInt32))                  AS message_count,
+    CAST(NULL AS Nullable(UInt64))                  AS input_tokens,
+    CAST(NULL AS Nullable(UInt64))                  AS output_tokens,
+    CAST(NULL AS Nullable(UInt64))                  AS cache_read_tokens,
+    CAST(NULL AS Nullable(UInt64))                  AS cache_creation_tokens,
+    CAST(NULL AS Nullable(Decimal(18, 4)))          AS cost_amount,
+    CAST(NULL AS Nullable(String))                  AS cost_currency,
+    CAST('claude_admin' AS String)                  AS source,
+    CAST('insight_claude_admin' AS String)          AS data_source,
+    CAST(NULL AS Nullable(DateTime64(3)))           AS collected_at
+WHERE 1 = 0
+{%- else %}
 
 SELECT
-    u.tenant_id,
-    u.insight_source_id,
-    -- composite unique id for incremental
-    concat(u.report_date, '|', u.model, '|', u.api_key_id, '|',
-           u.workspace_id, '|', u.service_tier, '|',
-           u.context_window)                        AS unique_id,
-    u.report_date,
-    u.model,
-    u.api_key_id,
-    k.key_name,
-    u.workspace_id,
-    w.workspace_name,
-    u.service_tier,
-    u.context_window,
-    u.uncached_input_tokens,
-    u.cache_read_tokens,
-    u.cache_creation_5m_tokens,
-    u.cache_creation_1h_tokens,
-    u.cache_creation_5m_tokens
-        + u.cache_creation_1h_tokens                AS cache_creation_tokens,
-    u.output_tokens,
-    u.total_input_tokens,
-    u.total_tokens,
-    u.web_search_requests,
-    -- person_id is NULL at this stage — API usage has no direct user attribution
-    NULL                                            AS person_id,
+    tenant_id                                       AS insight_tenant_id,
+    insight_source_id                               AS source_id,
+    -- coalesce Nullable Bronze inputs to '' before concat so unique_key is a
+    -- non-nullable String. ClickHouse MergeTree requires non-nullable keys in
+    -- ORDER BY (allow_nullable_key=0 by default, and we'd rather not rely on
+    -- that session setting).
+    CAST(concat(
+        coalesce(tenant_id, ''), '-',
+        coalesce(insight_source_id, ''), '-',
+        'ws:', coalesce(workspace_id, '__null__'), '-',
+        toString(toDate(date)), '-',
+        'anthropic-api-',
+        coalesce(model, '__null__'), '-',
+        coalesce(api_key_id, '__null__'), '-',
+        coalesce(service_tier, '__null__'), '-',
+        coalesce(context_window, '__null__')
+    ) AS String)                                    AS unique_key,
+    CAST(NULL AS Nullable(String))                  AS email,
+    api_key_id,
+    workspace_id,
+    toDate(date)                                    AS day,
     'anthropic'                                     AS provider,
-    u.data_source,
-    u.collected_at,
-    toUnixTimestamp64Milli(now64())                     AS _version
-FROM usage u
-LEFT JOIN keys k ON u.tenant_id = k.tenant_id AND u.api_key_id = k.id
-LEFT JOIN workspaces w ON u.tenant_id = w.tenant_id AND u.workspace_id = w.id
+    'api'                                           AS channel,
+    CAST(NULL AS Nullable(UInt32))                  AS conversation_count,
+    CAST(NULL AS Nullable(UInt32))                  AS message_count,
+    toUInt64(coalesce(uncached_input_tokens, 0)
+           + coalesce(cache_read_tokens, 0)
+           + coalesce(cache_creation_5m_tokens, 0)
+           + coalesce(cache_creation_1h_tokens, 0)) AS input_tokens,
+    toUInt64(coalesce(output_tokens, 0))            AS output_tokens,
+    toUInt64(coalesce(cache_read_tokens, 0))        AS cache_read_tokens,
+    toUInt64(coalesce(cache_creation_5m_tokens, 0)
+           + coalesce(cache_creation_1h_tokens, 0)) AS cache_creation_tokens,
+    CAST(NULL AS Nullable(Decimal(18, 4)))          AS cost_amount,
+    CAST(NULL AS Nullable(String))                  AS cost_currency,
+    'claude_admin'                                  AS source,
+    'insight_claude_admin'                          AS data_source,
+    CAST(parseDateTime64BestEffortOrNull(coalesce(collected_at, ''), 3) AS Nullable(DateTime64(3))) AS collected_at
+FROM {{ source('bronze_claude_admin', 'claude_admin_messages_usage') }}
+{% if is_incremental() %}
+WHERE toDate(date) > (
+    SELECT coalesce(max(day), toDate('1970-01-01')) - INTERVAL 3 DAY
+    FROM {{ this }}
+)
+{% endif %}
+{%- endif %}

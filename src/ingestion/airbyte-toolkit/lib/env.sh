@@ -11,16 +11,20 @@
 
 set -euo pipefail
 
+# All Insight components share a single namespace (default: insight).
+# Override with INSIGHT_NAMESPACE=... for non-default installs.
+_ns="${INSIGHT_NAMESPACE:-insight}"
+
 # Auto-detect runtime
 if [[ -f /var/run/secrets/kubernetes.io/serviceaccount/token ]]; then
-  export AIRBYTE_API="${AIRBYTE_API:-http://airbyte-airbyte-server-svc.airbyte.svc.cluster.local:8001}"
+  export AIRBYTE_API="${AIRBYTE_API:-http://airbyte-airbyte-server-svc.${_ns}.svc.cluster.local:8001}"
 else
   export AIRBYTE_API="${AIRBYTE_API:-http://localhost:8001}"
 fi
 
-# Read Airbyte auth secrets
-_secret_json=$(kubectl get secret -n airbyte airbyte-auth-secrets -o json 2>/dev/null) || {
-  echo "ERROR: cannot read airbyte-auth-secrets from namespace airbyte" >&2
+# Read Airbyte auth secrets from the Insight namespace (single-namespace model)
+_secret_json=$(kubectl get secret -n "$_ns" airbyte-auth-secrets -o json 2>/dev/null) || {
+  echo "ERROR: cannot read airbyte-auth-secrets from namespace $_ns" >&2
   return 1 2>/dev/null || exit 1
 }
 
@@ -54,4 +58,4 @@ fi
 
 echo "  Workspace: $WORKSPACE_ID" >&2
 
-unset _secret_json _jwt_secret
+unset _secret_json _jwt_secret _ns

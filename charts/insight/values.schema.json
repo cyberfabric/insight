@@ -1,0 +1,91 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Insight umbrella values",
+  "description": "Minimal schema. Validates the unified per-dependency shape (deploy + flat host/port/passwordSecret) and enforces image.tag is set on every app service.",
+  "type": "object",
+  "properties": {
+    "credentials": {
+      "type": "object",
+      "properties": {
+        "deploymentMode": { "enum": ["helm", "gitops"] },
+        "autoGenerate":   { "type": "boolean" }
+      }
+    },
+
+    "global": {
+      "type": "object",
+      "properties": {
+        "imageRegistry":    { "type": "string" },
+        "imagePullPolicy":  { "enum": ["Always", "IfNotPresent", "Never"] },
+        "imagePullSecrets": { "type": "array", "items": { "type": "object" } },
+        "storageClass":     { "type": "string" }
+      }
+    },
+
+    "clickhouse": { "$ref": "#/definitions/infraDep" },
+    "mariadb":    { "$ref": "#/definitions/infraDep" },
+    "redis":      { "$ref": "#/definitions/infraDep" },
+    "redpanda":   { "$ref": "#/definitions/infraDep" },
+
+    "apiGateway": {
+      "allOf": [
+        { "$ref": "#/definitions/appService" },
+        {
+          "properties": {
+            "authDisabled": { "type": "boolean" },
+            "oidc": {
+              "type": "object",
+              "properties": {
+                "existingSecret": { "type": "string" },
+                "issuer":         { "type": "string" },
+                "audience":       { "type": "string" },
+                "clientId":       { "type": "string" },
+                "redirectUri":    { "type": "string" }
+              }
+            }
+          }
+        }
+      ]
+    },
+
+    "analyticsApi":       { "$ref": "#/definitions/appService" },
+    "identityResolution": { "$ref": "#/definitions/appService" },
+    "frontend":           { "$ref": "#/definitions/appService" }
+  },
+
+  "definitions": {
+    "infraDep": {
+      "type": "object",
+      "properties": {
+        "deploy":   { "type": "boolean" },
+        "host":     { "type": "string" },
+        "port":     { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "database": { "type": "string" },
+        "username": { "type": "string" },
+        "passwordSecret": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "key":  { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "appService": {
+      "type": "object",
+      "properties": {
+        "replicaCount":  { "type": "integer", "minimum": 0 },
+        "image": {
+          "type": "object",
+          "required": ["repository", "tag"],
+          "properties": {
+            "repository": { "type": "string", "minLength": 1 },
+            "tag":        { "type": "string" },
+            "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
+          }
+        },
+        "resources": { "type": "object" }
+      }
+    }
+  }
+}

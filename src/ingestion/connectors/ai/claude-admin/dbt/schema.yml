@@ -17,125 +17,159 @@ sources:
 models:
   - name: claude_admin__ai_api_usage
     description: >
-      Bronze → Silver step 1: Anthropic Admin API token usage → class_ai_api_usage.
-      Sourced from claude_admin_messages_usage, enriched via LEFT JOIN with
-      claude_admin_api_keys (key_name) and claude_admin_workspaces (workspace_name).
-      person_id is always NULL at this stage — programmatic API usage has no direct
-      user attribution (attribution is by api_key_id and workspace_id).
+      Bronze → Silver step 1: Anthropic Admin API programmatic token usage.
+      Feeds class_ai_api_usage with channel='api' and email=NULL — programmatic
+      API key authentication cannot be attributed to individual users. Per-user
+      attribution comes from claude_enterprise__ai_api_usage (channel='web'/
+      'office'/'cowork').
     columns:
-      - name: tenant_id
-        description: "Tenant isolation field — framework-injected"
+      - name: insight_tenant_id
         tests:
           - not_null
-      - name: insight_source_id
-        description: "Connector instance identifier"
-      - name: unique_id
-        description: "Composite dedup key: date|model|api_key_id|workspace_id|service_tier|context_window"
+      - name: source_id
+      - name: unique_key
+        description: "Composite dedup key: tenant-source-workspace-day-provider-channel-model-key-tier-context"
         tests:
           - not_null
           - unique
-      - name: report_date
-        description: "Usage date (ISO 8601)"
+      - name: email
+        description: >
+          Always NULL for this staging — API key authentication is not tied
+          to a user at request time. Per-user attribution is achieved in
+          Silver Step 2 (Identity Resolution) by treating api_key_id as an
+          identity key (when the org provisions one key per developer).
+      - name: api_key_id
+        description: >
+          Anthropic API key identifier. Primary identity proxy for Admin API
+          usage — mapped to person_id in Silver Step 2 via identity.aliases.
+      - name: workspace_id
+        description: "Anthropic workspace identifier (nullable)"
+      - name: day
+        description: "Usage date (UTC)"
         tests:
           - not_null
-      - name: model
-        description: "Claude model ID (e.g. claude-opus-4-6, claude-sonnet-4-6)"
-      - name: api_key_id
-        description: "Anthropic API key identifier"
-      - name: key_name
-        description: "Human-readable key name (from claude_admin_api_keys)"
-      - name: workspace_id
-        description: "Anthropic workspace identifier"
-      - name: workspace_name
-        description: "Human-readable workspace name (from claude_admin_workspaces)"
-      - name: service_tier
-        description: "API service tier"
-      - name: context_window
-        description: "Context window size used"
-      - name: uncached_input_tokens
-        description: "Input tokens not served from cache"
-      - name: cache_read_tokens
-        description: "Input tokens served from prompt cache"
-      - name: cache_creation_5m_tokens
-        description: "Tokens written to 5-minute prompt cache"
-      - name: cache_creation_1h_tokens
-        description: "Tokens written to 1-hour prompt cache"
-      - name: cache_creation_tokens
-        description: "Derived: cache_creation_5m_tokens + cache_creation_1h_tokens"
-      - name: output_tokens
-        description: "Output tokens generated"
-      - name: total_input_tokens
-        description: "Derived: uncached + cache reads + cache creation"
-      - name: total_tokens
-        description: "Derived: total_input_tokens + output_tokens"
-      - name: web_search_requests
-        description: "Web search tool invocations"
-      - name: person_id
-        description: "Always NULL for API usage (no user attribution at this level)"
       - name: provider
         description: "Always 'anthropic'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['anthropic']
+      - name: channel
+        description: "Always 'api'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['api']
+      - name: conversation_count
+        description: "NULL for API rows"
+      - name: message_count
+        description: "NULL for API rows"
+      - name: input_tokens
+        description: "uncached_input + cache_read + cache_creation_5m + cache_creation_1h"
+      - name: output_tokens
+      - name: cache_read_tokens
+      - name: cache_creation_tokens
+        description: "cache_creation_5m_tokens + cache_creation_1h_tokens"
+      - name: cost_amount
+        description: "NULL in MVP; future enrichment via claude_admin_cost_report"
+      - name: cost_currency
+      - name: source
+        description: "Always 'claude_admin'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['claude_admin']
       - name: data_source
-        description: "Always 'insight_claude_admin' — source discriminator"
         tests:
           - not_null
           - accepted_values:
               arguments:
                 values: ['insight_claude_admin']
       - name: collected_at
-        description: "When the record was collected"
         tests:
           - not_null
 
   - name: claude_admin__ai_dev_usage
     description: >
-      Bronze → Silver step 1: Claude Code developer usage → class_ai_dev_usage.
-      Sourced from claude_admin_code_usage, filtered to actor_type='user'.
-      actor_identifier (email) is carried through as the identity key. Per-model
-      token data is preserved in Bronze model_breakdown_json; token extraction
-      is deferred to Silver step 2 or Gold.
+      Bronze → Silver step 1: Claude Code daily usage (per user or per
+      API-actor). Feeds class_ai_dev_usage with tool='claude_code'. Emits
+      both actor_type='user' rows (email populated from actor_identifier)
+      and actor_type='api_actor' rows (api_key_id resolved from
+      claude_admin_api_keys.name via JOIN; email NULL). api_actor rows
+      whose name cannot be resolved to an api_key_id are dropped to avoid
+      orphan-identity rows in Silver — Silver Step 2 (Identity Resolution)
+      then maps email / api_key_id → person_id.
+
+      Note: the initial PRD §5.7 required actor_type='user' only. Real
+      Virtuozzo data showed 100% of activity arrives as api_actor (the org
+      provisions named per-developer API keys), so strict user-only
+      filtering would yield zero rows in production. Dual-actor support
+      is the intended behaviour; the PRD clause is to be updated.
+
+      Claude Code usage is also available in Enterprise but is sourced
+      from Admin only, per the lead's merge rule.
     columns:
-      - name: tenant_id
-        description: "Tenant isolation field — framework-injected"
+      - name: insight_tenant_id
         tests:
           - not_null
-      - name: insight_source_id
-        description: "Connector instance identifier"
-      - name: unique_id
-        description: "Composite dedup key: date|actor_identifier|terminal_type"
+      - name: source_id
+      - name: unique_key
+        description: "Composite dedup key: tenant-source-email-day"
         tests:
           - not_null
-      - name: report_date
-        description: "Usage date (ISO 8601)"
-        tests:
-          - not_null
+          - unique
       - name: email
-        description: "User email (actor_identifier) — identity key for Silver step 2"
+        description: >
+          User email (from actor_identifier) when actor_type='user'.
+          NULL when actor_type='api_actor' — use api_key_id instead.
+      - name: api_key_id
+        description: >
+          Anthropic API key ID for api_actor rows (resolved from
+          claude_admin_api_keys.name via JOIN). NULL for user rows.
+          Silver Step 2 maps this to person_id.
+      - name: day
+        description: "Usage date (UTC)"
         tests:
           - not_null
-      - name: terminal_type
-        description: "Terminal type used for Claude Code session"
+      - name: tool
+        description: "Always 'claude_code'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['claude_code']
       - name: session_count
-        description: "Number of Claude Code sessions"
+        description: "Number of Claude Code sessions (aggregated across terminal_type)"
       - name: lines_added
-        description: "Lines of code added"
       - name: lines_removed
-        description: "Lines of code removed"
+      - name: tool_use_offered
+        description: "tool_use_accepted + tool_use_rejected"
       - name: tool_use_accepted
-        description: "Accepted tool actions (sum across edit/write/multi_edit/notebook tools)"
-      - name: tool_use_rejected
-        description: "Rejected tool actions (sum across all tool types)"
-      - name: person_id
-        description: "NULL at Silver step 1 — resolved in step 2 via Identity Manager"
-      - name: provider
-        description: "Always 'anthropic'"
-      - name: client
-        description: "Always 'claude_code' (filtered at source)"
+        description: "Accepted tool actions (Edit/Write/MultiEdit/NotebookEdit)"
+      - name: completions_count
+        description: "NULL — not reported by Claude Code"
+      - name: agent_sessions
+        description: "NULL — not reported by Claude Code"
+      - name: chat_requests
+        description: "NULL — not reported by Claude Code"
+      - name: cost_cents
+        description: "NULL — Claude Code reports no per-user cost"
+      - name: source
+        description: "Always 'claude_admin'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['claude_admin']
       - name: data_source
-        description: "Always 'insight_claude_admin' — source discriminator"
         tests:
           - not_null
           - accepted_values:
               arguments:
                 values: ['insight_claude_admin']
       - name: collected_at
-        description: "When the record was collected"
+        tests:
+          - not_null

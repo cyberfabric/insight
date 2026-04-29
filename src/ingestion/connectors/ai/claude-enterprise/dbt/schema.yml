@@ -1,0 +1,173 @@
+version: 2
+
+sources:
+  - name: bronze_claude_enterprise
+    schema: bronze_claude_enterprise
+    tables:
+      - name: claude_enterprise_summaries
+      - name: claude_enterprise_users
+      - name: claude_enterprise_chat_projects
+      - name: claude_enterprise_skills
+      - name: claude_enterprise_connectors
+      - name: claude_enterprise_collection_runs
+
+models:
+  - name: claude_enterprise__ai_api_usage
+    description: >
+      Bronze → Silver step 1: Claude Enterprise per-user engagement activity.
+      Feeds class_ai_api_usage with channels 'web' (chat), 'office' (Excel /
+      PowerPoint), and 'cowork' (Claude Cowork). One Bronze row per
+      (date, user_email) can produce up to 3 staging rows — one per non-empty
+      channel.
+
+      Enterprise code_* fields are emitted by the sibling model
+      claude_enterprise__ai_dev_usage (which feeds class_ai_dev_usage). This
+      model focuses on engagement channels only.
+
+      Status: model is written against the Enterprise Analytics API schema
+      (DESIGN §3.7). No real runs against live data yet — it will be validated
+      end-to-end once the tenant provides an Enterprise Analytics API key.
+    columns:
+      - name: insight_tenant_id
+        tests:
+          - not_null
+      - name: source_id
+      - name: unique_key
+        description: "Composite dedup key: tenant-source-user-day-channel"
+        tests:
+          - not_null
+          - unique
+      - name: email
+        description: "User email (user_email from Bronze, lowercased)"
+        tests:
+          - not_null
+      - name: api_key_id
+        description: "Always NULL for Enterprise — engagement is attributed by email, not by API key"
+      - name: workspace_id
+        description: "NULL — Enterprise engagement is org-wide, not per workspace"
+      - name: day
+        tests:
+          - not_null
+      - name: provider
+        description: "Always 'anthropic'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['anthropic']
+      - name: channel
+        description: "web | office | cowork"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['web', 'office', 'cowork']
+      - name: conversation_count
+        description: >
+          web → chat_conversation_count.
+          cowork → cowork_session_count.
+          office → NULL.
+      - name: message_count
+        description: >
+          web → chat_message_count.
+          office → excel_message_count + powerpoint_message_count.
+          cowork → cowork_message_count.
+      - name: input_tokens
+        description: "NULL — Enterprise does not expose token-level detail"
+      - name: output_tokens
+        description: "NULL"
+      - name: cache_read_tokens
+        description: "NULL"
+      - name: cache_creation_tokens
+        description: "NULL"
+      - name: cost_amount
+        description: "NULL"
+      - name: cost_currency
+        description: "NULL"
+      - name: source
+        description: "Always 'claude_enterprise'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['claude_enterprise']
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['insight_claude_enterprise']
+      - name: collected_at
+        tests:
+          - not_null
+
+  - name: claude_enterprise__ai_dev_usage
+    description: >
+      Bronze → Silver step 1: Claude Enterprise per-user Claude Code activity.
+      Feeds class_ai_dev_usage with tool='claude_code' for orgs on the
+      Enterprise subscription. Replaces claude_admin__ai_dev_usage as the
+      canonical Code feed — Enterprise reports per-user (user_email) directly,
+      avoiding the api_key_name → person_id resolution required by Admin.
+
+      Fields not exposed by Enterprise (total_lines_added, agent_sessions,
+      chat_requests, cost_cents) are emitted as NULL; downstream metrics that
+      need them (e.g., ai_loc_share_pct denominator) filter to tool='cursor'.
+    columns:
+      - name: insight_tenant_id
+        tests:
+          - not_null
+      - name: source_id
+      - name: unique_key
+        description: "Composite dedup key: tenant-source-user-day"
+        tests:
+          - not_null
+          - unique
+      - name: email
+        description: "User email (user_email from Bronze, lowercased)"
+        tests:
+          - not_null
+      - name: api_key_id
+        description: "Always NULL for Enterprise — Code usage is attributed by email"
+      - name: day
+        tests:
+          - not_null
+      - name: tool
+        description: "Always 'claude_code'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['claude_code']
+      - name: session_count
+      - name: lines_added
+        description: "AI-accepted lines (code_lines_added)"
+      - name: lines_removed
+      - name: total_lines_added
+        description: "Always NULL — Enterprise does not expose total keystrokes"
+      - name: total_lines_removed
+        description: "Always NULL"
+      - name: tool_use_offered
+        description: "code_tool_accepted_count + code_tool_rejected_count"
+      - name: tool_use_accepted
+        description: "code_tool_accepted_count"
+      - name: completions_count
+        description: "Equal to tool_use_accepted (Edit/Write/MultiEdit/NotebookEdit invocations)"
+      - name: agent_sessions
+        description: "NULL — no Code-specific agent counter in Enterprise"
+      - name: chat_requests
+        description: "NULL — chat is reported separately in claude_enterprise__ai_api_usage"
+      - name: cost_cents
+        description: "NULL — Enterprise cost is org-level, not per-user"
+      - name: source
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['claude_enterprise']
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['insight_claude_enterprise']
+      - name: collected_at

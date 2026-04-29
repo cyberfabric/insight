@@ -5,7 +5,7 @@ name = "InsightSpec"
 slug = "insightspec"
 kit = "sdlc"
 codebase = ["docs"]
-children = ["ir", "person", "orgchart"]
+children = ["ir", "person", "orgchart", "metric-cat"]
 
 [[systems.artifacts]]
 kind = "DESIGN"
@@ -384,6 +384,18 @@ traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
 kind = "PRD"
+path = "docs/components/deployment/specs/PRD.md"
+name = "Deployment PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/deployment/specs/DESIGN.md"
+name = "Deployment Design"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "PRD"
 path = "docs/components/backend/specs/PRD.md"
 name = "Backend PRD"
 traceability = "DOCS-ONLY"
@@ -501,4 +513,17 @@ name = "Org-Chart Domain Design"
 kind = "PRD"
 path = "docs/domain/org-chart/specs/PRD.md"
 name = "Org-Chart Domain PRD"
+traceability = "DOCS-ONLY"
+
+[[systems]]
+name = "Metric Catalog"
+slug = "metric-cat"
+kit = "sdlc"
+codebase = ["docs/domain/metric-catalog"]
+children = []
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/domain/metric-catalog/specs/PRD.md"
+name = "Metric Catalog PRD"
 traceability = "DOCS-ONLY"

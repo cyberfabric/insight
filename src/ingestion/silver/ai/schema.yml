@@ -1,0 +1,222 @@
+version: 2
+
+models:
+  - name: class_ai_dev_usage
+    description: >
+      Unified per-person per-day AI developer tool usage across Cursor,
+      Claude Code (from claude-admin), and future sources (Windsurf, Codex).
+      One row per (tenant, email, day, tool). Feeds Gold metrics:
+      cursor_active / cc_active / active_ai_members / ai_tools / ai_sessions /
+      cursor_acceptance / cc_tool_acceptance / cursor_completions /
+      cursor_agents / cursor_lines / cc_sessions / cc_lines / ai_loc_share_pct
+      (the last joined with class_git_commits in Gold).
+    columns:
+      - name: insight_tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: source_id
+        description: "Connector instance identifier"
+        tests:
+          - not_null
+      - name: unique_key
+        description: >
+          Composite dedup key. Format varies per staging model:
+          cursor → tenant-source-userId-day;
+          claude_admin → tenant-source-email-day.
+          Uniqueness is per-source — a user active on BOTH Cursor and Claude Code
+          on the same day produces two rows, disambiguated by `source` / `tool`.
+        tests:
+          - not_null
+          - unique
+      - name: email
+        description: >
+          Work email when directly available from the source (Cursor and
+          Claude Code rows with actor_type='user'). NULL for rows where
+          the source authenticated via an API key (Claude Code rows with
+          actor_type='api_actor') — in that case api_key_id carries the
+          identity proxy and Silver Step 2 (Identity Resolution) maps
+          api_key_id → person_id. At least one of email / api_key_id is
+          always populated.
+      - name: api_key_id
+        description: >
+          Anthropic API key identifier. Populated when a source authenticated
+          via an API key rather than a user session (common for Claude Code
+          CLI: organisations provision named per-developer keys). Resolved
+          to person_id in Silver Step 2 via identity.aliases. NULL for
+          Cursor and for Claude Code rows with actor_type='user'.
+      - name: day
+        description: "Calendar date of usage (UTC)"
+        tests:
+          - not_null
+      - name: tool
+        description: "AI dev tool discriminator"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['cursor', 'claude_code', 'windsurf', 'codex']
+      - name: session_count
+        description: "Sessions recorded on this day. For Cursor: 1 per active day (Cursor only exposes an is-active flag, not session counts)."
+        tests:
+          - not_null
+      - name: lines_added
+        description: >
+          Lines of code added and accepted from AI. For Cursor: acceptedLinesAdded.
+          For Claude Code: lines_added from claude_admin_code_usage. Used in
+          ai_loc_share_pct / team_ai_loc Gold metrics (joined with class_git_commits).
+        tests:
+          - not_null
+      - name: lines_removed
+        description: "Lines removed / accepted-to-remove from AI."
+        tests:
+          - not_null
+      - name: tool_use_offered
+        description: >
+          Tool invocations offered/shown. For Cursor: totalTabsShown.
+          For Claude Code: tool_use_accepted + tool_use_rejected (offered = accept + reject).
+          NULL if the source does not distinguish offered vs accepted.
+      - name: tool_use_accepted
+        description: >
+          Tool invocations accepted. For Cursor: totalTabsAccepted.
+          For Claude Code: tool_use_accepted (Edit/Write/MultiEdit/NotebookEdit). Used in
+          cursor_acceptance / cc_tool_acceptance ratios (accepted / offered).
+      - name: completions_count
+        description: >
+          Cursor tab completions accepted (totalTabsAccepted). NULL for other tools
+          that do not have a tab-completion analogue.
+      - name: agent_sessions
+        description: >
+          Cursor agent sessions (agentRequests). NULL for other tools.
+      - name: chat_requests
+        description: >
+          Cursor chat + composer requests (chatRequests + composerRequests).
+          NULL for other tools.
+      - name: cost_cents
+        description: >
+          Monetary cost in cents when available. NULL for Cursor daily usage
+          (cost is per-event, not per-day) and for Claude Code (no billing per
+          user — only per API key / workspace).
+      - name: source
+        description: "Staging-model discriminator: 'cursor' | 'claude_admin' | future sources"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['cursor', 'claude_admin', 'claude_playwright', 'windsurf', 'codex']
+      - name: data_source
+        description: "Framework source discriminator — 'insight_cursor' / 'insight_claude_admin' / etc."
+        tests:
+          - not_null
+      - name: collected_at
+        description: "When the record was collected"
+        tests:
+          - not_null
+
+  - name: class_ai_api_usage
+    description: >
+      Unified AI API / engagement usage across Anthropic (programmatic API +
+      web chat + office + cowork) and future OpenAI. Mixed granularity:
+      Admin programmatic API rows have email=NULL + workspace_id (tokens are
+      not attributable to individual users via API keys); Enterprise engagement
+      rows have email=filled. Feeds Gold metrics: claude_web (channel='web') /
+      chatgpt (provider='openai') / ai_adoption_pct (email IS NOT NULL AND
+      conversation_count > 0).
+    columns:
+      - name: insight_tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: source_id
+        description: "Connector instance identifier"
+        tests:
+          - not_null
+      - name: unique_key
+        description: >
+          Composite dedup key. Format varies per staging model:
+          claude_admin → tenant-source-ws:{workspace}-day-anthropic-api-{model}-{api_key}-{tier}-{ctx}
+          (finer grain than the documented tenant+workspace+day+provider+channel
+          because messages_usage Bronze is grouped by model/api_key/tier/ctx);
+          claude_enterprise → tenant-source-email-day-{web|office|cowork}.
+        tests:
+          - not_null
+          - unique
+      - name: email
+        description: >
+          Work email. Nullable — programmatic API usage (channel='api') cannot
+          be attributed to a user at request time because API keys are the only
+          identifier Anthropic sees. Per-user attribution for such rows is
+          restored in Silver Step 2 (Identity Resolution) by mapping `api_key_id`
+          to `person_id` via identity.aliases — viable when the organisation
+          provisions one API key per developer (common practice).
+      - name: api_key_id
+        description: >
+          Anthropic API key identifier. Identity proxy for rows where `email`
+          is NULL (channel='api'). Resolved to person_id in Silver Step 2.
+      - name: workspace_id
+        description: "Anthropic workspace identifier. Used primarily for API rows (where email is NULL)."
+      - name: day
+        description: "Calendar date of usage (UTC)"
+        tests:
+          - not_null
+      - name: provider
+        description: "AI provider"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['anthropic', 'openai']
+      - name: channel
+        description: >
+          Channel discriminator. 'api' = programmatic API calls (Admin messages_usage);
+          'web' = Claude.ai chat (Enterprise users.chat_*); 'office' = Excel/PowerPoint
+          integrations (Enterprise users.office_*); 'cowork' = Claude Cowork (Enterprise
+          users.cowork_*). Future channels: 'code' (already handled by class_ai_dev_usage,
+          not here).
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['api', 'web', 'office', 'cowork']
+      - name: conversation_count
+        description: >
+          Number of distinct conversations. For web: chat_conversation_count.
+          For cowork: cowork_session_count. NULL for API rows.
+      - name: message_count
+        description: >
+          Total messages. For web: chat_message_count. For office: sum of
+          excel_message_count + powerpoint_message_count. For cowork: cowork_message_count.
+          NULL for API rows.
+      - name: input_tokens
+        description: >
+          Uncached input + cache read + cache creation. Populated for API rows only;
+          Enterprise engagement data does not expose token-level granularity.
+      - name: output_tokens
+        description: "Populated for API rows only."
+      - name: cache_read_tokens
+        description: "Populated for API rows only."
+      - name: cache_creation_tokens
+        description: >
+          cache_creation_5m_tokens + cache_creation_1h_tokens.
+          Populated for API rows only.
+      - name: cost_amount
+        description: >
+          Monetary cost. NULL in MVP for both sources — future enrichment via
+          claude_admin_cost_report JOIN for API rows.
+      - name: cost_currency
+        description: "Currency for cost_amount. NULL in MVP."
+      - name: source
+        description: "Staging-model discriminator: 'claude_admin' | 'claude_enterprise' | future sources"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['claude_admin', 'claude_enterprise', 'claude_playwright', 'openai', 'openai_platform']
+      - name: data_source
+        description: "Framework source discriminator."
+        tests:
+          - not_null
+      - name: collected_at
+        description: "When the record was collected"
+        tests:
+          - not_null

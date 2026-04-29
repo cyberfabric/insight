@@ -23,7 +23,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: insight-claude-enterprise-main
-  namespace: data
+  namespace: insight
   labels:
     app.kubernetes.io/part-of: insight
   annotations:

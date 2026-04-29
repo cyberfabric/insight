@@ -32,9 +32,36 @@ for p in sorted(pathlib.Path('connectors').rglob('descriptor.yaml')):
 print('+tag:silver')
 " 2>/dev/null)
 
+# ─── Resolve toolbox_image for the dbt-run step ────────────────────────────
+# Precedence:
+#   1. $TOOLBOX_IMAGE env var (explicit caller override)
+#   2. Auto-detect on Kind: if the current kubectl context is a kind cluster
+#      AND the Kind node has a locally-loaded `insight-toolbox:local` image
+#      (put there by up.sh → `kind load docker-image`), use that image.
+#   3. Fallback: ghcr.io/cyberfabric/insight-toolbox:latest (prod).
+#
+# Without this, the workflow template's default fetches the :latest tag
+# from ghcr.io, which requires imagePullSecrets and network access — both
+# absent on a fresh local Kind cluster. The dbt-run pod then sits in
+# ImagePullBackOff / Pending until the workflow's 30-minute activeDeadline
+# kills it, leaving Bronze populated but Silver never materialised.
+TOOLBOX_IMAGE="${TOOLBOX_IMAGE:-}"
+if [[ -z "$TOOLBOX_IMAGE" ]]; then
+  _ctx=$(kubectl config current-context 2>/dev/null || echo "")
+  if [[ "$_ctx" == kind-* ]]; then
+    _node="${_ctx#kind-}-control-plane"
+    if docker exec "$_node" crictl images 2>/dev/null | grep -qE "^docker\.io/library/insight-toolbox\s+local\b"; then
+      TOOLBOX_IMAGE="insight-toolbox:local"
+      echo "  toolbox_image: $TOOLBOX_IMAGE (auto-detected, loaded in kind node)"
+    fi
+  fi
+  TOOLBOX_IMAGE="${TOOLBOX_IMAGE:-ghcr.io/cyberfabric/insight-toolbox:latest}"
+fi
+
 echo "Running sync: ${CONNECTOR} / ${TENANT}"
 echo "  connection_id: ${CONNECTION_ID}"
-echo "  dbt_select: ${DBT_SELECT}"
+echo "  dbt_select:    ${DBT_SELECT}"
+echo "  toolbox_image: ${TOOLBOX_IMAGE}"
 
 kubectl create -n argo -f - <<EOF
 apiVersion: argoproj.io/v1alpha1
@@ -60,6 +87,8 @@ spec:
                   value: "${CONNECTION_ID}"
                 - name: dbt_select
                   value: "${DBT_SELECT}"
+                - name: toolbox_image
+                  value: "${TOOLBOX_IMAGE}"
 EOF
 
 echo "Workflow submitted. Monitor at http://localhost:30500 or:"
