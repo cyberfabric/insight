@@ -7,14 +7,30 @@
         {%- if rel -%}
           {%- do models.append(node) -%}
         {%- else -%}
-          {{ log("union_by_tag: skipping " ~ node.name ~ " (table does not exist yet)", info=True) }}
+          {{ log("union_by_tag: skipping " ~ node.name ~ " (staging table not yet materialised)", info=True) }}
         {%- endif -%}
       {%- endif -%}
     {%- endfor -%}
 
     {%- if models | length == 0 -%}
-      {{ log("union_by_tag: no models found with tag '" ~ tag_name ~ "' (all source tables missing) — emitting empty result", info=True) }}
-      SELECT 1 AS _placeholder WHERE FALSE
+      {%- set this_rel = adapter.get_relation(database=this.database, schema=this.schema, identifier=this.identifier) -%}
+      {%- if this_rel -%}
+        {#- No source staging tables exist for this tag, but the silver target
+            was materialised by a previous run. Emit an empty SELECT against
+            the existing target so the surrounding model SQL stays
+            schema-compatible (the outer "SELECT * FROM (...) WHERE _version > ..."
+            keeps working because we hand it the real target schema, just with
+            zero rows). The silver materialise becomes a no-op; downstream
+            keeps running smoothly. -#}
+        {{ log("union_by_tag: no source tables for tag '" ~ tag_name ~ "' — emitting empty select from existing target to preserve schema", info=True) }}
+        SELECT * FROM {{ this }} WHERE 1 = 0
+      {%- else -%}
+        {{ exceptions.raise_compiler_error(
+            "union_by_tag: no source tables for tag '" ~ tag_name ~ "' and target " ~ this ~
+            " has not been materialised yet. First run requires at least one configured connector with materialised staging — "
+            "configure a connector that contributes to this silver target, or exclude this model from the run."
+        ) }}
+      {%- endif -%}
     {%- else -%}
       {%- for m in models %}
         SELECT * FROM {{ ref(m.name) }}
