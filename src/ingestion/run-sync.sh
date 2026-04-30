@@ -94,7 +94,7 @@ echo "  connection_id:      $CONNECTION_ID"
 echo "  insight_source_id:  $SOURCE_ID"
 echo "  data_source:        $DATA_SOURCE"
 echo "  dbt_select:         $DBT_SELECT"
-echo "  dbt_select_staging: ${DBT_SELECT_STAGING:-(empty)}"
+[[ -n "$DBT_SELECT_STAGING" ]] && echo "  dbt_select_staging: $DBT_SELECT_STAGING"
 
 NAMESPACE="$INSIGHT_NAMESPACE" \
   CONNECTOR="$CONNECTOR" \

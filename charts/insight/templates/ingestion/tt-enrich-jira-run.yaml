@@ -26,7 +26,7 @@ spec:
           - name: clickhouse_user
             default: {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
           - name: batch_size
-            default: "10000"
+            default: "10000"  # RULE-DEFAULTS-OK: tested CH INSERT chunk size for the jira-enrich Rust binary; tunable per submission.
       activeDeadlineSeconds: 7200
       container:
         image: {{ `"{{inputs.parameters.jira_enrich_image}}"` }}

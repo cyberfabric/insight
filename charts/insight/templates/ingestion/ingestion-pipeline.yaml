@@ -22,7 +22,7 @@ spec:
           - name: insight_source_id
           - name: data_source                # "jira" → enriched path; anything else → legacy single-dbt
           - name: dbt_select_staging         # e.g. "tag:jira"; empty for non-jira
-            default: ""
+            default: ""  # RULE-DEFAULTS-OK: empty-string sentinel — non-jira callers send "" so the `data_source == 'jira'` predicate is the only dispatch.
           - name: dbt_select                 # e.g. "tag:silver"
           - name: toolbox_image
             default: {{ required "ingestion.toolboxImage is required when ingestion.templates.enabled=true" .Values.ingestion.toolboxImage | quote }}

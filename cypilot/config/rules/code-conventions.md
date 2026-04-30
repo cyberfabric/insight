@@ -17,6 +17,7 @@ The point of these rules is to keep the source of truth in **one place per conce
 - [No inline scripts](#no-inline-scripts)
 - [No inline YAML](#no-inline-yaml)
 - [Fail-fast over silent fallback](#fail-fast-over-silent-fallback)
+- [Audit recipe](#audit-recipe)
 
 <!-- /toc -->
 
@@ -118,3 +119,27 @@ When a configuration value, secret annotation, or input is missing, **error expl
 The first time someone deploys with a missing value, they should see a clear "set X" error — not a successful run that silently does the wrong thing on a different tenant's data.
 
 **Apply this every time** you're tempted to write `or default`, `?:`, `try/except: pass`, or `coalesce(x, y)` — those are the common shapes of silent fallback. Sometimes they're correct; usually they hide a bug.
+
+## Audit recipe
+
+Run this scan on the files your PR touches before requesting review. Each match must either be fixed (replaced with a required env var, extracted to a file, etc.) **or** tagged with a `# RULE-DEFAULTS-OK: <reason>` comment that names the reason.
+
+```bash
+# Files touched by the current branch (vs main).
+FILES=$(git diff --name-only main...HEAD)
+
+# 1. Bash defaults — `${VAR:-default}`, excluding the abort-form `${VAR:?...}`
+echo "$FILES" | xargs -r grep -nE '\$\{[A-Z_][A-Z_0-9]*:-[^?}]' 2>/dev/null
+
+# 2. Python config defaults — non-trivial fallbacks via `.get(k, v)`
+echo "$FILES" | xargs -r grep -nE 'os\.environ\.get\([^)]+,\s*[^)]+\)' 2>/dev/null
+echo "$FILES" | xargs -r grep -nE '\.get\([^)]+,\s*['"'"'"`]' 2>/dev/null
+
+# 3. Argo / K8s YAML — `default:` lines in chart and workflow templates
+echo "$FILES" | grep -E '\.(ya?ml)$' | xargs -r grep -nE '^\s+default:' 2>/dev/null
+
+# 4. Inline Python / YAML inside shell — heredoc and `python3 -c "$"` patterns
+echo "$FILES" | grep -E '\.sh$' | xargs -r grep -lE 'python3 -c "$|<<EOF$' 2>/dev/null
+```
+
+The first three categories surface defaults; the fourth surfaces inline-script / inline-YAML violations. A clean run produces only `RULE-DEFAULTS-OK`-tagged matches and lines from this rule document itself.
