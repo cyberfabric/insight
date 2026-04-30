@@ -32,6 +32,6 @@ resolve_source_id() {
       ]
       | if length == 0 then ""
         elif length == 1 then .[0]
-        else error("multiple Secrets match connector=" + $c + " tenant=" + $t + ": " + tojson) end
+        else ("multiple Secrets match connector=" + $c + " tenant=" + $t + ": " + tojson) | halt_error(2) end
     '
 }
