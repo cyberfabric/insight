@@ -25,11 +25,11 @@ date: 2026-04-06
 
 ## Context and Problem Statement
 
-Both the identity-resolution domain and the person domain need to track unresolvable observations from `bootstrap_inputs`. Identity-resolution tracks alias-level unmapped records (e.g., an email that cannot be linked to a person). The person domain tracks person-attribute-level unmapped records (e.g., a `display_name` change for a `source_account_id` that cannot be matched to an existing person). Should these be stored in one table or two?
+Both the identity-resolution domain and the person domain need to track unresolvable observations from `identity_inputs`. Identity-resolution tracks alias-level unmapped records (e.g., an email that cannot be linked to a person). The person domain tracks person-attribute-level unmapped records (e.g., a `display_name` change for a `source_account_id` that cannot be matched to an existing person). Should these be stored in one table or two?
 
 ## Decision Drivers
 
-* Both record types originate from the same source: the shared `bootstrap_inputs` table filled by connectors
+* Both record types originate from the same source: the shared `identity_inputs` table filled by connectors
 * Both record types have identical structure: `insight_tenant_id`, `insight_source_id`, `insight_source_type`, `source_account_id`, `alias_type`, `alias_value`, plus resolution workflow fields
 * Differentiation between identity-level and person-attribute-level records is already possible via `alias_type` values: identity types (`email`, `username`, `employee_id`, `platform_id`) vs person-attribute types (`display_name`, `role`, `location`, etc.)
 * Operators reviewing the unmapped queue benefit from a single view across both domains
@@ -41,7 +41,7 @@ Both the identity-resolution domain and the person domain need to track unresolv
 
 ## Decision Outcome
 
-Chosen option: **"Option A: Single shared `unmapped` table"**, because the data has identical structure, common origin (`bootstrap_inputs`), and natural differentiation by `alias_type` values. Adding a second table with the same schema creates maintenance burden without providing meaningful separation.
+Chosen option: **"Option A: Single shared `unmapped` table"**, because the data has identical structure, common origin (`identity_inputs`), and natural differentiation by `alias_type` values. Adding a second table with the same schema creates maintenance burden without providing meaningful separation.
 
 ### Consequences
 
@@ -64,7 +64,7 @@ Chosen option: **"Option A: Single shared `unmapped` table"**, because the data 
 The identity-resolution domain owns the `unmapped` table. The person domain writes person-attribute unmapped records to the same table. Records are differentiated by `alias_type` values.
 
 * Good, because no schema duplication — one table, one set of indexes, one set of queries
-* Good, because common origin from `bootstrap_inputs` makes unified storage natural
+* Good, because common origin from `identity_inputs` makes unified storage natural
 * Good, because operator tooling has a single unmapped queue to process
 * Neutral, because cross-domain write is documented and constrained to INSERT only
 * Bad, because domain boundary is blurred — person domain depends on IR domain's table schema

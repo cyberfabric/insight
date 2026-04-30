@@ -29,7 +29,8 @@ WITH versions AS (
         toUInt32(coalesce(version_number, 0))                               AS version_number,
         coalesce(minor_edit, false)                                         AS minor_edit,
         toDate(parseDateTime64BestEffortOrNull(coalesce(created_at, ''), 3)) AS day,
-        parseDateTime64BestEffortOrNull(coalesce(collected_at, ''), 3)      AS collected_at
+        parseDateTime64BestEffortOrNull(coalesce(collected_at, ''), 3)      AS collected_at,
+        _airbyte_extracted_at                                                AS extracted_at
     FROM {{ source('bronze_confluence', 'wiki_page_versions') }}
     WHERE author_id IS NOT NULL AND author_id != ''
     QUALIFY row_number() OVER (PARTITION BY unique_key ORDER BY _airbyte_extracted_at DESC) = 1
@@ -49,7 +50,11 @@ agg AS (
         countIf(version_number = 1)                                         AS pages_created,
         countIf(not minor_edit)                                             AS major_edits,
         countIf(minor_edit)                                                 AS minor_edits,
-        max(collected_at)                                                   AS collected_at_max
+        max(collected_at)                                                   AS collected_at_max,
+        -- _version per group: latest bronze extraction. Changes only when new
+        -- versions arrive for this (author, day), so downstream silver
+        -- incremental filter (`_version > max(_version)`) skips unchanged groups.
+        max(extracted_at)                                                   AS extracted_at_max
     FROM versions
     WHERE day IS NOT NULL
     GROUP BY tenant_id, source_id, author_id, day
@@ -86,7 +91,8 @@ SELECT
     toUInt32(a.minor_edits)                                                 AS minor_edits,
     'confluence'                                                            AS source,
     'insight_confluence'                                                    AS data_source,
-    CAST(a.collected_at_max AS Nullable(DateTime64(3)))                     AS collected_at
+    CAST(a.collected_at_max AS Nullable(DateTime64(3)))                     AS collected_at,
+    toUnixTimestamp64Milli(a.extracted_at_max)                              AS _version
 FROM agg a
 {%- if jira_user %}
 LEFT JOIN users u

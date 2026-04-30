@@ -41,7 +41,8 @@ WITH pages AS (
         toUInt32(coalesce(version_number, 0))                               AS version_count,
         parseDateTime64BestEffortOrNull(coalesce(created_at, ''), 3)        AS created_at,
         parseDateTime64BestEffortOrNull(coalesce(updated_at, ''), 3)        AS updated_at,
-        parseDateTime64BestEffortOrNull(coalesce(collected_at, ''), 3)      AS collected_at
+        parseDateTime64BestEffortOrNull(coalesce(collected_at, ''), 3)      AS collected_at,
+        toUnixTimestamp64Milli(_airbyte_extracted_at)                       AS _version
     FROM {{ source('bronze_confluence', 'wiki_pages') }}
     QUALIFY row_number() OVER (PARTITION BY unique_key ORDER BY _airbyte_extracted_at DESC) = 1
 ),
@@ -89,7 +90,8 @@ SELECT
     s.space_url                                                             AS space_url,
     'confluence'                                                            AS source,
     'insight_confluence'                                                    AS data_source,
-    p.collected_at
+    p.collected_at,
+    p._version
 FROM pages p
 LEFT JOIN spaces s
     ON p.tenant_id = s.tenant_id

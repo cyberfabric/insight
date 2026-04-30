@@ -1,9 +1,10 @@
+-- depends_on: {{ ref('jira__bronze_promoted') }}
 {{ config(
     materialized='table',
     alias='jira_issue_field_snapshot',
     schema='staging',
-    engine='MergeTree()',
-    order_by='(insight_source_id, id_readable, field_id)',
+    engine='ReplacingMergeTree(_version)',
+    order_by=['unique_key'],
     settings={'allow_nullable_key': 1},
     tags=['staging', 'jira']
 ) }}
@@ -48,7 +49,13 @@ WITH issue AS (
     ) AS ji
 )
 
-SELECT insight_source_id, issue_id, id_readable, created_at, field_id,
+SELECT
+       CAST(concat(
+           coalesce(insight_source_id, ''), '-',
+           coalesce(issue_id, ''), '-',
+           coalesce(field_id, '')
+       ) AS String)                                                           AS unique_key,
+       insight_source_id, issue_id, id_readable, created_at, field_id,
        CAST(arrayMap(x -> COALESCE(x, ''), value_ids)      AS Array(String)) AS value_ids,
        CAST(arrayMap(x -> COALESCE(x, ''), value_displays) AS Array(String)) AS value_displays,
        toUnixTimestamp64Milli(now64(3))                                      AS _version

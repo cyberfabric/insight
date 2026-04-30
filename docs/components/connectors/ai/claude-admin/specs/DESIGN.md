@@ -418,7 +418,7 @@ Reads from `claude_admin_code_usage` filtered to `WHERE actor_type = 'user'`. Ma
 | `claude_admin__ai_dev_usage` dbt model | `claude_admin_code_usage` Bronze table | SQL read |
 | Silver pipeline | Claude Admin Bronze tables | Reads `email` / `actor_identifier` + activity fields |
 | Identity Manager (Silver step 2) | `email` / `actor_identifier` fields | Resolves email → canonical `person_id` |
-| Identity seed models (`seed_persons_from_claude_admin`, `seed_aliases_from_claude_admin`, `seed_bootstrap_inputs_from_claude_admin`) | `claude_admin_users` Bronze table | SQL read for initial person / alias seeding |
+| Identity seed models (`seed_persons_from_claude_admin`, `seed_aliases_from_claude_admin`, `seed_identity_inputs_from_claude_admin`) | `claude_admin_users` Bronze table | SQL read for initial person / alias seeding |
 
 ### 3.5 External Dependencies
 
@@ -775,11 +775,11 @@ Anthropic's internal `id` fields (user ID, API key creator ID) are retained in B
 
 **Cross-platform note**: The same user typically appears in this connector (admin view), the `claude-enterprise` connector (engagement view), and IDE-tool connectors (Cursor / Windsurf). All three use `email` as the identity key and map to the same `person_id` via the Identity Manager in Silver step 2, enabling per-person aggregation across surfaces without additional join mapping.
 
-**Seed models**: Three dbt models under `src/ingestion/dbt/identity/` seed `person.persons` and `identity.aliases` / `staging.bootstrap_inputs_*` from `claude_admin_users`:
+**Seed models**: Three dbt models under `src/ingestion/dbt/identity/` seed `person.persons` and `identity.aliases` / `staging.identity_inputs_*` from `claude_admin_users`:
 
 - `seed_persons_from_claude_admin.sql`
 - `seed_aliases_from_claude_admin.sql`
-- `seed_bootstrap_inputs_from_claude_admin.sql`
+- `seed_identity_inputs_from_claude_admin.sql`
 
 These were renamed from their `claude_team` predecessors via `git mv` (history preserved).
 
@@ -939,7 +939,7 @@ No new ADRs have been authored for this merged connector. The inherited decision
 - **Connector manifest**: `src/ingestion/connectors/ai/claude-admin/connector.yaml`
 - **Connector descriptor**: `src/ingestion/connectors/ai/claude-admin/descriptor.yaml`
 - **dbt source + models**: `src/ingestion/connectors/ai/claude-admin/dbt/schema.yml`, `dbt/claude_admin__ai_api_usage.sql`, `dbt/claude_admin__ai_dev_usage.sql`
-- **Identity seeds**: `src/ingestion/dbt/identity/seed_{persons,aliases,bootstrap_inputs}_from_claude_admin.sql`
+- **Identity seeds**: `src/ingestion/dbt/identity/seed_{persons,aliases,identity_inputs}_from_claude_admin.sql`
 - **Ad-hoc seeds**: `src/ingestion/scripts/adhoc/seed_from_claude_admin_manual.sql`
 - **AI Tool domain**: [docs/components/connectors/ai/](../../)
 - **Sibling connector**: [claude-enterprise](../../claude-enterprise/specs/DESIGN.md)

@@ -417,6 +417,7 @@ for connector_name, source_id_label, config in connector_instances:
                 stream_name = stream_def.get("name", "")
                 supported = stream_def.get("supportedSyncModes", ["full_refresh"])
                 sync_mode = "incremental" if "incremental" in supported else "full_refresh"
+                # @cpt-constraint:cpt-dataflow-constraint-airbyte-append:p1
                 # Bronze is always plain append; dedup happens in silver via unique_key.
                 # Destination-side dedup (append_dedup) buffers all records in memory
                 # until stream COMPLETE — OOMs on large streams and loses all data

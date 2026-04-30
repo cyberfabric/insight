@@ -25,7 +25,9 @@
 -- extraction logic mirrors the transformations in claude-enterprise/connector.yaml.
 {{ config(
     materialized='incremental',
+    incremental_strategy='append',
     unique_key='unique_key',
+    engine='ReplacingMergeTree(_version)',
     order_by=['unique_key'],
     settings={'allow_nullable_key': 1},
     schema='staging',
@@ -46,7 +48,8 @@ WITH base AS (
         powerpoint_message_count,
         cowork_session_count,
         cowork_message_count,
-        CAST(parseDateTime64BestEffortOrNull(coalesce(collected_at, ''), 3) AS Nullable(DateTime64(3))) AS collected_at
+        CAST(parseDateTime64BestEffortOrNull(coalesce(collected_at, ''), 3) AS Nullable(DateTime64(3))) AS collected_at,
+        toUnixTimestamp64Milli(_airbyte_extracted_at) AS _version
     FROM {{ source('bronze_claude_enterprise', 'claude_enterprise_users') }}
     WHERE user_email IS NOT NULL
       AND trim(user_email) != ''
@@ -81,7 +84,8 @@ web AS (
         CAST(NULL AS Nullable(String))              AS cost_currency,
         'claude_enterprise'                         AS source,
         'insight_claude_enterprise'                 AS data_source,
-        collected_at
+        collected_at,
+        _version
     FROM base
     WHERE coalesce(chat_conversation_count, 0) > 0
        OR coalesce(chat_message_count, 0) > 0
@@ -114,7 +118,8 @@ office AS (
         CAST(NULL AS Nullable(String))              AS cost_currency,
         'claude_enterprise'                         AS source,
         'insight_claude_enterprise'                 AS data_source,
-        collected_at
+        collected_at,
+        _version
     FROM base
     WHERE coalesce(excel_session_count, 0) > 0
        OR coalesce(powerpoint_session_count, 0) > 0
@@ -143,7 +148,8 @@ cowork AS (
         CAST(NULL AS Nullable(String))              AS cost_currency,
         'claude_enterprise'                         AS source,
         'insight_claude_enterprise'                 AS data_source,
-        collected_at
+        collected_at,
+        _version
     FROM base
     WHERE coalesce(cowork_session_count, 0) > 0
 )

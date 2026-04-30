@@ -4,7 +4,7 @@
     incremental_strategy='append',
     schema='silver',
     engine='ReplacingMergeTree(_version)',
-    order_by='(insight_source_id, data_source, sprint_id)',
+    order_by=['unique_key'],
     settings={'allow_nullable_key': 1},
     tags=['silver']
 ) }}

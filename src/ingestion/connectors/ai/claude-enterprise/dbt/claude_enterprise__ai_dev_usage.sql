@@ -33,8 +33,11 @@
 
 {{ config(
     materialized='incremental',
+    incremental_strategy='append',
     unique_key='unique_key',
+    engine='ReplacingMergeTree(_version)',
     order_by=['unique_key'],
+    settings={'allow_nullable_key': 1},
     schema='staging',
     tags=['claude-enterprise', 'silver:class_ai_dev_usage']
 ) }}
@@ -73,7 +76,8 @@ SELECT
     CAST(NULL AS Nullable(UInt32))                                     AS cost_cents,
     'claude_enterprise'                                                AS source,
     'insight_claude_enterprise'                                        AS data_source,
-    parseDateTime64BestEffortOrNull(coalesce(collected_at, ''), 3)     AS collected_at
+    parseDateTime64BestEffortOrNull(coalesce(collected_at, ''), 3)     AS collected_at,
+    toUnixTimestamp64Milli(_airbyte_extracted_at)                       AS _version
 FROM {{ source('bronze_claude_enterprise', 'claude_enterprise_users') }}
 WHERE user_email IS NOT NULL
   AND trim(user_email) != ''

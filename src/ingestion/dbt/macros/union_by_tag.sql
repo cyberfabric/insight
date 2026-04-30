@@ -1,13 +1,19 @@
+-- @cpt-principle:cpt-dataflow-principle-staging-then-union:p1
 {% macro union_by_tag(tag_name) %}
   {%- if execute -%}
     {%- set models = [] -%}
     {%- for node in graph.nodes.values() -%}
       {%- if tag_name in node.tags and node.resource_type == 'model' and node.unique_id != model.unique_id -%}
-        {%- set rel = adapter.get_relation(database=none, schema=node.schema, identifier=node.alias or node.name) -%}
-        {%- if rel -%}
+        {%- if node.config.materialized == 'ephemeral' -%}
+          {#- Ephemeral models have no DB relation; dbt inlines them as CTE on ref(). -#}
           {%- do models.append(node) -%}
         {%- else -%}
-          {{ log("union_by_tag: skipping " ~ node.name ~ " (table does not exist yet)", info=True) }}
+          {%- set rel = adapter.get_relation(database=none, schema=node.schema, identifier=node.alias or node.name) -%}
+          {%- if rel -%}
+            {%- do models.append(node) -%}
+          {%- else -%}
+            {{ log("union_by_tag: skipping " ~ node.name ~ " (table does not exist yet)", info=True) }}
+          {%- endif -%}
         {%- endif -%}
       {%- endif -%}
     {%- endfor -%}

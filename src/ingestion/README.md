@@ -276,7 +276,7 @@ src/ingestion/
 │   └── macros/                      #   union_by_tag
 │
 ├── silver/                          # Silver layer, split by domain
-│   ├── _shared/                     #   Cross-domain (class_people, bootstrap_inputs)
+│   ├── _shared/                     #   Cross-domain (class_people, identity_inputs)
 │   ├── git/                         #   class_git_* union models
 │   ├── collaboration/               #   class_collab_* (chat, meeting, email, document)
 │   └── crm/                         #   class_crm_*

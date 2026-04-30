@@ -1,15 +1,17 @@
+-- depends_on: {{ ref('jira__bronze_promoted') }}
 {{ config(
-    materialized='incremental',
+    materialized='view',
     alias='jira__task_projects',
-    incremental_strategy='append',
     schema='staging',
-    engine='ReplacingMergeTree(_version)',
-    order_by='(insight_source_id, data_source, project_id)',
-    settings={'allow_nullable_key': 1},
     tags=['jira', 'silver:class_task_projects']
 ) }}
 
+-- View, not table: bronze `jira_projects` is MergeTree (full_refresh + overwrite),
+-- so the current state of bronze is the current state of staging — no incremental
+-- accumulation needed. Silver `class_task_projects` is RMT(_version), reads via FINAL.
+
 SELECT
+    p.unique_key                                AS unique_key,
     p.source_id                                 AS insight_source_id,
     CAST('jira' AS String)                      AS data_source,
     toString(p.project_id)                      AS project_id,

@@ -11,7 +11,10 @@
 SELECT
     tenant_id,
     source_id,
-    unique_key,
+    -- SCD2 grain: per (entity, valid_from). Bronze `unique_key` is at entity
+    -- level (`{tenant}-{source}-{employee_id}`); we extend it with valid_from
+    -- so silver `class_people` can dedup by a single ORDER BY column.
+    CAST(concat(coalesce(unique_key, ''), '-', toString(lastChanged)) AS String) AS unique_key,
     coalesce(tenant_id, '')                         AS workspace_id,
     -- person_id resolved in Silver Step 2 via Identity Manager
     NULL                                            AS person_id,
