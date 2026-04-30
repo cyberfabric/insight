@@ -17,6 +17,7 @@
     {% do run_query("
         CREATE TABLE IF NOT EXISTS staging.jira__task_field_history
         (
+            unique_key          String,
             insight_source_id   String,
             data_source         String,
             issue_id            String,
@@ -44,7 +45,7 @@
             INDEX idx_fh_event_at (event_at)                                    TYPE minmax GRANULARITY 4
         )
         ENGINE = ReplacingMergeTree(_version)
-        ORDER BY (insight_source_id, data_source, issue_id, field_id, event_at, event_id)
+        ORDER BY (unique_key)
     ") %}
 
     {% if execute %}

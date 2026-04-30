@@ -2,10 +2,10 @@
     materialized='incremental',
     incremental_strategy='append',
     schema='staging',
-    tags=['zoom', 'silver', 'silver:bootstrap_inputs']
+    tags=['zoom', 'silver', 'silver:identity_inputs']
 ) }}
 
-{{ bootstrap_inputs_from_history(
+{{ identity_inputs_from_history(
     fields_history_ref=ref('zoom__users_fields_history'),
     source_type='zoom',
     identity_fields=[

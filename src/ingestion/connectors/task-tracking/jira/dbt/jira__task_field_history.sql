@@ -1,18 +1,19 @@
+-- depends_on: {{ ref('jira__bronze_promoted') }}
+-- @cpt-principle:cpt-dataflow-principle-ephemeral-passthrough:p1
 {{ config(
-    materialized='view',
-    alias='jira__task_field_history_tagged',
-    schema='staging',
+    materialized='ephemeral',
     tags=['jira', 'silver:class_task_field_history']
 ) }}
 
--- Rust `jira-enrich` writes to `staging.jira__task_field_history` directly — that table's
--- DDL is managed by the `create_task_field_history_staging` macro (see `on-run-start` in
--- `dbt_project.yml`) and invariants are enforced by the Rust INSERT path. This view just
--- exposes that table to the dbt graph under the `silver:class_task_field_history` tag so
--- the downstream `class_task_field_history` silver model can union it via `union_by_tag`.
+-- Ephemeral: this model creates NO database object. It exists only to attach
+-- the `silver:class_task_field_history` tag so `union_by_tag` finds it in the
+-- silver model. dbt inlines the SELECT as a CTE wherever it's `ref`'d.
 --
--- Alias deliberately differs (`_tagged`) to avoid a name collision with the staging table
--- that Rust owns.
+-- The underlying staging table `staging.jira__task_field_history` is written
+-- by the Rust `jira-enrich` binary; its DDL is managed by the
+-- `create_task_field_history_staging` macro (see `on-run-start` in
+-- `dbt_project.yml`). Rust populates `unique_key` per the convention
+-- `{insight_source_id}-{data_source}-{id_readable}-{field_id}-{event_id}`
+-- — see src/ingestion/connectors/task-tracking/jira/enrich/src/io/writer.rs.
 
-SELECT *
-FROM {{ source('staging_jira', 'jira__task_field_history') }}
+SELECT * FROM {{ source('staging_jira', 'jira__task_field_history') }}

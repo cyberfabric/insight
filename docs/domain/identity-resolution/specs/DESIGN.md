@@ -29,7 +29,7 @@
   - [4.8 Operational Considerations](#48-operational-considerations)
 - [5. Implementation Recommendations](#5-implementation-recommendations)
   - [REC-IR-01: ClickHouse atomicity for merge/split (Phase 3+)](#rec-ir-01-clickhouse-atomicity-for-mergesplit-phase-3)
-  - [REC-IR-02: bootstrap_inputs incremental watermark (Phase 2)](#rec-ir-02-bootstrapinputs-incremental-watermark-phase-2)
+  - [REC-IR-02: identity_inputs incremental watermark (Phase 2)](#rec-ir-02-bootstrapinputs-incremental-watermark-phase-2)
   - [REC-IR-03: Shared unmapped table for all domains — RESOLVED](#rec-ir-03-shared-unmapped-table-for-all-domains--resolved)
   - [REC-IR-04: Temporary insight\_tenant\_id derivation via sipHash128 (Phase 1)](#rec-ir-04-temporary-insight_tenant_id-derivation-via-siphash128-phase-1)
 - [6. Traceability](#6-traceability)
@@ -46,9 +46,9 @@
 
 ### 1.1 Architectural Vision
 
-Identity Resolution maps disparate identity signals — emails, usernames, employee IDs, platform-specific handles — from all connected source systems into canonical person records stored in the Person domain. It operates as the bridge between raw connector data and a unified person model: connectors emit alias observations into the `bootstrap_inputs` table; the BootstrapJob processes those observations into the `aliases` table; and the ResolutionService exposes a query API for downstream consumers to resolve any alias to a `person_id`.
+Identity Resolution maps disparate identity signals — emails, usernames, employee IDs, platform-specific handles — from all connected source systems into canonical person records stored in the Person domain. It operates as the bridge between raw connector data and a unified person model: connectors emit alias observations into the `identity_inputs` table; the BootstrapJob processes those observations into the `aliases` table; and the ResolutionService exposes a query API for downstream consumers to resolve any alias to a `person_id`.
 
-The architecture is ClickHouse-native. All tables — `bootstrap_inputs`, `aliases`, `match_rules`, `unmapped`, `conflicts`, `merge_audits`, `alias_gdpr_deleted` — reside in ClickHouse. There is no RDBMS layer. Merge/split atomicity, previously achieved via RDBMS transactions, is handled through idempotent operations and audit-trail patterns in ClickHouse (snapshot-before/after in `merge_audits`). SCD Type 2 history for persons and org units is managed by dbt macros in their respective domains (person, org-chart) and is out of scope for this design.
+The architecture is ClickHouse-native. All tables — `identity_inputs`, `aliases`, `match_rules`, `unmapped`, `conflicts`, `merge_audits`, `alias_gdpr_deleted` — reside in ClickHouse. There is no RDBMS layer. Merge/split atomicity, previously achieved via RDBMS transactions, is handled through idempotent operations and audit-trail patterns in ClickHouse (snapshot-before/after in `merge_audits`). SCD Type 2 history for persons and org units is managed by dbt macros in their respective domains (person, org-chart) and is out of scope for this design.
 
 This domain is deliberately narrow: it owns alias-to-person mapping and nothing else. The `persons` table, golden record assembly, person-level conflict detection, availability, and org hierarchy all belong to the person and org-chart domains. Identity Resolution produces `aliases` rows; the person domain consumes them.
 
@@ -59,9 +59,9 @@ This domain is deliberately narrow: it owns alias-to-person mapping and nothing 
 
 | Requirement | Design Response |
 |---|---|
-| Collect alias observations from all connectors | `bootstrap_inputs` table — each connector writes one row per changed alias value |
+| Collect alias observations from all connectors | `identity_inputs` table — each connector writes one row per changed alias value |
 | Resolve aliases to `person_id` | `ResolutionService` — hot-path lookup in `aliases`; cold-path evaluation via `match_rules` |
-| Seed aliases from HR/directory sources | `BootstrapJob` reads `bootstrap_inputs` since last run, creates/updates `aliases` rows |
+| Seed aliases from HR/directory sources | `BootstrapJob` reads `identity_inputs` since last run, creates/updates `aliases` rows |
 | Configure matching rules per tenant | `match_rules` table — rule_type, weight, phase, is_enabled; operator-editable via API |
 | Quarantine unresolvable aliases | `unmapped` table — pending queue with operator resolution workflow |
 | Detect alias-level conflicts | `ConflictDetector` — writes to `conflicts` when same alias maps to multiple persons |
@@ -74,7 +74,7 @@ This domain is deliberately narrow: it owns alias-to-person mapping and nothing 
 | NFR ID | NFR Summary | Allocated To | Design Response | Verification Approach |
 |---|---|---|---|---|
 | `cpt-insightspec-ir-nfr-alias-lookup-latency` | Alias lookup < 50 ms p99 | `aliases` table + ResolutionService | Direct ClickHouse lookup on ordered key `(insight_tenant_id, alias_type, alias_value)` | Benchmark with 10K/s lookup rate |
-| `cpt-insightspec-ir-nfr-bootstrap-throughput` | Bootstrap processes 100K inputs/run | BootstrapJob | Batch processing with configurable chunk size; ClickHouse bulk inserts | Load test with 100K bootstrap_inputs rows |
+| `cpt-insightspec-ir-nfr-bootstrap-throughput` | Bootstrap processes 100K inputs/run | BootstrapJob | Batch processing with configurable chunk size; ClickHouse bulk inserts | Load test with 100K identity_inputs rows |
 | `cpt-insightspec-ir-nfr-idempotency` | Bootstrap re-runs produce no duplicates | BootstrapJob | Natural key dedup on `(insight_tenant_id, alias_type, alias_value, insight_source_id)` in `aliases` | Run bootstrap 3x on same data; verify row counts |
 | `cpt-insightspec-ir-nfr-no-fuzzy-autolink` | Zero false-positive merges from fuzzy rules | MatchingEngine | Fuzzy rules disabled by default; never trigger auto-link | Audit test: enable fuzzy; assert no auto-link |
 | `cpt-insightspec-ir-nfr-tenant-isolation` | No cross-tenant data leaks | All tables | `insight_tenant_id` as first column in all ORDER BY keys | Cross-tenant resolution query returns empty |
@@ -96,7 +96,7 @@ This domain is deliberately narrow: it owns alias-to-person mapping and nothing 
 │  ┌──────────┐     ┌────────────────────┐     ┌──────────────────┐           │
 │  │ GitLab   │────▶│                    │     │                  │           │
 │  │ GitHub   │     │                    │     │    aliases        │           │
-│  │ Jira     │     │  bootstrap_inputs  │────▶│    (resolved)    │───────┐   │
+│  │ Jira     │     │  identity_inputs  │────▶│    (resolved)    │───────┐   │
 │  │ BambooHR │     │  (alias signals)   │     │                  │       │   │
 │  │ Zoom     │     │                    │     └──────────────────┘       │   │
 │  │ M365     │────▶│                    │            │                   │   │
@@ -124,7 +124,7 @@ This domain is deliberately narrow: it owns alias-to-person mapping and nothing 
 
 | Layer | Responsibility | Technology |
 |---|---|---|
-| Ingestion | Connectors write alias observations to `bootstrap_inputs` | ClickHouse (MergeTree) |
+| Ingestion | Connectors write alias observations to `identity_inputs` | ClickHouse (MergeTree) |
 | Processing | BootstrapJob resolves inputs into aliases; MatchingEngine evaluates rules | Python / Argo Workflows |
 | Storage | All identity tables: aliases, match_rules, unmapped, conflicts, merge_audits | ClickHouse (ReplacingMergeTree, MergeTree) |
 | API | REST endpoints for resolution, merge/split, unmapped management, GDPR | Python (FastAPI) |
@@ -241,7 +241,7 @@ All temporal ranges use `[effective_from, effective_to)` half-open intervals. `e
 
 | Entity | Description | Key |
 |---|---|---|
-| `bootstrap_inputs` | Alias observations from connectors — one row per changed alias value per source | `(insight_tenant_id, insight_source_id, alias_type, alias_value)` |
+| `identity_inputs` | Alias observations from connectors — one row per changed alias value per source | `(insight_tenant_id, insight_source_id, alias_type, alias_value)` |
 | `aliases` | Resolved alias-to-person mapping — many-to-one from source identifiers to `person_id` | `(insight_tenant_id, alias_type, alias_value, insight_source_id)` |
 | `match_rules` | Configurable matching rules for the MatchingEngine | `id` |
 | `unmapped` | Unresolvable alias queue — pending for operator resolution | `id` |
@@ -250,7 +250,7 @@ All temporal ranges use `[effective_from, effective_to)` half-open intervals. `e
 | `alias_gdpr_deleted` | GDPR erasure archive — moved from `aliases` on purge | `id` |
 
 **Relationships**:
-- `bootstrap_inputs` → (processed by BootstrapJob) → `aliases`
+- `identity_inputs` → (processed by BootstrapJob) → `aliases`
 - `aliases.person_id` → `persons.id` (person domain, logical FK)
 - `unmapped.resolved_person_id` → `persons.id` (person domain, logical FK)
 - `conflicts.person_id` → `persons.id` (person domain, logical FK)
@@ -286,11 +286,11 @@ All temporal ranges use `[effective_from, effective_to)` half-open intervals. `e
 
 ##### Why this component exists
 
-Processes alias observations from `bootstrap_inputs` into resolved `aliases` rows. Without it, the alias table remains empty and no resolution can happen. Runs on schedule (Argo Workflow) after connector syncs complete.
+Processes alias observations from `identity_inputs` into resolved `aliases` rows. Without it, the alias table remains empty and no resolution can happen. Runs on schedule (Argo Workflow) after connector syncs complete.
 
 ##### Responsibility scope
 
-- Reads `bootstrap_inputs` rows where `_synced_at > last_run` for the tenant.
+- Reads `identity_inputs` rows where `_synced_at > last_run` for the tenant.
 - For each input: normalizes the alias value (email/username → `lower(trim())`; others → `trim()`).
 - Looks up existing aliases matching `(insight_tenant_id, alias_type, normalized_value)`.
 - If no match found: evaluates MatchingEngine rules; if confidence ≥ threshold → creates alias linked to matched person; otherwise → inserts into `unmapped`.
@@ -461,7 +461,7 @@ Detects alias-level conflicts — when the same alias value appears linked to di
 | Person domain (`persons` table) | Logical FK (`aliases.person_id → persons.id`) | Alias-to-person mapping target |
 | Person domain (person creation) | Domain event / API | BootstrapJob triggers person creation when new identity discovered (Phase 2+) |
 | Connector sync events | Argo Workflow trigger | BootstrapJob runs after connector sync completes |
-| dbt models (Bronze → Silver) | ClickHouse tables | Connectors populate `bootstrap_inputs` via `bootstrap_inputs_from_history` macro applied to `fields_history` models |
+| dbt models (Bronze → Silver) | ClickHouse tables | Connectors populate `identity_inputs` via `identity_inputs_from_history` macro applied to `fields_history` models |
 
 **Dependency Rules**:
 - No circular dependencies between identity-resolution and person domains
@@ -501,7 +501,7 @@ Detects alias-level conflicts — when the same alias value appears linked to di
 sequenceDiagram
     participant Argo as Argo Workflow
     participant BJ as BootstrapJob
-    participant BI as bootstrap_inputs (CH)
+    participant BI as identity_inputs (CH)
     participant AL as aliases (CH)
     participant ME as MatchingEngine
     participant UM as unmapped (CH)
@@ -602,13 +602,13 @@ sequenceDiagram
 
 All tables are in ClickHouse. Naming follows PR #55 conventions. No Nullable unless semantically required; use empty string (`''`) or zero sentinel (`'1970-01-01'`) instead.
 
-#### Table: `bootstrap_inputs`
+#### Table: `identity_inputs`
 
 **ID**: `cpt-insightspec-ir-dbtable-bootstrap-inputs`
 
 Alias observations from connectors. Each row represents one changed alias value from one source.
 
-**Population mechanism**: Connectors populate this table via dbt models using the shared `bootstrap_inputs_from_history` macro. Each connector declares:
+**Population mechanism**: Connectors populate this table via dbt models using the shared `identity_inputs_from_history` macro. Each connector declares:
 - `identity_fields` — mapping of source field names to alias types (e.g., `workEmail → email`, `employeeNumber → employee_id`)
 - `deactivation_condition` — SQL expression that detects entity deactivation (e.g., `field_name = 'status' AND new_value = 'Inactive'`), which emits DELETE rows for all identity fields
 
@@ -616,7 +616,7 @@ The macro reads from the connector's `fields_history` model (field-level change 
 - **UPSERT** rows when an identity-relevant field changes
 - **DELETE** rows (with empty `alias_value`) when the deactivation condition is met
 
-Per-connector staging tables (e.g., `staging.bamboohr__bootstrap_inputs`) are unified into a single `default.bootstrap_inputs` view via `union_by_tag('silver:bootstrap_inputs')`.
+Per-connector staging tables (e.g., `staging.bamboohr__identity_inputs`) are unified into a single `default.identity_inputs` view via `union_by_tag('silver:identity_inputs')`.
 
 The models are incremental (`append` strategy): each run processes only `fields_history` rows with `updated_at` newer than the last `_synced_at` in the target table.
 
@@ -668,7 +668,7 @@ Resolved alias-to-person mapping. Each row links one `(alias_type, alias_value)`
 | `person_id` | `UUID` | Logical FK → `persons.id` (person domain) |
 | `alias_type` | `LowCardinality(String)` | `email`, `username`, `employee_id`, `display_name`, `platform_id` |
 | `alias_value` | `String` | Normalized alias value |
-| `alias_field_name` | `String` | Fully-qualified source field path (from bootstrap_inputs) |
+| `alias_field_name` | `String` | Fully-qualified source field path (from identity_inputs) |
 | `insight_source_id` | `UUID` | Source system that provided this alias |
 | `insight_source_type` | `LowCardinality(String)` | Source type |
 | `source_account_id` | `String` | Raw account ID in the source system |
@@ -872,7 +872,7 @@ Archive table for GDPR-purged aliases. Structure mirrors `aliases` with addition
 This is an **alternative implementation** of identity grouping — runs entirely in ClickHouse on `(token, rid)` pairs. The primary architecture uses BootstrapJob + MatchingEngine for incremental resolution; the min-propagation algorithm may be used for bulk initial grouping or as a verification tool to detect grouping inconsistencies.
 
 **Input**: table of `(token, rid)` pairs where:
-- `token` — a value identifying a person (username, email, work_email, etc.), mapped from `alias_value` in `bootstrap_inputs`
+- `token` — a value identifying a person (username, email, work_email, etc.), mapped from `alias_value` in `identity_inputs`
 - `rid` = `cityHash64(insight_source_type, source_account_id)` — deterministic hash per source account
 
 **Algorithm**:
@@ -894,7 +894,7 @@ Matching is always on **full token values** — no substring matching.
 
 **Blacklist**: generic tokens (`admin`, `test`, `bot`, `root`) and usernames ≤ 3 characters are excluded.
 
-**Data sources** (token fields derived from `bootstrap_inputs.alias_type` / `alias_value`):
+**Data sources** (token fields derived from `identity_inputs.alias_type` / `alias_value`):
 
 | Source (`insight_source_type`) | Token fields (`alias_type`) | Notes |
 |---|---|---|
@@ -914,7 +914,7 @@ Min-propagation and the BootstrapJob are **complementary**: min-propagation is a
 
 The MatchingEngine (`cpt-insightspec-ir-component-matching-engine`) evaluates rules in three phases, stored in the `match_rules` table. Rules are ordered by `sort_order` within each phase.
 
-**Alias type vocabulary** (stored in `aliases.alias_type` and `bootstrap_inputs.alias_type`):
+**Alias type vocabulary** (stored in `aliases.alias_type` and `identity_inputs.alias_type`):
 
 | `alias_type` | Description | Normalization |
 |---|---|---|
@@ -1057,7 +1057,7 @@ The Dictionary approach trades a 30-60s cache lag for faster lookup in high-thro
 
 **Sources**: BambooHR (employee_id: E123, email: anna.ivanova@acme.com), Active Directory (username: aivanova, email after name change: anna.smirnova@acme.com), GitHub (username: annai), GitLab (username: ivanova.anna), Jira (username: aivanova).
 
-**Step 1 — dbt `bootstrap_inputs_from_history` generates rows from `fields_history`**:
+**Step 1 — dbt `identity_inputs_from_history` generates rows from `fields_history`**:
 
 | `insight_source_type` | `source_account_id` | `alias_type` | `alias_value` | `alias_field_name` |
 |---|---|---|---|---|
@@ -1105,7 +1105,7 @@ This walkthrough demonstrates the min-propagation algorithm (§4.1) as a verific
 
 **Sources**: BambooHR (`source_account_id: b1`, `display_name: alexei vavilov`, `email: Alexei.Vavilov@alemira.com`), Git commits (`source_account_id: c1–c3`, `username: he4et`, various personal emails), YouTrack (`source_account_id: y1`, `display_name: Alexey Vavilov`, `email: a.vavilov@constructor.tech`).
 
-**Token extraction from `bootstrap_inputs`**:
+**Token extraction from `identity_inputs`**:
 
 | `insight_source_type` | `source_account_id` | `alias_type` | `alias_value` (token) |
 |---|---|---|---|
@@ -1154,7 +1154,7 @@ This walkthrough demonstrates the min-propagation algorithm (§4.1) as a verific
 | Metric | Description | Alert Threshold |
 |---|---|---|
 | `unmapped_rate` | Fraction of aliases with no resolved `person_id` | > 20% |
-| `bootstrap_processing_lag` | Time from `bootstrap_inputs._synced_at` to alias creation in `aliases` | > 30 min |
+| `bootstrap_processing_lag` | Time from `identity_inputs._synced_at` to alias creation in `aliases` | > 30 min |
 | `conflict_rate` | Rate of new `conflicts` table entries per hour | > 10/hour |
 | `resolution_latency_p99` | p99 latency of `POST /resolve` endpoint | > 50 ms |
 | `merge_audit_count` | Number of merge/split operations per day | Informational |
@@ -1165,7 +1165,7 @@ This walkthrough demonstrates the min-propagation algorithm (§4.1) as a verific
 - Dashboard visibility (Silver step 2 enrichment): < 60 min after alias creation
 
 **Capacity planning**:
-- `bootstrap_inputs`: grows linearly with connector syncs. Each sync produces O(changed_accounts * aliases_per_account) rows. TTL-based expiry recommended after processing.
+- `identity_inputs`: grows linearly with connector syncs. Each sync produces O(changed_accounts * aliases_per_account) rows. TTL-based expiry recommended after processing.
 - `aliases`: grows with total unique (alias_type, alias_value, source) combinations. Expected < 1M rows for 10K persons across 10 sources.
 - `merge_audits`: grows with operator activity. Low volume, no TTL needed.
 
@@ -1186,15 +1186,15 @@ Merge/split operations require moving aliases between persons atomically with a 
 - Lightweight coordination service (e.g., Redis lock) to serialize merge/split per person_id
 - If atomicity proves insufficient, consider introducing MariaDB for `merge_audits` only, with ClickHouse for read-path
 
-### REC-IR-02: bootstrap_inputs incremental watermark (Phase 2)
+### REC-IR-02: identity_inputs incremental watermark (Phase 2)
 
-BootstrapJob tracks "last run" position to process only new `bootstrap_inputs` rows. Recommended mechanism: dbt incremental model with `_synced_at` as the cursor column, using ClickHouse `ReplacingMergeTree` to ensure idempotent re-processing. Store the high-watermark in a dedicated ClickHouse table (`bootstrap_watermarks`) keyed by `(insight_tenant_id, job_name)`, updated atomically at end of each successful run.
+BootstrapJob tracks "last run" position to process only new `identity_inputs` rows. Recommended mechanism: dbt incremental model with `_synced_at` as the cursor column, using ClickHouse `ReplacingMergeTree` to ensure idempotent re-processing. Store the high-watermark in a dedicated ClickHouse table (`bootstrap_watermarks`) keyed by `(insight_tenant_id, job_name)`, updated atomically at end of each successful run.
 
 ### REC-IR-03: Shared unmapped table for all domains — RESOLVED
 
 **Decision**: Use a single shared `unmapped` table (owned by IR domain) for both alias-level and person-attribute-level unmapped observations. See [ADR-0001: Shared unmapped table](../../person/specs/ADR/0001-shared-unmapped-table.md) (`cpt-ir-adr-shared-unmapped`) for full rationale.
 
-Reason: identical structure (both carry `insight_tenant_id`, `insight_source_id`, `insight_source_type`, `source_account_id`, `alias_type`, `alias_value`) and common data origin (`bootstrap_inputs`). Differentiation by `alias_type` values is sufficient — identity alias types (`email`, `username`, `employee_id`, `platform_id`) vs person-attribute types (`display_name`, `role`, `location`, etc.). No separate `person_unmapped` table needed.
+Reason: identical structure (both carry `insight_tenant_id`, `insight_source_id`, `insight_source_type`, `source_account_id`, `alias_type`, `alias_value`) and common data origin (`identity_inputs`). Differentiation by `alias_type` values is sufficient — identity alias types (`email`, `username`, `employee_id`, `platform_id`) vs person-attribute types (`display_name`, `role`, `location`, etc.). No separate `person_unmapped` table needed.
 
 ### REC-IR-04: Temporary `insight_tenant_id` derivation via sipHash128 (Phase 1)
 
@@ -1203,14 +1203,14 @@ Phase 1 seed models derive `insight_tenant_id` (UUID) from the Bronze string `te
 **Why temporary**: The PR #55 convention requires `insight_tenant_id` to be a real UUIDv7 foreign key referencing a future `tenants` table. Until that table exists, there is no authoritative UUID to look up, so a deterministic hash ensures:
 - The same Bronze `tenant_id` always produces the same UUID across all seed models.
 - No collision risk within realistic tenant counts (sipHash128 is 128-bit).
-- The value is query-joinable across `persons`, `aliases`, and `bootstrap_inputs`.
+- The value is query-joinable across `persons`, `aliases`, and `identity_inputs`.
 
 **Migration path**: When the `tenants` table is created, replace all `UUIDNumToString(sipHash128(...))` calls with a lookup join (e.g., `JOIN tenants t ON t.external_id = cm.tenant_id`). All affected files are marked with `-- TEMPORARY: sipHash128` comments. Search: `grep -r "TEMPORARY.*sipHash128" src/ingestion/dbt/identity/`.
 
 **Affected files** (Phase 1 seed):
 - `seed_persons_from_cursor.sql`, `seed_persons_from_claude_admin.sql` — compute the hash
 - `seed_aliases_from_cursor.sql`, `seed_aliases_from_claude_admin.sql` — use it in tenant-scoped JOINs
-- `seed_bootstrap_inputs_from_cursor.sql`, `seed_bootstrap_inputs_from_claude_admin.sql` — compute the hash
+- `seed_identity_inputs_from_cursor.sql`, `seed_identity_inputs_from_claude_admin.sql` — compute the hash
 - `scripts/adhoc/seed_from_cursor_manual.sql`, `scripts/adhoc/seed_from_claude_admin_manual.sql` — ad-hoc Play UI testing SQL (point-in-time snapshots, not kept in sync with dbt models)
 
 ## 6. Traceability

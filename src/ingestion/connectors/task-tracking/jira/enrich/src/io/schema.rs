@@ -9,6 +9,7 @@ use clickhouse::Row;
 use serde::Deserialize;
 
 const REQUIRED_FIELD_HISTORY_COLUMNS: &[&str] = &[
+    "unique_key",
     "insight_source_id",
     "data_source",
     "issue_id",

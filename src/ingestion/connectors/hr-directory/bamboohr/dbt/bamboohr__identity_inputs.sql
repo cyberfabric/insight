@@ -2,10 +2,10 @@
     materialized='incremental',
     incremental_strategy='append',
     schema='staging',
-    tags=['bamboohr', 'silver', 'silver:bootstrap_inputs']
+    tags=['bamboohr', 'silver', 'silver:identity_inputs']
 ) }}
 
-{{ bootstrap_inputs_from_history(
+{{ identity_inputs_from_history(
     fields_history_ref=ref('bamboohr__employees_fields_history'),
     source_type='bamboohr',
     identity_fields=[

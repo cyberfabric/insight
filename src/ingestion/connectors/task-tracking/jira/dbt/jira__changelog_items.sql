@@ -1,9 +1,10 @@
+-- depends_on: {{ ref('jira__bronze_promoted') }}
 {{ config(
     materialized='table',
     alias='jira_changelog_items',
     schema='staging',
-    engine='MergeTree()',
-    order_by='(insight_source_id, id_readable, created_at, changelog_id, field_id)',
+    engine='ReplacingMergeTree(_version)',
+    order_by=['unique_key'],
     settings={'allow_nullable_key': 1},
     tags=['staging', 'jira']
 ) }}
@@ -64,7 +65,17 @@ parsed AS (
 )
 -- Dedup duplicates within a single changelog: Jira sometimes emits the same (fieldId, from/to)
 -- twice in one items[] array. Group by the natural content-identity key.
+-- `unique_key` encodes the same content-identity so silver/RMT dedup works on a single column.
 SELECT
+    CAST(concat(
+        coalesce(insight_source_id, ''), '-',
+        coalesce(changelog_id, ''), '-',
+        coalesce(field_id, ''), '-',
+        coalesce(value_from, ''), '-',
+        coalesce(value_from_string, ''), '-',
+        coalesce(value_to, ''), '-',
+        coalesce(value_to_string, '')
+    ) AS String) AS unique_key,
     insight_source_id,
     any(tenant_id)          AS tenant_id,
     id_readable,

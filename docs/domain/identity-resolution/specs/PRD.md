@@ -77,7 +77,7 @@ Insight connects to 10+ external platforms (GitLab, GitHub, Jira, YouTrack, Bamb
 |---|---|
 | Alias | An `(alias_type, alias_value)` pair identifying a person in a specific source system (e.g., `email:anna@acme.com`) |
 | Alias type | Category of identity signal: `email`, `username`, `employee_id`, `display_name`, `platform_id` |
-| Bootstrap input | A row in `bootstrap_inputs` representing one changed alias observation from one connector |
+| Bootstrap input | A row in `identity_inputs` representing one changed alias observation from one connector |
 | Confidence score | Numeric value (0.0–1.0) representing the MatchingEngine's certainty that an alias belongs to a person |
 | Auto-link | Automatic creation of an alias mapping when confidence >= 1.0 |
 | Unmapped alias | An alias that could not be resolved above the confidence threshold; queued for operator review |
@@ -111,13 +111,13 @@ Insight connects to 10+ external platforms (GitLab, GitHub, Jira, YouTrack, Bamb
 
 **ID**: `cpt-ir-actor-connector`
 
-**Role**: External system connector (e.g., BambooHR, GitLab, Jira) that syncs data from source platforms. Writes alias observations to `bootstrap_inputs` during its sync pipeline, providing raw identity signals for resolution.
+**Role**: External system connector (e.g., BambooHR, GitLab, Jira) that syncs data from source platforms. Writes alias observations to `identity_inputs` during its sync pipeline, providing raw identity signals for resolution.
 
 #### BootstrapJob
 
 **ID**: `cpt-ir-actor-bootstrap-job`
 
-**Role**: Scheduled job (Argo Workflow) that reads unprocessed rows from `bootstrap_inputs`, normalizes alias values, evaluates matching rules, and creates or updates entries in the `aliases` table. Runs after each connector sync cycle.
+**Role**: Scheduled job (Argo Workflow) that reads unprocessed rows from `identity_inputs`, normalizes alias values, evaluates matching rules, and creates or updates entries in the `aliases` table. Runs after each connector sync cycle.
 
 #### MatchingEngine
 
@@ -148,7 +148,7 @@ Insight connects to 10+ external platforms (GitLab, GitHub, Jira, YouTrack, Bamb
 
 ### 4.1 In Scope
 
-- Bootstrap mechanism: `bootstrap_inputs` ingestion, BootstrapJob processing pipeline
+- Bootstrap mechanism: `identity_inputs` ingestion, BootstrapJob processing pipeline
 - Alias store: `aliases` table, alias CRUD, temporal ownership tracking
 - Resolution API: hot-path and cold-path alias-to-person resolution
 - Matching engine: configurable `match_rules`, confidence scoring, normalization pipeline
@@ -221,9 +221,9 @@ The system **MUST** isolate alias data by `insight_tenant_id`. A resolution requ
 
 - [x] `p1` - **ID**: `cpt-ir-fr-accept-bootstrap-inputs`
 
-The system **MUST** accept alias observation records into the `bootstrap_inputs` table. Each record **MUST** include: `insight_tenant_id`, `insight_source_id`, `insight_source_type`, `source_account_id`, `alias_type`, `alias_value`, `alias_field_name`, `operation_type` (UPSERT or DELETE).
+The system **MUST** accept alias observation records into the `identity_inputs` table. Each record **MUST** include: `insight_tenant_id`, `insight_source_id`, `insight_source_type`, `source_account_id`, `alias_type`, `alias_value`, `alias_field_name`, `operation_type` (UPSERT or DELETE).
 
-**Rationale**: Connectors need a uniform write target for identity signals. The `bootstrap_inputs` table decouples connector sync from alias resolution timing.
+**Rationale**: Connectors need a uniform write target for identity signals. The `identity_inputs` table decouples connector sync from alias resolution timing.
 
 **Actors**: `cpt-ir-actor-connector`
 
@@ -231,7 +231,7 @@ The system **MUST** accept alias observation records into the `bootstrap_inputs`
 
 - [x] `p1` - **ID**: `cpt-ir-fr-bootstrap-incremental`
 
-The BootstrapJob **MUST** process `bootstrap_inputs` rows incrementally, reading only rows with `_synced_at` greater than the last processing watermark. It **MUST** update the watermark after each successful run.
+The BootstrapJob **MUST** process `identity_inputs` rows incrementally, reading only rows with `_synced_at` greater than the last processing watermark. It **MUST** update the watermark after each successful run.
 
 **Rationale**: Connectors sync continuously; the bootstrap pipeline must process only new observations to avoid re-processing the entire history on each run.
 
@@ -241,7 +241,7 @@ The BootstrapJob **MUST** process `bootstrap_inputs` rows incrementally, reading
 
 - [ ] `p1` - **ID**: `cpt-ir-fr-normalize-aliases`
 
-The BootstrapJob **MUST** normalize alias values before matching: `email` and `username` types **MUST** be lowercased and trimmed; all other types **MUST** be trimmed. Raw values in `bootstrap_inputs` **MUST** be preserved unchanged.
+The BootstrapJob **MUST** normalize alias values before matching: `email` and `username` types **MUST** be lowercased and trimmed; all other types **MUST** be trimmed. Raw values in `identity_inputs` **MUST** be preserved unchanged.
 
 **Rationale**: Case differences and whitespace in emails/usernames cause false negatives in matching. Normalization ensures consistent lookups.
 
@@ -281,7 +281,7 @@ When an alias already exists in the `aliases` table for the same `(alias_type, a
 
 - [ ] `p1` - **ID**: `cpt-ir-fr-bootstrap-idempotent`
 
-Re-running the BootstrapJob on the same `bootstrap_inputs` data **MUST NOT** create duplicate alias records. The system **MUST** deduplicate on the natural key `(insight_tenant_id, alias_type, alias_value, insight_source_id)`.
+Re-running the BootstrapJob on the same `identity_inputs` data **MUST NOT** create duplicate alias records. The system **MUST** deduplicate on the natural key `(insight_tenant_id, alias_type, alias_value, insight_source_id)`.
 
 **Rationale**: Connector retries and Argo Workflow restarts must be safe. Duplicate aliases would corrupt resolution results and inflate metrics.
 
@@ -431,7 +431,7 @@ The system **MUST** resolve a single alias to `person_id` via the hot path in < 
 
 - [ ] `p1` - **ID**: `cpt-ir-nfr-bootstrap-throughput`
 
-The BootstrapJob **MUST** process at least 100,000 `bootstrap_inputs` rows per run within 30 minutes.
+The BootstrapJob **MUST** process at least 100,000 `identity_inputs` rows per run within 30 minutes.
 
 **Threshold**: >= 100K rows processed in <= 30 min on standard cluster resources (0.5 CPU, 512 MB RAM).
 
@@ -533,7 +533,7 @@ Every merge operation **MUST** be fully reversible via split. After a merge-then
 
 **Protocol/Format**: ClickHouse INSERT (native protocol or HTTP interface)
 
-**Description**: Connectors **MUST** write alias observations to the `bootstrap_inputs` table with all required fields (`insight_tenant_id`, `insight_source_id`, `insight_source_type`, `source_account_id`, `alias_type`, `alias_value`, `alias_field_name`, `operation_type`). The `alias_field_name` **MUST** be fully-qualified: `bronze_{descriptor.name}.{table}.{field}[.json_path]`.
+**Description**: Connectors **MUST** write alias observations to the `identity_inputs` table with all required fields (`insight_tenant_id`, `insight_source_id`, `insight_source_type`, `source_account_id`, `alias_type`, `alias_value`, `alias_field_name`, `operation_type`). The `alias_field_name` **MUST** be fully-qualified: `bronze_{descriptor.name}.{table}.{field}[.json_path]`.
 
 **Compatibility**: Additive columns are backward-compatible. Removing or renaming required columns is a breaking change.
 
@@ -560,12 +560,12 @@ Every merge operation **MUST** be fully reversible via split. After a merge-then
 **Actor**: `cpt-ir-actor-bootstrap-job`, `cpt-ir-actor-connector`
 
 **Preconditions**:
-- Connector has completed a sync and written rows to `bootstrap_inputs`
+- Connector has completed a sync and written rows to `identity_inputs`
 - BootstrapJob is triggered (Argo Workflow post-sync)
 - Person records exist in person domain (seeded by dbt or previous bootstrap)
 
 **Main Flow**:
-1. BootstrapJob reads `bootstrap_inputs` rows where `_synced_at > last_watermark`
+1. BootstrapJob reads `identity_inputs` rows where `_synced_at > last_watermark`
 2. For each row, normalize `alias_value` (lowercase/trim for email/username)
 3. Look up existing alias in `aliases` for `(tenant, alias_type, normalized_value)`
 4. If alias exists for same person: update `last_observed_at`
@@ -694,7 +694,7 @@ Every merge operation **MUST** be fully reversible via split. After a merge-then
 ## 9. Acceptance Criteria
 
 - [ ] Aliases seeded from HR Bronze data are resolvable via `POST /resolve` within Phase 1 deployment
-- [ ] BootstrapJob processes 100K `bootstrap_inputs` rows and creates correct aliases without duplicates
+- [ ] BootstrapJob processes 100K `identity_inputs` rows and creates correct aliases without duplicates
 - [ ] >= 80% of aliases are auto-resolved (confidence >= 1.0) after BootstrapJob runs on typical connector data
 - [ ] Unmapped aliases appear in operator queue with correct suggestions
 - [ ] No fuzzy rule (Phase B3) produces an auto-linked alias under any input
@@ -711,9 +711,9 @@ Every merge operation **MUST** be fully reversible via split. After a merge-then
 |---|---|---|
 | ClickHouse 24.x+ | Storage engine for all identity resolution tables; `generateUUIDv7()` support required | `p1` |
 | Person domain (`persons` table) | Provides `person_id` targets for alias mapping; identity resolution does not create persons | `p1` |
-| dbt models (Bronze → Silver) | Populate `bootstrap_inputs` during connector sync transformations | `p1` |
+| dbt models (Bronze → Silver) | Populate `identity_inputs` during connector sync transformations | `p1` |
 | Argo Workflows | Orchestrates BootstrapJob scheduling and execution on Kind K8s | `p1` |
-| Connector sync pipeline | Writes alias observations to `bootstrap_inputs`; must conform to write contract | `p1` |
+| Connector sync pipeline | Writes alias observations to `identity_inputs`; must conform to write contract | `p1` |
 | Person domain (person creation API) | Operator needs to create new persons when linking unmapped aliases to new identities | `p2` |
 
 ---
@@ -721,7 +721,7 @@ Every merge operation **MUST** be fully reversible via split. After a merge-then
 ## 11. Assumptions
 
 - Person records are created by the person domain (dbt seed in Phase 1, API in later phases) before identity resolution links aliases to them. Identity resolution does not create persons.
-- Connectors conform to the `bootstrap_inputs` write contract and provide accurate `alias_field_name` values.
+- Connectors conform to the `identity_inputs` write contract and provide accurate `alias_field_name` values.
 - ClickHouse 24.x+ is available in all deployment environments with `generateUUIDv7()` support.
 - The five alias types (`email`, `username`, `employee_id`, `display_name`, `platform_id`) cover all current connector identity signals. New types can be added as configuration without schema changes.
 - HR source data (BambooHR, Workday) provides the most reliable identity anchors for initial seeding.
@@ -734,7 +734,7 @@ Every merge operation **MUST** be fully reversible via split. After a merge-then
 | Risk | Impact | Mitigation |
 |---|---|---|
 | ClickHouse lacks ACID transactions for merge/split (late phase — not yet implemented) | Partial state possible if operation fails mid-execution | See DESIGN §5 REC-IR-01: advisory locking + idempotent operations; retry-safe design |
-| Connector writes malformed `bootstrap_inputs` rows | BootstrapJob fails or creates incorrect aliases | Write contract validation at ingestion; malformed rows logged and skipped |
+| Connector writes malformed `identity_inputs` rows | BootstrapJob fails or creates incorrect aliases | Write contract validation at ingestion; malformed rows logged and skipped |
 | Person domain unavailable during bootstrap | BootstrapJob cannot resolve new identities to person records | Route to `unmapped` queue; retry on next run when person domain is available |
 | False-negative matching (too conservative) | Legitimate aliases stuck in unmapped queue; operator burden increases | Monitor unmapped rate; tune B2 rules for cross-system matching |
 | ClickHouse ReplacingMergeTree dedup delay | Duplicate alias rows visible briefly before background merge | Application-level dedup check on read; FINAL keyword for critical queries |

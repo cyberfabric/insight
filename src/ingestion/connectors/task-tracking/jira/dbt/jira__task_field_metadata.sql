@@ -1,10 +1,11 @@
+-- depends_on: {{ ref('jira__bronze_promoted') }}
 {{ config(
     materialized='incremental',
     alias='jira__task_field_metadata',
     incremental_strategy='append',
     schema='staging',
     engine='ReplacingMergeTree(_version)',
-    order_by='(insight_source_id, data_source, field_id, project_key)',
+    order_by=['unique_key'],
     settings={'allow_nullable_key': 1},
     tags=['jira', 'silver:class_task_field_metadata']
 ) }}
@@ -21,6 +22,7 @@
 -- merge (keeping the newest).
 
 SELECT
+    f.unique_key                                  AS unique_key,
     COALESCE(f.source_id, '')                     AS insight_source_id,
     CAST('jira' AS String)                        AS data_source,
     CAST(NULL AS Nullable(String))                AS project_key,

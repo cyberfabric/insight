@@ -5,7 +5,7 @@ name = "InsightSpec"
 slug = "insightspec"
 kit = "sdlc"
 codebase = ["docs"]
-children = ["ir", "person", "orgchart", "metric-cat"]
+children = ["ir", "person", "orgchart", "metric-cat", "dataflow"]
 
 [[systems.artifacts]]
 kind = "DESIGN"
@@ -514,6 +514,43 @@ kind = "PRD"
 path = "docs/domain/org-chart/specs/PRD.md"
 name = "Org-Chart Domain PRD"
 traceability = "DOCS-ONLY"
+
+[[systems]]
+name = "Ingestion Data Flow"
+slug = "dataflow"
+kit = "sdlc"
+codebase = ["docs/domain/ingestion-data-flow", "src/ingestion"]
+children = []
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/ingestion-data-flow/specs/DESIGN.md"
+name = "Ingestion Data Flow Design"
+traceability = "FULL"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/ingestion-data-flow/specs/ADR/0001-rmt-with-version-and-unique-key.md"
+name = "ADR-0001: ReplacingMergeTree(_version) + ORDER BY (unique_key)"
+traceability = "FULL"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/ingestion-data-flow/specs/ADR/0002-promote-bronze-to-rmt.md"
+name = "ADR-0002: Promote bronze MergeTree → RMT on first dbt run"
+traceability = "FULL"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/ingestion-data-flow/specs/ADR/0003-ephemeral-rust-passthrough.md"
+name = "ADR-0003: Ephemeral materialization for Rust-owned staging pass-through"
+traceability = "FULL"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/ingestion-data-flow/specs/ADR/0004-unique-key-formula.md"
+name = "ADR-0004: unique_key formula"
+traceability = "FULL"
 
 [[systems]]
 name = "Metric Catalog"

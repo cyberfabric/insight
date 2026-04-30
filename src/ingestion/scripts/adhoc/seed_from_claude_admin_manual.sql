@@ -13,7 +13,7 @@
 -- Raw SQL equivalents of dbt models:
 --   seed_persons_from_claude_admin.sql
 --   seed_aliases_from_claude_admin.sql
---   seed_bootstrap_inputs_from_claude_admin.sql
+--   seed_identity_inputs_from_claude_admin.sql
 -- ============================================================
 
 -- TEMPORARY: insight_tenant_id derived via sipHash128 until tenants table exists.
@@ -116,10 +116,10 @@ LEFT ANTI JOIN identity.aliases existing
 
 
 -- ============================================================
--- Step 3: Add bootstrap_inputs from Claude Admin (raw observations)
+-- Step 3: Add identity_inputs from Claude Admin (raw observations)
 -- ============================================================
 
-INSERT INTO identity.bootstrap_inputs (
+INSERT INTO identity.identity_inputs (
     id, insight_tenant_id, insight_source_type, source_account_id,
     alias_type, alias_value, alias_field_name, operation_type
 )
@@ -158,7 +158,7 @@ SELECT
     o.alias_field_name,
     'UPSERT'
 FROM observations o
-LEFT ANTI JOIN identity.bootstrap_inputs existing
+LEFT ANTI JOIN identity.identity_inputs existing
     ON  o.alias_type              = existing.alias_type
     AND o.alias_value             = existing.alias_value
     AND o.source_account_id       = existing.source_account_id
@@ -175,8 +175,8 @@ LEFT ANTI JOIN identity.bootstrap_inputs existing
 -- Check aliases by source
 -- SELECT insight_source_type, alias_type, count() FROM identity.aliases GROUP BY insight_source_type, alias_type ORDER BY insight_source_type, alias_type;
 
--- Check bootstrap_inputs by source
--- SELECT insight_source_type, alias_type, count() FROM identity.bootstrap_inputs GROUP BY insight_source_type, alias_type ORDER BY insight_source_type, alias_type;
+-- Check identity_inputs by source
+-- SELECT insight_source_type, alias_type, count() FROM identity.identity_inputs GROUP BY insight_source_type, alias_type ORDER BY insight_source_type, alias_type;
 
 -- Check a specific person's aliases across sources
 -- SELECT p.display_name, a.alias_type, a.alias_value, a.insight_source_type, a.alias_field_name

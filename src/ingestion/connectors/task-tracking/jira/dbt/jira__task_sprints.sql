@@ -1,18 +1,20 @@
+-- depends_on: {{ ref('jira__bronze_promoted') }}
 {{ config(
-    materialized='incremental',
+    materialized='view',
     alias='jira__task_sprints',
-    incremental_strategy='append',
     schema='staging',
-    engine='ReplacingMergeTree(_version)',
-    order_by='(insight_source_id, data_source, sprint_id)',
-    settings={'allow_nullable_key': 1},
     tags=['jira', 'silver:class_task_sprints']
 ) }}
+
+-- View, not table: bronze `jira_sprints` is MergeTree (full_refresh + overwrite),
+-- so the current state of bronze is the current state of staging — no incremental
+-- accumulation needed. Silver `class_task_sprints` is RMT(_version), reads via FINAL.
 
 -- Bronze `jira_sprints` doesn't carry `board_name` or `project_key` (Phase 1 SubstreamPartitionRouter
 -- limitation per jira/jira.md). Left NULL here.
 
 SELECT
+    s.unique_key                                AS unique_key,
     s.source_id                                 AS insight_source_id,
     CAST('jira' AS String)                      AS data_source,
     toString(s.sprint_id)                       AS sprint_id,

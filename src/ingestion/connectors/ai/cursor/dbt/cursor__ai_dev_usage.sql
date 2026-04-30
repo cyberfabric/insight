@@ -19,7 +19,9 @@
 -- tapped by a separate staging model if ever needed.
 {{ config(
     materialized='incremental',
+    incremental_strategy='append',
     unique_key='unique_key',
+    engine='ReplacingMergeTree(_version)',
     order_by=['unique_key'],
     settings={'allow_nullable_key': 1},
     schema='staging',
@@ -52,7 +54,8 @@ SELECT
     CAST(NULL AS Nullable(UInt32))                  AS cost_cents,
     'cursor'                                        AS source,
     'insight_cursor'                                AS data_source,
-    CAST(_airbyte_extracted_at AS Nullable(DateTime64(3))) AS collected_at
+    CAST(_airbyte_extracted_at AS Nullable(DateTime64(3))) AS collected_at,
+    toUnixTimestamp64Milli(_airbyte_extracted_at)          AS _version
 FROM {{ source('bronze_cursor', 'cursor_daily_usage') }}
 WHERE isActive = true
   AND email IS NOT NULL

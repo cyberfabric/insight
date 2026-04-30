@@ -18,6 +18,12 @@ use serde::Serialize;
 /// enum value, not the string label).
 #[derive(Row, Serialize, Debug)]
 pub struct FieldHistoryInsert {
+    /// Project-wide convention key for ReplacingMergeTree dedup. Synthesized from
+    /// (insight_source_id, data_source, id_readable, field_id, event_id) — these
+    /// five components together uniquely identify one (issue × field × event)
+    /// per ADR-005. Same formula as connector AddFields would produce if the
+    /// staging table were Airbyte-managed.
+    pub unique_key: String,
     pub insight_source_id: String,
     pub data_source: String,
     pub issue_id: String,
@@ -44,13 +50,20 @@ pub struct FieldHistoryInsert {
     pub _version: u64,
 }
 
+// @cpt-principle:cpt-dataflow-principle-unique-key-formula:p1
 impl From<FieldHistoryRecord> for FieldHistoryInsert {
     fn from(r: FieldHistoryRecord) -> Self {
         let collected_at = Utc::now();
         let version = u64::try_from(collected_at.timestamp_millis().max(0)).unwrap_or(0);
+        let data_source = data_source_str(r.data_source);
+        let unique_key = format!(
+            "{}-{}-{}-{}-{}",
+            r.insight_source_id, data_source, r.id_readable, r.field_id, r.event_id
+        );
         Self {
+            unique_key,
             insight_source_id: r.insight_source_id,
-            data_source: data_source_str(r.data_source).into(),
+            data_source: data_source.into(),
             issue_id: r.issue_id,
             id_readable: r.id_readable,
             event_id: r.event_id,

@@ -1,11 +1,11 @@
-{% macro bootstrap_inputs_from_history(
+{% macro identity_inputs_from_history(
     fields_history_ref,
     source_type,
     identity_fields,
     deactivation_condition
 ) %}
 {#
-  Generates bootstrap_inputs rows from a fields_history model.
+  Generates identity_inputs rows from a fields_history model.
   Produces UPSERT rows for identity-relevant field changes, and DELETE rows
   for all identity fields when a deactivation condition is met.
 
@@ -26,9 +26,14 @@
                             field_name, old_value, new_value, updated_at.
                             Example: "field_name = 'status' AND new_value = 'Inactive'"
 
-  Output columns (match bootstrap_inputs schema):
-    insight_tenant_id, insight_source_id, insight_source_type, source_account_id,
-    alias_type, alias_value, alias_field_name, operation_type, _synced_at
+  Output columns (match identity_inputs schema):
+    unique_key, insight_tenant_id, insight_source_id, insight_source_type,
+    source_account_id, alias_type, alias_value, alias_field_name,
+    operation_type, _synced_at, _version
+
+  unique_key is `{tenant}-{source_type}-{source_account_id}-{alias_type}-{operation}-{updated_at_ms}`
+  — uniquely identifies one observation event. RMT(_version) deduplicates true
+  duplicates (same observation re-emitted) on background merge.
 #}
 
 WITH history AS (
@@ -43,6 +48,14 @@ WITH history AS (
 upserts AS (
     {% for f in identity_fields %}
     SELECT
+        CAST(concat(
+            coalesce(tenant_id, ''), '-',
+            '{{ source_type }}', '-',
+            coalesce(entity_id, ''), '-',
+            '{{ f.alias_type }}', '-',
+            'UPSERT-',
+            toString(toUnixTimestamp64Milli(updated_at))
+        ) AS String) AS unique_key,
         tenant_id AS insight_tenant_id,
         source_id AS insight_source_id,
         '{{ source_type }}' AS insight_source_type,
@@ -51,7 +64,8 @@ upserts AS (
         new_value AS alias_value,
         '{{ f.alias_field_name }}' AS alias_field_name,
         'UPSERT' AS operation_type,
-        updated_at AS _synced_at
+        updated_at AS _synced_at,
+        toUnixTimestamp64Milli(updated_at) AS _version
     FROM history
     WHERE field_name = '{{ f.field }}'
       AND new_value != ''
@@ -73,6 +87,14 @@ deactivation_events AS (
 deletes AS (
     {% for f in identity_fields %}
     SELECT
+        CAST(concat(
+            coalesce(d.tenant_id, ''), '-',
+            '{{ source_type }}', '-',
+            coalesce(d.entity_id, ''), '-',
+            '{{ f.alias_type }}', '-',
+            'DELETE-',
+            toString(toUnixTimestamp64Milli(d.updated_at))
+        ) AS String) AS unique_key,
         d.tenant_id AS insight_tenant_id,
         d.source_id AS insight_source_id,
         '{{ source_type }}' AS insight_source_type,
@@ -81,7 +103,8 @@ deletes AS (
         '' AS alias_value,
         '{{ f.alias_field_name }}' AS alias_field_name,
         'DELETE' AS operation_type,
-        d.updated_at AS _synced_at
+        d.updated_at AS _synced_at,
+        toUnixTimestamp64Milli(d.updated_at) AS _version
     FROM deactivation_events d
     {{ 'UNION ALL' if not loop.last }}
     {% endfor %}

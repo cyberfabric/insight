@@ -1,14 +1,14 @@
--- Phase 1 (Initial Seed): Cursor members → identity.bootstrap_inputs
+-- Phase 1 (Initial Seed): Cursor members → identity.identity_inputs
 -- One-time seed. Writes raw alias observations from Cursor Bronze data.
 -- Raw values preserved — normalization applied at read time by BootstrapJob.
 -- Idempotent: skips rows that already exist (by source + alias_type + alias_value + account).
 -- Source: docs/domain/identity-resolution/specs/DECOMPOSITION.md §2.1
 --
--- Run: dbt run --select seed_bootstrap_inputs_from_cursor
+-- Run: dbt run --select seed_identity_inputs_from_cursor
 --
 -- NOTE: schema='staging' is intentional. Unlike persons/aliases which write
--- directly to canonical tables, bootstrap_inputs uses a multi-source union
--- pattern: each source writes to staging.*, then identity.bootstrap_inputs
+-- directly to canonical tables, identity_inputs uses a multi-source union
+-- pattern: each source writes to staging.*, then identity.identity_inputs
 -- (VIEW) aggregates them via union_by_tag. Consistent with bamboohr/zoom
 -- connector models that also target staging.
 
@@ -16,11 +16,11 @@
     materialized='incremental',
     incremental_strategy='append',
     schema='staging',
-    tags=['identity:seed', 'silver', 'silver:bootstrap_inputs']
+    tags=['identity:seed', 'silver', 'silver:identity_inputs']
 ) }}
 
 -- Each cursor member emits up to 3 observation rows: email, platform_id, display_name.
--- Column set matches bootstrap_inputs_from_history macro output.
+-- Column set matches identity_inputs_from_history macro output.
 -- TEMPORARY: insight_tenant_id derived via sipHash128 until tenants table exists.
 
 WITH source AS (
@@ -80,7 +80,18 @@ observations AS (
     WHERE name IS NOT NULL AND name != ''
 )
 
-SELECT o.* FROM observations o
+SELECT
+    CAST(concat(
+        coalesce(o.insight_tenant_id, ''), '-',
+        o.insight_source_type, '-',
+        coalesce(o.source_account_id, ''), '-',
+        o.alias_type, '-',
+        o.operation_type, '-',
+        toString(toUnixTimestamp64Milli(o._synced_at))
+    ) AS String) AS unique_key,
+    o.*,
+    toUnixTimestamp64Milli(o._synced_at) AS _version
+FROM observations o
 {% if is_incremental() %}
 LEFT ANTI JOIN {{ this }} existing
     ON  o.alias_type          = existing.alias_type
