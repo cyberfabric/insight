@@ -312,6 +312,9 @@ apiGateway:
         # URL (no template syntax) to point at an external service.
         upstream: 'http://{{ .Release.Name }}-analytics-api:8081'
         public: false
+      - prefix: "/identity-resolution"
+        upstream: 'http://{{ .Release.Name }}-identity-resolution:8082'
+        public: false
 
 # ─── Analytics API ───────────────────────────────────────────────────────
 analyticsApi:

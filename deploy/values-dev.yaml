@@ -32,3 +32,9 @@ apiGateway:
   replicaCount: 1
 analyticsApi:
   replicaCount: 1
+
+# Identity Resolution stub is OFF by default in the umbrella (crashloops
+# without populated bronze_bamboohr.employees data). Enable it for dev
+# so the route added under apiGateway.proxy.routes has a live upstream.
+identityResolution:
+  deploy: true

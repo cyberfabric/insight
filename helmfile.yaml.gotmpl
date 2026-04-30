@@ -11,9 +11,15 @@
 ##   - OrbStack (or any local K8s)
 ##   - helmfile, helm, helm-diff plugin
 ##   - Docker images built locally:
-##       docker build -t insight-api-gateway:local   -f src/backend/services/api-gateway/Dockerfile  src/backend/
-##       docker build -t insight-analytics-api:local  -f src/backend/services/analytics-api/Dockerfile src/backend/
-##       docker build -t insight-frontend:local       -f src/frontend/Dockerfile ../insight-front
+##       docker build -t insight-api-gateway:local           -f src/backend/services/api-gateway/Dockerfile  src/backend/
+##       docker build -t insight-analytics-api:local         -f src/backend/services/analytics-api/Dockerfile src/backend/
+##       docker build -t insight-identity-resolution:local   -f src/backend/services/identity/Dockerfile      src/backend/
+##       docker build -t insight-frontend:local              -f src/frontend/Dockerfile ../insight-front
+##
+##   - Service config Secrets (`insight-analytics-api-config`, `insight-identity-resolution-config`)
+##     present in the namespace. These are emitted by the umbrella chart on
+##     install — if you've never run the umbrella in this namespace, create
+##     them manually or run `./dev-up.sh` once.
 ##
 
 helmDefaults:
@@ -136,6 +142,20 @@ releases:
           password: {{ .Values.clickhouse.password | quote }}
         redis:
           url: "redis://redis-master:6379"
+
+  - name: identity-resolution
+    namespace: {{ .Values.namespace }}
+    chart: ./src/backend/services/identity/helm
+    labels:
+      tier: app
+    needs:
+      - {{ .Values.namespace }}/clickhouse
+    values:
+      - helmfile/values/identity-resolution.yaml
+      - image:
+          repository: insight-identity-resolution
+          tag: local
+          pullPolicy: IfNotPresent
 
   - name: frontend
     namespace: {{ .Values.namespace }}
