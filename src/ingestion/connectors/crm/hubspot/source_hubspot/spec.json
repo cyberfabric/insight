@@ -1,0 +1,88 @@
+{
+  "documentationUrl": "https://developers.hubspot.com/docs/api/overview",
+  "connectionSpecification": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "HubSpot Source",
+    "type": "object",
+    "required": [
+      "insight_tenant_id",
+      "insight_source_id",
+      "hubspot_access_token"
+    ],
+    "additionalProperties": true,
+    "properties": {
+      "insight_tenant_id": {
+        "type": "string",
+        "title": "Insight Tenant ID",
+        "description": "Tenant isolation identifier for the ingestion layer.",
+        "order": 0
+      },
+      "insight_source_id": {
+        "type": "string",
+        "title": "Insight Source ID",
+        "description": "Instance discriminator (e.g. 'hubspot-acme-prod').",
+        "examples": ["hubspot-acme-prod"],
+        "order": 1
+      },
+      "hubspot_access_token": {
+        "type": "string",
+        "title": "Private App Access Token",
+        "description": "HubSpot Private App access token. Create under Settings → Integrations → Private Apps. Token must have CRM + properties read scopes for every enabled stream.",
+        "airbyte_secret": true,
+        "order": 2
+      },
+      "hubspot_start_date": {
+        "type": "string",
+        "title": "Start Date",
+        "description": "UTC start for initial incremental sync. Accepts YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ. Records with updatedAt older than this are skipped on first run. Omit to fall back to 2 years before now.",
+        "anyOf": [
+          { "format": "date-time" },
+          { "format": "date" },
+          { "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" }
+        ],
+        "examples": ["2024-01-01", "2024-01-01T00:00:00Z"],
+        "order": 3
+      },
+      "hubspot_streams": {
+        "type": "array",
+        "items": { "type": "string" },
+        "title": "Streams Override",
+        "description": "Optional list of stream names to sync (e.g. contacts, companies, deals). Overrides the curated default. Use for per-tenant customization.",
+        "default": [],
+        "order": 4
+      },
+      "hubspot_stream_slice_step": {
+        "type": "string",
+        "title": "Stream Slice Step",
+        "description": "ISO-8601 duration for concurrent cursor slice width. Smaller = more parallelism, more API calls. Default P30D (30 days). Shrink to PT1H for large orgs that hit the 10k search-result cap inside a single time slice.",
+        "pattern": "^P(?:\\d+[YMWD])+(?:T(?:\\d+[HMS])+)?$|^PT(?:\\d+[HMS])+$",
+        "default": "P30D",
+        "order": 5
+      },
+      "hubspot_lookback_window": {
+        "type": "string",
+        "title": "Lookback Window",
+        "description": "ISO-8601 duration to re-read before the cursor position each sync (accounts for hs_lastmodifieddate eventual consistency on HubSpot Search). Default PT10M.",
+        "pattern": "^P(?:\\d+[YMWD])+(?:T(?:\\d+[HMS])+)?$|^PT(?:\\d+[HMS])+$",
+        "default": "PT10M",
+        "order": 6
+      },
+      "hubspot_num_workers": {
+        "type": "integer",
+        "title": "Concurrent Workers",
+        "description": "Max concurrent stream slice fetches. Clamped to [1, 50]. Default 20. HubSpot burst limits: 10 rps (standard) or 100 rps (Enterprise); search endpoint caps at 4 rps portal-wide.",
+        "default": 20,
+        "minimum": 1,
+        "maximum": 50,
+        "order": 7
+      },
+      "hubspot_include_archived": {
+        "type": "boolean",
+        "title": "Include Archived",
+        "description": "Include archived (soft-deleted) records in Bronze. Adds a second pass per object with archived=true. Default true for completeness.",
+        "default": true,
+        "order": 8
+      }
+    }
+  }
+}
