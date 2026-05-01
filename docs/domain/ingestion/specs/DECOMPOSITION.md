@@ -393,6 +393,9 @@ The Ingestion Layer DESIGN is decomposed into seven features organized around de
   - [ ] `p1` - `cpt-insightspec-dbtable-cn-bronze`
   - [ ] `p1` - `cpt-insightspec-dbtable-cn-staging`
   - [ ] `p1` - `cpt-insightspec-dbtable-cn-silver`
+  - [ ] `p1` - `cpt-insightspec-dbtable-ghcopilot-seats`
+  - [ ] `p1` - `cpt-insightspec-dbtable-ghcopilot-user-metrics`
+  - [ ] `p1` - `cpt-insightspec-dbtable-ghcopilot-org-metrics`
 
 - **Design Components**:
 

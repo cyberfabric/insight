@@ -238,9 +238,14 @@ path = "docs/components/connectors/ai/windsurf.md"
 name = "Windsurf Connector Specification"
 
 [[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/ai/github-copilot/specs/PRD.md"
+name = "GitHub Copilot Connector PRD"
+
+[[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/connectors/ai/github-copilot.md"
-name = "GitHub Copilot Connector Specification"
+path = "docs/components/connectors/ai/github-copilot/specs/DESIGN.md"
+name = "GitHub Copilot Connector Design"
 
 [[systems.artifacts]]
 kind = "DESIGN"

@@ -1,5 +1,7 @@
 # GitHub Copilot Connector Specification
 
+> ⚠️ **DEPRECATED** — This document describes Bronze tables based on the old `/orgs/{org}/copilot/metrics` endpoint, which was **decommissioned on 2026-04-02**. The active specification is the [PRD](specs/PRD.md). Bronze stream names have changed: `copilot_usage` → `copilot_org_metrics`, `copilot_usage_breakdown` removed, `copilot_user_metrics` added. OQ-COP-1 resolution is superseded — per-user daily metrics are now available via the new API. This file is retained for historical context only.
+
 > Version 1.0 — March 2026
 > Based on: `docs/CONNECTORS_REFERENCE.md` Source 15 (GitHub Copilot)
 
