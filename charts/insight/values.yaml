@@ -118,9 +118,18 @@ airbyte:
 # the cluster. If Argo is not installed, set enabled=false or the umbrella
 # will fail with `no matches for kind "WorkflowTemplate"`.
 #
+# `toolboxImage` and `jiraEnrichImage` are baked into the rendered
+# WorkflowTemplate as the input-parameter default. Submitters (api-gateway,
+# CronWorkflow YAML, run-sync.sh) can still override per-call, but in the
+# common case they just submit the workflow without specifying a tag and
+# get the operator-pinned version. NO `:latest` defaults — the validator
+# refuses to render when `templates.enabled=true` and these fields are
+# empty (single source of truth: the umbrella values overlay).
 ingestion:
   templates:
     enabled: true
+  toolboxImage: ""           # e.g. "ghcr.io/cyberfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  jiraEnrichImage: ""        # e.g. "ghcr.io/cyberfabric/insight-jira-enrich:2026.04.21.09.37-ccb013f"
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  INFRASTRUCTURE

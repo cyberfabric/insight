@@ -87,13 +87,22 @@ def state_pop(data, dotpath):
 state = load_state()
 
 # ---------------------------------------------------------------------------
+# Required cluster context (single-namespace model — operator must export)
+# ---------------------------------------------------------------------------
+INSIGHT_NAMESPACE = os.environ.get("INSIGHT_NAMESPACE")
+if not INSIGHT_NAMESPACE:
+    print("ERROR: INSIGHT_NAMESPACE env var must be set", file=sys.stderr)
+    print("       Set to the umbrella release namespace, e.g.:", file=sys.stderr)
+    print("           export INSIGHT_NAMESPACE=insight", file=sys.stderr)
+    sys.exit(1)
+
+# ---------------------------------------------------------------------------
 # Load tenant config
 # ---------------------------------------------------------------------------
 with open(tenant_config_path) as f:
     tenant = yaml.safe_load(f)
 
 tenant_id = tenant["tenant_id"]
-dest_config = tenant.get("destination", {})
 
 # ---------------------------------------------------------------------------
 # Airbyte API helpers
@@ -131,9 +140,10 @@ def api_get(path, data):
 # K8s Secret discovery
 # ---------------------------------------------------------------------------
 def discover_secrets():
-    """Discover Insight connector Secrets by label in 'data' namespace."""
+    """Discover Insight connector Secrets by label in the release namespace.
+    Single-namespace model — connector Secrets live alongside the umbrella."""
     result = subprocess.run(
-        ["kubectl", "get", "secrets", "-n", "data",
+        ["kubectl", "get", "secrets", "-n", INSIGHT_NAMESPACE,
          "-l", "app.kubernetes.io/part-of=insight", "-o", "json"],
         capture_output=True, text=True, timeout=30
     )
@@ -179,18 +189,20 @@ def discover_secrets():
     return secrets
 
 def resolve_clickhouse_password():
-    """Read password from env var, then K8s Secret. Fails if neither available."""
+    """Read CH password from env var, then from the umbrella's auto-generated
+    `insight-db-creds` Secret in the release namespace. Single-namespace model."""
     env_pass = os.environ.get("CLICKHOUSE_PASSWORD")
     if env_pass:
         return env_pass
     result = subprocess.run(
-        ["kubectl", "get", "secret", "clickhouse-credentials", "-n", "data",
-         "-o", "jsonpath={.data.password}"],
+        ["kubectl", "get", "secret", "insight-db-creds", "-n", INSIGHT_NAMESPACE,
+         "-o", "jsonpath={.data.clickhouse-password}"],
         capture_output=True, text=True, timeout=10
     )
     if result.returncode != 0 or not result.stdout.strip():
-        print("ERROR: clickhouse-credentials Secret not found in namespace 'data'", file=sys.stderr)
-        print("  Run: ./secrets/apply.sh --infra-only", file=sys.stderr)
+        print(f"ERROR: insight-db-creds Secret not found in namespace '{INSIGHT_NAMESPACE}'", file=sys.stderr)
+        print("  Either run `helm install insight ...` first (umbrella auto-creates this Secret)", file=sys.stderr)
+        print("  or pre-create it for BYO mode (see deploy/gitops/insight-values.example.yaml).", file=sys.stderr)
         sys.exit(1)
     return base64.b64decode(result.stdout.strip()).decode()
 
@@ -217,11 +229,17 @@ state_set(state, "destinations.clickhouse.definition_id", ch_def_id)
 # ---------------------------------------------------------------------------
 shared_dest_name = "clickhouse"
 shared_dest_id = state_get(state, "destinations.clickhouse.id")
+# RULE-DEFAULTS-OK: cluster ClickHouse coordinates are platform constants here.
+# `host` is derived from the operator-supplied INSIGHT_NAMESPACE following the
+# umbrella chart's service-name convention; `port`, `database`, and `username`
+# are ClickHouse-side protocol/built-in defaults, not insight policy. If a tenant
+# ever needs a non-standard CH instance, plumb it explicitly through the chart
+# rather than re-introducing a `dest_config.get(..., default)` fallback here.
 ch_config = {
-    "host": dest_config.get("host", "insight-clickhouse.insight.svc.cluster.local"),
-    "port": str(dest_config.get("port", 8123)),
+    "host": f"insight-clickhouse.{INSIGHT_NAMESPACE}.svc.cluster.local",
+    "port": "8123",
     "database": "default",
-    "username": dest_config.get("username", "default"),
+    "username": "default",
     "password": ch_password,
     "protocol": "http",
     "enable_json": True,

@@ -1,95 +1,113 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Submit an ingestion-pipeline Workflow for a single connector + tenant.
+#
+# Required env:
+#   KUBECONFIG          path to the insight cluster kubeconfig
+#   INSIGHT_NAMESPACE   release namespace of the umbrella chart
+#
+# Required args:
+#   <connector>         connector descriptor name (matches connectors/*/<name>/descriptor.yaml .name)
+#   <tenant_id>         tenant identifier
+# Optional args:
+#   <insight_source_id> when set, used directly; otherwise resolved from Secret annotations
+#                       insight.cyberfabric.com/{connector,tenant,source-id}
+#
+# All "infrastructure" parameters of the WorkflowTemplate (toolbox_image,
+# jira_enrich_image, airbyte_url, clickhouse_*) come from chart-rendered
+# defaults; this script only passes connection-specific inputs.
+
+: "${KUBECONFIG:?must be set, e.g. export KUBECONFIG=~/.kube/insight.kubeconfig}"
+: "${INSIGHT_NAMESPACE:?must be set to the umbrella release namespace, e.g. export INSIGHT_NAMESPACE=insight}"
+export KUBECONFIG INSIGHT_NAMESPACE
+
+CONNECTOR="${1:?Usage: $0 <connector> <tenant_id> [<insight_source_id>]}"
+TENANT="${2:?Usage: $0 <connector> <tenant_id> [<insight_source_id>]}"
+SOURCE_ID="${3:-}"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-CONNECTOR="${1:?Usage: $0 <connector> <tenant_id>}"
-TENANT="${2:?Usage: $0 <connector> <tenant_id>}"
+source "airbyte-toolkit/lib/state.sh"
+source "airbyte-toolkit/lib/secrets.sh"
 
-export KUBECONFIG="${KUBECONFIG:-${HOME}/.kube/insight.kubeconfig}"
-export TOOLKIT_DIR="${SCRIPT_DIR}/airbyte-toolkit"
-source "${TOOLKIT_DIR}/lib/state.sh"
-
-# Read connection_id from state — iterate source_ids under the connector
+# ─── Resolve connection_id from toolkit state ───────────────────────────
 CONNECTION_ID=""
 for source_key in $(state_list "tenants.${TENANT}.connectors.${CONNECTOR}"); do
   CONNECTION_ID=$(state_get "tenants.${TENANT}.connectors.${CONNECTOR}.${source_key}.connection_id")
   [[ -n "$CONNECTION_ID" ]] && break
 done
-[[ -n "$CONNECTION_ID" ]] || { echo "ERROR: no connection_id for connector '$CONNECTOR' tenant '$TENANT'. Run update-connections.sh first." >&2; exit 1; }
+[[ -n "$CONNECTION_ID" ]] || {
+  echo "ERROR: no connection_id for connector '$CONNECTOR' tenant '$TENANT'." >&2
+  echo "       Run update-connections.sh first." >&2
+  exit 1
+}
 
-# Find descriptor by connector name — try exact match, then prefix match
-DBT_SELECT=$(python3 -c "
-import yaml, pathlib, sys
-connector = '${CONNECTOR}'
-for p in sorted(pathlib.Path('connectors').rglob('descriptor.yaml')):
-    desc = yaml.safe_load(open(p))
-    name = desc.get('name', '')
-    if name == connector or connector.startswith(name + '-'):
-        print(desc.get('dbt_select', '+tag:silver'))
-        sys.exit(0)
-print('+tag:silver')
-" 2>/dev/null)
+# ─── Resolve insight_source_id from Secret annotations ──────────────────
+if [[ -z "$SOURCE_ID" ]]; then
+  SOURCE_ID=$(resolve_source_id "$CONNECTOR" "$TENANT")
+fi
+[[ -n "$SOURCE_ID" ]] || {
+  echo "ERROR: could not resolve insight_source_id for connector '$CONNECTOR' tenant '$TENANT'." >&2
+  echo "       Either pass it explicitly as the third argument, or annotate the connector Secret with all three:" >&2
+  echo "         insight.cyberfabric.com/connector=$CONNECTOR" >&2
+  echo "         insight.cyberfabric.com/tenant=$TENANT" >&2
+  echo "         insight.cyberfabric.com/source-id=<id>" >&2
+  exit 1
+}
 
-# ─── Resolve toolbox_image for the dbt-run step ────────────────────────────
-# Precedence:
-#   1. $TOOLBOX_IMAGE env var (explicit caller override)
-#   2. Auto-detect on Kind: if the current kubectl context is a kind cluster
-#      AND the Kind node has a locally-loaded `insight-toolbox:local` image
-#      (put there by up.sh → `kind load docker-image`), use that image.
-#   3. Fallback: ghcr.io/cyberfabric/insight-toolbox:latest (prod).
-#
-# Without this, the workflow template's default fetches the :latest tag
-# from ghcr.io, which requires imagePullSecrets and network access — both
-# absent on a fresh local Kind cluster. The dbt-run pod then sits in
-# ImagePullBackOff / Pending until the workflow's 30-minute activeDeadline
-# kills it, leaving Bronze populated but Silver never materialised.
-TOOLBOX_IMAGE="${TOOLBOX_IMAGE:-}"
-if [[ -z "$TOOLBOX_IMAGE" ]]; then
-  _ctx=$(kubectl config current-context 2>/dev/null || echo "")
-  if [[ "$_ctx" == kind-* ]]; then
-    _node="${_ctx#kind-}-control-plane"
-    if docker exec "$_node" crictl images 2>/dev/null | grep -qE "^docker\.io/library/insight-toolbox\s+local\b"; then
-      TOOLBOX_IMAGE="insight-toolbox:local"
-      echo "  toolbox_image: $TOOLBOX_IMAGE (auto-detected, loaded in kind node)"
-    fi
+# ─── Resolve dbt_select from descriptor.yaml ────────────────────────────
+DESC=""
+for desc in connectors/*/*/descriptor.yaml; do
+  if [[ "$(yq -r '.name' "$desc")" == "$CONNECTOR" ]]; then
+    DESC="$desc"
+    break
   fi
-  TOOLBOX_IMAGE="${TOOLBOX_IMAGE:-ghcr.io/cyberfabric/insight-toolbox:latest}"
+done
+[[ -n "$DESC" ]] || {
+  echo "ERROR: no descriptor.yaml found with .name=$CONNECTOR under connectors/" >&2
+  exit 1
+}
+DBT_SELECT="$(yq -r '.dbt_select' "$DESC")"
+[[ -n "$DBT_SELECT" && "$DBT_SELECT" != "null" ]] || {
+  echo "ERROR: $DESC does not define .dbt_select" >&2
+  exit 1
+}
+
+# data_source dispatches the pipeline branch; only "jira" triggers the rust enrich path.
+DATA_SOURCE="$CONNECTOR"
+
+# dbt_select_staging only fires when data_source=jira.
+DBT_SELECT_STAGING=""
+if [[ "$DATA_SOURCE" == "jira" ]]; then
+  DBT_SELECT_STAGING="tag:jira"
 fi
 
-echo "Running sync: ${CONNECTOR} / ${TENANT}"
-echo "  connection_id: ${CONNECTION_ID}"
-echo "  dbt_select:    ${DBT_SELECT}"
-echo "  toolbox_image: ${TOOLBOX_IMAGE}"
+TENANT_DASHED="${TENANT//_/-}"
 
-kubectl create -n argo -f - <<EOF
-apiVersion: argoproj.io/v1alpha1
-kind: Workflow
-metadata:
-  generateName: ${CONNECTOR}-${TENANT//_/-}-
-  namespace: argo
-  labels:
-    tenant: "${TENANT}"
-    connector: "${CONNECTOR}"
-spec:
-  entrypoint: run
-  templates:
-    - name: run
-      steps:
-        - - name: pipeline
-            templateRef:
-              name: ingestion-pipeline
-              template: pipeline
-            arguments:
-              parameters:
-                - name: connection_id
-                  value: "${CONNECTION_ID}"
-                - name: dbt_select
-                  value: "${DBT_SELECT}"
-                - name: toolbox_image
-                  value: "${TOOLBOX_IMAGE}"
-EOF
+echo "Submitting ingestion-pipeline:"
+echo "  namespace:          $INSIGHT_NAMESPACE"
+echo "  connector:          $CONNECTOR"
+echo "  tenant:             $TENANT"
+echo "  connection_id:      $CONNECTION_ID"
+echo "  insight_source_id:  $SOURCE_ID"
+echo "  data_source:        $DATA_SOURCE"
+echo "  dbt_select:         $DBT_SELECT"
+[[ -n "$DBT_SELECT_STAGING" ]] && echo "  dbt_select_staging: $DBT_SELECT_STAGING"
 
-echo "Workflow submitted. Monitor at http://localhost:30500 or:"
-echo "  kubectl get workflows -n argo -l connector=${CONNECTOR},tenant=${TENANT}"
+NAMESPACE="$INSIGHT_NAMESPACE" \
+  CONNECTOR="$CONNECTOR" \
+  TENANT="$TENANT" \
+  TENANT_DASHED="$TENANT_DASHED" \
+  CONNECTION_ID="$CONNECTION_ID" \
+  SOURCE_ID="$SOURCE_ID" \
+  DATA_SOURCE="$DATA_SOURCE" \
+  DBT_SELECT="$DBT_SELECT" \
+  DBT_SELECT_STAGING="$DBT_SELECT_STAGING" \
+  envsubst < workflows/onetime/sync.yaml.tpl |
+  kubectl create -n "$INSIGHT_NAMESPACE" -f -
+
+echo
+echo "Monitor:"
+echo "  kubectl -n $INSIGHT_NAMESPACE get workflows -l connector=$CONNECTOR,tenant=$TENANT --watch"

@@ -12,6 +12,20 @@
       }
     },
 
+    "ingestion": {
+      "type": "object",
+      "properties": {
+        "templates": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" }
+          }
+        },
+        "toolboxImage":    { "type": "string" },
+        "jiraEnrichImage": { "type": "string" }
+      }
+    },
+
     "global": {
       "type": "object",
       "properties": {
