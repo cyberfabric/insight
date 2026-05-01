@@ -20,8 +20,8 @@ models:
       Bronze → Silver step 1: Anthropic Admin API programmatic token usage.
       Feeds class_ai_api_usage with channel='api' and email=NULL — programmatic
       API key authentication cannot be attributed to individual users. Per-user
-      attribution comes from claude_enterprise__ai_api_usage (channel='web'/
-      'office'/'cowork').
+      assistant activity (chat/office/cowork) comes from
+      claude_enterprise__ai_assistant_usage → class_ai_assistant_usage.
     columns:
       - name: insight_tenant_id
         tests:
@@ -62,10 +62,6 @@ models:
           - accepted_values:
               arguments:
                 values: ['api']
-      - name: conversation_count
-        description: "NULL for API rows"
-      - name: message_count
-        description: "NULL for API rows"
       - name: input_tokens
         description: "uncached_input + cache_read + cache_creation_5m + cache_creation_1h"
       - name: output_tokens
@@ -109,8 +105,10 @@ models:
       filtering would yield zero rows in production. Dual-actor support
       is the intended behaviour; the PRD clause is to be updated.
 
-      Claude Code usage is also available in Enterprise but is sourced
-      from Admin only, per the lead's merge rule.
+      For orgs on the Enterprise subscription, Claude Code is sourced from
+      claude_enterprise__ai_dev_usage instead (Enterprise reports per-user
+      directly, avoiding api_key_name resolution). This model remains available
+      for Admin-only orgs and for historical data.
     columns:
       - name: insight_tenant_id
         tests:

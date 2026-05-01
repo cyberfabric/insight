@@ -12,95 +12,6 @@ sources:
       - name: claude_enterprise_collection_runs
 
 models:
-  - name: claude_enterprise__ai_api_usage
-    description: >
-      Bronze → Silver step 1: Claude Enterprise per-user engagement activity.
-      Feeds class_ai_api_usage with channels 'web' (chat), 'office' (Excel /
-      PowerPoint), and 'cowork' (Claude Cowork). One Bronze row per
-      (date, user_email) can produce up to 3 staging rows — one per non-empty
-      channel.
-
-      Enterprise code_* fields are emitted by the sibling model
-      claude_enterprise__ai_dev_usage (which feeds class_ai_dev_usage). This
-      model focuses on engagement channels only.
-
-      Status: model is written against the Enterprise Analytics API schema
-      (DESIGN §3.7). No real runs against live data yet — it will be validated
-      end-to-end once the tenant provides an Enterprise Analytics API key.
-    columns:
-      - name: insight_tenant_id
-        tests:
-          - not_null
-      - name: source_id
-      - name: unique_key
-        description: "Composite dedup key: tenant-source-user-day-channel"
-        tests:
-          - not_null
-          - unique
-      - name: email
-        description: "User email (user_email from Bronze, lowercased)"
-        tests:
-          - not_null
-      - name: api_key_id
-        description: "Always NULL for Enterprise — engagement is attributed by email, not by API key"
-      - name: workspace_id
-        description: "NULL — Enterprise engagement is org-wide, not per workspace"
-      - name: day
-        tests:
-          - not_null
-      - name: provider
-        description: "Always 'anthropic'"
-        tests:
-          - not_null
-          - accepted_values:
-              arguments:
-                values: ['anthropic']
-      - name: channel
-        description: "web | office | cowork"
-        tests:
-          - not_null
-          - accepted_values:
-              arguments:
-                values: ['web', 'office', 'cowork']
-      - name: conversation_count
-        description: >
-          web → chat_conversation_count.
-          cowork → cowork_session_count.
-          office → NULL.
-      - name: message_count
-        description: >
-          web → chat_message_count.
-          office → excel_message_count + powerpoint_message_count.
-          cowork → cowork_message_count.
-      - name: input_tokens
-        description: "NULL — Enterprise does not expose token-level detail"
-      - name: output_tokens
-        description: "NULL"
-      - name: cache_read_tokens
-        description: "NULL"
-      - name: cache_creation_tokens
-        description: "NULL"
-      - name: cost_amount
-        description: "NULL"
-      - name: cost_currency
-        description: "NULL"
-      - name: source
-        description: "Always 'claude_enterprise'"
-        tests:
-          - not_null
-          - accepted_values:
-              arguments:
-                values: ['claude_enterprise']
-      - name: data_source
-        tests:
-          - not_null
-          - accepted_values:
-              arguments:
-                values: ['insight_claude_enterprise']
-      - name: collected_at
-        tests:
-          - not_null
-
   - name: claude_enterprise__ai_dev_usage
     description: >
       Bronze → Silver step 1: Claude Enterprise per-user Claude Code activity.
@@ -155,9 +66,129 @@ models:
       - name: agent_sessions
         description: "NULL — no Code-specific agent counter in Enterprise"
       - name: chat_requests
-        description: "NULL — chat is reported separately in claude_enterprise__ai_api_usage"
+        description: "NULL — chat is reported separately in claude_enterprise__ai_assistant_usage"
       - name: cost_cents
         description: "NULL — Enterprise cost is org-level, not per-user"
+      - name: commits_count
+        description: "code_commit_count — git commits attributed to Claude Code sessions"
+      - name: pull_requests_count
+        description: "code_pull_request_count — pull requests attributed to Claude Code sessions"
+      - name: tool_action_breakdown_json
+        description: >
+          Raw claude_code_metrics_json from Bronze — full per-tool breakdown
+          (edit/write/multi_edit/notebook_edit with accepted/rejected counts).
+          Stored as-is for downstream analytics.
+      - name: source
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['claude_enterprise']
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['insight_claude_enterprise']
+      - name: collected_at
+
+  - name: claude_enterprise__ai_assistant_usage
+    description: >
+      Bronze → Silver step 1: Claude Enterprise per-user assistant surface activity.
+      Feeds class_ai_assistant_usage with tool='claude' and surfaces 'chat'
+      (Claude.ai chat), 'excel' / 'powerpoint' (Office integrations), 'cowork'
+      (Claude Cowork), and 'cross' (web_search — surface-agnostic counter,
+      emitted as its own row per gist Q2 resolution). One Bronze row per
+      (date, user_email) can produce up to 5 staging rows — one per non-empty
+      surface.
+
+      Replaces the deprecated claude_enterprise__ai_api_usage model, which
+      incorrectly routed engagement data to class_ai_api_usage. Enterprise
+      engagement data represents human ↔ Claude assistant interaction, not
+      programmatic API consumption.
+    columns:
+      - name: insight_tenant_id
+        tests:
+          - not_null
+      - name: source_id
+      - name: unique_key
+        description: "Composite dedup key: tenant-source-email-day-surface"
+        tests:
+          - not_null
+          - unique
+      - name: email
+        description: "User email (user_email from Bronze, lowercased)"
+        tests:
+          - not_null
+      - name: day
+        tests:
+          - not_null
+      - name: tool
+        description: "Always 'claude' for Claude Enterprise"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['claude']
+      - name: surface
+        description: "chat | excel | powerpoint | cowork | cross"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['chat', 'excel', 'powerpoint', 'cowork', 'cross']
+      - name: session_count
+        description: >
+          excel → excel_session_count.
+          powerpoint → powerpoint_session_count.
+          cowork → cowork_session_count.
+          chat, cross → NULL.
+      - name: conversation_count
+        description: >
+          chat → chat_conversation_count.
+          excel, powerpoint, cowork, cross → NULL.
+      - name: message_count
+        description: >
+          chat → chat_message_count.
+          excel → excel_message_count.
+          powerpoint → powerpoint_message_count.
+          cowork → cowork_message_count.
+          cross → NULL.
+      - name: action_count
+        description: >
+          cowork → cowork_action_count.
+          chat, excel, powerpoint, cross → NULL.
+      - name: files_uploaded_count
+        description: "chat → chat_files_uploaded_count. NULL for other surfaces."
+      - name: artifacts_created_count
+        description: "chat → chat_artifacts_created_count. NULL for other surfaces."
+      - name: projects_created_count
+        description: "chat → chat_projects_created_count. NULL for other surfaces."
+      - name: projects_used_count
+        description: "chat → chat_projects_used_count. NULL for other surfaces."
+      - name: skills_used_count
+        description: >
+          chat → chat_skills_used_count.
+          cowork → cowork_skills_used_count.
+          excel, powerpoint, cross → NULL.
+      - name: connectors_used_count
+        description: "chat → chat_connectors_used_count. NULL for other surfaces."
+      - name: thinking_message_count
+        description: "chat → chat_thinking_message_count. NULL for other surfaces."
+      - name: dispatch_turn_count
+        description: "cowork → cowork_dispatch_turn_count. NULL for other surfaces."
+      - name: search_count
+        description: >
+          cross → web_search_count.
+          chat, excel, powerpoint, cowork → NULL.
+      - name: cost_cents
+        description: "Always NULL — Enterprise cost is org-level, not per-user."
+      - name: surface_metrics_json
+        description: >
+          Raw JSON for the surface.
+          chat → chat_metrics_json. excel / powerpoint → office_metrics_json
+          (full structure with both products). cowork → cowork_metrics_json.
+          cross → NULL.
       - name: source
         tests:
           - not_null

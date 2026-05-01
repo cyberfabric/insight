@@ -89,7 +89,12 @@ The other streams (`summaries`, `skills`, `connectors`) are pre-aggregated by th
 
 ## Silver Targets
 
-**None for this iteration.** Bronze only. `descriptor.yaml` sets `dbt_select: ""` to make this explicit (`silver_targets` is prohibited per Connector Spec §4.10). Silver routing (to `class_ai_*` streams) is future work — see [DESIGN §4 Silver / Gold Mappings](../../../../../docs/components/connectors/ai/claude-enterprise/specs/DESIGN.md#silver--gold-mappings).
+Routing is tag-driven via `dbt_select: "tag:claude-enterprise+"` in `descriptor.yaml`.
+
+| Staging model | Silver class | Tag |
+|---|---|---|
+| `claude_enterprise__ai_dev_usage` | `class_ai_dev_usage` | `silver:class_ai_dev_usage` |
+| `claude_enterprise__ai_assistant_usage` | `class_ai_assistant_usage` | `silver:class_ai_assistant_usage` |
 
 ## Operational Constraints
 

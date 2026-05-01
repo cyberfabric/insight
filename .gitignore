@@ -30,3 +30,4 @@ cypilot/.plans/
 # Helm packaged dependencies (resolved by `helm dependency update`)
 charts/*/charts/*.tgz
 charts/*/Chart.lock
+logs/

@@ -4,10 +4,10 @@ version: "1.0"
 schedule: "0 11 * * *"   # daily at 11:00 UTC — accommodates Anthropic's 10:00 UTC aggregation
 workflow: sync
 
-# Silver routing: the dbt selector picks up the claude_enterprise__ai_api_usage
-# staging model (tagged with 'claude-enterprise'), which feeds class_ai_api_usage
-# via silver:class_ai_api_usage. silver_targets is prohibited per Connector Spec
-# §4.10 — Silver is determined by dbt_select tags.
+# Silver routing: the dbt selector picks up all models tagged 'claude-enterprise':
+#   • claude_enterprise__ai_dev_usage   → class_ai_dev_usage   (tag: silver:class_ai_dev_usage)
+#   • claude_enterprise__ai_assistant_usage → class_ai_assistant_usage (tag: silver:class_ai_assistant_usage)
+# silver_targets is prohibited per Connector Spec §4.10 — Silver is determined by dbt_select tags.
 dbt_select: "tag:claude-enterprise+"
 
 connection:
